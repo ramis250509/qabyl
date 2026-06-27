@@ -18,6 +18,21 @@ const MAX_LOOP_ITERATIONS = 3;
 const LOCK_WAIT_TIMEOUT_MS = 8000;
 const LOCK_POLL_INTERVAL_MS = 400;
 
+export function resolveAssistantRuntimeConfig(salon: any, assistant: any, secrets: any) {
+  const assistantEnabled = (salon?.ai_assistant_enabled ?? true) !== false && (assistant?.enabled ?? true);
+  const hasGreenApiCreds = Boolean(secrets?.greenapi_instance && secrets?.greenapi_token);
+  return {
+    assistantEnabled,
+    hasGreenApiCreds,
+    assistantConfig: {
+      greeting: assistant?.greeting ?? null,
+      tone_instructions: assistant?.tone_instructions ?? null,
+      pricing_rules: assistant?.pricing_rules ?? null,
+      languages: assistant?.languages?.length ? assistant.languages : ["ru"],
+    },
+  };
+}
+
 export const Route = createFileRoute("/api/public/wa/$salonId")({
   server: {
     handlers: {
@@ -215,13 +230,11 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
           .select("id")
           .single();
 
-        // Bail out if AI assistant disabled or creds missing.
-        if (
-          !(salon as any).ai_assistant_enabled ||
-          !assistant?.enabled ||
-          !secrets?.greenapi_instance ||
-          !secrets?.greenapi_token
-        ) {
+        // Bail out only when the assistant cannot be used at all. Missing assistant row
+        // should not prevent the bot from working; we default to enabled and use empty
+        // instructions instead of silently dropping the webhook.
+        const runtime = resolveAssistantRuntimeConfig(salon, assistant, secrets);
+        if (!runtime.assistantEnabled || !runtime.hasGreenApiCreds) {
           return ack();
         }
 
@@ -338,12 +351,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
                 salonName: (salon as any).name,
                 timezone: (salon as any).timezone ?? "UTC",
               },
-              config: {
-                greeting: assistant.greeting ?? null,
-                tone_instructions: assistant.tone_instructions ?? null,
-                pricing_rules: assistant.pricing_rules ?? null,
-                languages: assistant.languages ?? ["ru"],
-              },
+              config: runtime.assistantConfig,
               client: { phone, name: senderName },
               history,
               lastMessages,
