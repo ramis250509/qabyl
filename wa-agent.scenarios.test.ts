@@ -121,7 +121,15 @@ globalThis.fetch = (async (url: any, init: any) => {
 const SALON = { salonId: "salon1", salonName: "Тест салон", timezone: TZ };
 const CONFIG = { greeting: null, tone_instructions: null, pricing_rules: null, languages: ["ru"] };
 
-function convo(cfg: SalonCfg, opts: { clientName?: string | null; branches?: any[]; languages?: string[] } = {}) {
+function convo(
+  cfg: SalonCfg,
+  opts: {
+    clientName?: string | null;
+    branches?: any[];
+    languages?: string[];
+    assistantConfig?: Partial<typeof CONFIG>;
+  } = {},
+) {
   (globalThis as any).__WA_DB__ = makeDb(cfg);
   const db = (globalThis as any).__WA_DB__;
   let state: any = "idle";
@@ -129,7 +137,7 @@ function convo(cfg: SalonCfg, opts: { clientName?: string | null; branches?: any
   let selectedBranchId: any = null;
   const history: any[] = [];
   const branches = opts.branches ?? [];
-  const config = { ...CONFIG, languages: opts.languages ?? ["ru"] };
+  const config = { ...CONFIG, ...opts.assistantConfig, languages: opts.assistantConfig?.languages ?? opts.languages ?? ["ru"] };
   const clientName = opts.clientName === undefined ? "Рамис" : opts.clientName;
   return {
     db,
@@ -352,6 +360,32 @@ test("16. typo time '12-45' is understood", async () => {
   const r = await c.say("Звпишите меня на завтра в 12-45");
   expect(r.nextState).toBe("awaiting_final_confirm");
   expect(r.reply).toContain("12:45");
+});
+
+test("16b. admin greeting/tone instructions are used in the first reply", async () => {
+  const c = convo(singleSalon(), {
+    assistantConfig: {
+      greeting: "Пишите коротко и по делу",
+      tone_instructions: "Отвечай очень коротко, без лишних слов",
+      pricing_rules: null,
+      languages: ["ru"],
+    },
+  });
+  const r = await c.say("привет");
+  expect(r.reply.toLowerCase()).toContain("коротко");
+});
+
+test("16c. Latin transliteration of Kyrgyz is detected as Kyrgyz when allowed", async () => {
+  const c = convo(singleSalon(), { languages: ["ru", "ky"], assistantConfig: { languages: ["ru", "ky"] } });
+  const r = await c.say("salam");
+  expect(r.reply).toContain("Саламатсызбы");
+});
+
+test("16d. Kyrgyz service wording is understood", async () => {
+  const c = convo(multiSalon());
+  const r = await c.say("чач кыруу");
+  expect(c.data.service_id).toBe("svc_hair");
+  expect(r.nextState).not.toBe("done");
 });
 
 test("17. repeated identical message does not crash and keeps context", async () => {

@@ -234,8 +234,9 @@ const KY_WORD_RE =
 function detectLanguage(text: string): "ru" | "ky" | "en" {
   if (!text) return "ru";
   const lower = text.toLowerCase();
-  if (/[ңүөҢҮӨ]/.test(text)) return "ky"; // Kyrgyz-unique letters
-  if (KY_WORD_RE.test(lower)) return "ky";
+  const hasKyrgyzLetters = /[ңүөҢҮӨ]/.test(text);
+  const hasLatinKyrgyzSignals = /\b(salam|salamat|bugun|bugin|erten|kec|kyrgyz|kizmat|chach|kyzmat|kyrgyzstan|sizin|biz|jany|ja?an|manikur|pedikur)\b/i.test(lower);
+  if (hasKyrgyzLetters || KY_WORD_RE.test(lower) || hasLatinKyrgyzSignals) return "ky";
   if (/[а-яё]/i.test(lower)) return "ru";
   if (/^[\x00-\x7f\s]+$/.test(text) && /[a-z]/i.test(text)) return "en";
   return "ru";
@@ -246,8 +247,10 @@ function detectLanguage(text: string): "ru" | "ky" | "en" {
 // keeps a Kyrgyz conversation from flipping to Russian on a short word like "бугун".
 function confidentLanguage(text: string): boolean {
   if (!text) return false;
+  const lower = text.toLowerCase();
   if (/[ңүөҢҮӨ]/.test(text)) return true;
-  if (KY_WORD_RE.test(text.toLowerCase())) return true;
+  if (KY_WORD_RE.test(lower)) return true;
+  if (/\b(salam|salamat|bugun|bugin|erten|kec|kizmat|chach|kyrgyz|jany|sizin|biz|kanday|kansha)\b/i.test(lower)) return true;
   if (/^[\x00-\x7f\s]+$/.test(text) && /[a-z]/i.test(text)) return true;
   return false;
 }
@@ -353,6 +356,10 @@ function normalizeForMatch(text: string): string {
   return text
     .toLowerCase()
     .replace(/ё/g, "е")
+    .replace(/[ұ]/g, "у")
+    .replace(/[ң]/g, "н")
+    .replace(/[ө]/g, "о")
+    .replace(/[ү]/g, "у")
     .replace(/[^a-zа-яңүө0-9\s]/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -405,14 +412,20 @@ const CONFUSED_RE =
 function serviceAliases(name: string): string[] {
   const n = normalizeForMatch(name);
   const aliases = new Set<string>([n]);
-  if (/стри|стриж|hair|cut/.test(n)) aliases.add("стрижка");
-  if (/маник|ногт|nail/.test(n)) aliases.add("маникюр");
+  if (/стри|стриж|hair|cut|chach|чач/.test(n)) {
+    aliases.add("стрижка");
+    aliases.add("чач кыркуу");
+    aliases.add("чач кыруу");
+    aliases.add("чач кесүү");
+    aliases.add("чач кыруу");
+  }
+  if (/маник|ногт|nail|manik|маникюр/.test(n)) aliases.add("маникюр");
   if (/педик/.test(n)) aliases.add("педикюр");
-  if (/окраш|краш|color/.test(n)) aliases.add("окрашивание");
+  if (/окраш|краш|color|kolor|окрашивание/.test(n)) aliases.add("окрашивание");
   if (/бров/.test(n)) aliases.add("брови");
   if (/ресниц/.test(n)) aliases.add("ресницы");
   if (/уклад/.test(n)) aliases.add("укладка");
-  if (/макияж|make/.test(n)) aliases.add("макияж");
+  if (/макияж|make|makiyazh/.test(n)) aliases.add("макияж");
   return [...aliases].filter(Boolean);
 }
 
@@ -422,6 +435,7 @@ function findServiceByText(
 ) {
   const t = normalizeForMatch(text);
   if (!t) return null;
+  const hasServiceSignal = /(услуга|услуги|сервис|кызмат|чач|маник|педик|окраш|бров|ресниц|уклад|макияж|hair|nail|cut|color)/i.test(text);
   let best: { service: (typeof services)[number]; score: number } | null = null;
   for (const service of services) {
     for (const alias of serviceAliases(service.name)) {
@@ -443,8 +457,16 @@ function findServiceByText(
       if (score > (best?.score ?? 0)) best = { service, score };
     }
   }
-  // Lowered threshold from 55 to 45 to catch more fuzzy matches
-  return best && best.score >= 45 ? best.service : null;
+  // Lowered threshold from 55 to 45 to catch more fuzzy matches, and allow service-like short phrases.
+  if (best && best.score >= 45) return best.service;
+  if (hasServiceSignal && !best) {
+    const fallback = services.find((s) =>
+      normalizeForMatch(s.name).includes(t.split(" ")[0] ?? "") ||
+      t.includes(normalizeForMatch(s.name).split(" ")[0] ?? ""),
+    );
+    if (fallback) return fallback;
+  }
+  return null;
 }
 
 function deterministicParse(opts: {
@@ -558,10 +580,10 @@ function deterministicParse(opts: {
     intent = "choose_branch";
   }
 
-  if (!intent && /(какие|какая|что есть|услуги|прайс|цены|стоимость|сколько)/.test(t)) {
+  if (!intent && /(какие|какая|что есть|услуги|прайс|цены|стоимость|сколько|кызмат|услуга)/.test(t)) {
     intent = /(сколько|цена|цены|стоимость|прайс)/.test(t) ? "ask_price" : "ask_services";
   }
-  if (!intent && /(здрав|привет|салам|ассаламу|hello|hi)/.test(t)) intent = "greet";
+  if (!intent && /(здрав|привет|салам|ассаламу|hello|hi|salam|salamat)/.test(t)) intent = "greet";
   if (!intent) intent = "other";
 
   return { intent, entities, language: lang };
@@ -789,6 +811,7 @@ async function compose(opts: {
   salon: WaSalonContext;
   language: "ru" | "ky" | "en";
   tone: string | null;
+  greeting?: string | null;
   history?: WaIncomingMessage[];
   factualContext: string; // what the user must hear, in any language; Gemini translates/polishes
   greet?: boolean; // true on the very first assistant message → warm greeting up front
@@ -798,13 +821,24 @@ async function compose(opts: {
   const greetReply = (reply: string): string => {
     if (!opts.greet) return reply;
     if (/^\s*(здрав|привет|саламат|салам|hello|hi|hey|добр)/i.test(reply)) return reply;
-    const g = opts.language === "ky" ? "Саламатсызбы!" : opts.language === "en" ? "Hello!" : "Здравствуйте!";
-    return `${g} ${reply}`;
+    const g = opts.greeting && /\p{L}/u.test(opts.greeting)
+      ? opts.greeting.trim()
+      : opts.language === "ky"
+        ? "Саламатсызбы!"
+        : opts.language === "en"
+          ? "Hello!"
+          : "Здравствуйте!";
+    const shortHint = /коротко|кратко|без лишних слов|по делу|по делу/i.test(`${opts.tone ?? ""} ${opts.greeting ?? ""}`)
+      ? "Коротко: "
+      : "";
+    return `${g} ${shortHint}${reply}`.trim();
   };
   const sys = `Ты — живой администратор салона «${opts.salon.salonName}», пишешь клиенту в WhatsApp.
 СТРОГО на ${langName} языке. Никаких других языков, никакого markdown.
 1–3 коротких предложения, по-человечески и дружелюбно, без канцелярита и шаблонных роботных фраз. Эмодзи — максимум один.
 ${opts.tone ? `ОБЯЗАТЕЛЬНЫЕ правила тона и формулировок от салона (соблюдай их в каждом ответе): ${opts.tone}` : ""}
+Если в контексте есть явные инструкции салона (например про приветствие, короткость, формат ответа, язык или стиль), соблюдай их в каждом ответе.
+Если клиент пишет очень коротко или с опечатками, отвечай понятно и не спорь с ним.
 ЗАПРЕЩЕНО писать «минуточку», «сейчас проверю», «подождите» — у тебя единственный ответ за этот ход.
 Не выдумывай факты, опирайся только на переданный контекст. Не упоминай "контекст" или "система".
 ВАЖНО: если в задаче написано «Спроси...», «Скажи...», «Поприветствуй...» — НЕ копируй эти слова клиенту. Выполни действие естественной фразой.`;
@@ -824,13 +858,16 @@ ${opts.tone ? `ОБЯЗАТЕЛЬНЫЕ правила тона и формул�
   const greetInstruction = opts.greet
     ? "Это ПЕРВОЕ сообщение клиенту — начни с короткого тёплого приветствия от салона, затем выполни задачу.\n\n"
     : "";
+  const styleInstruction = opts.tone
+    ? `Соблюдай правила стиля салона: ${opts.tone}\n\n`
+    : "";
   const res = await callGemini({
     model: MODEL_TEXT,
     apiKey: opts.apiKey,
     systemInstruction: sys,
     parts: [
       {
-        text: `${compactHistory ? `История текущего диалога:\n${compactHistory}\n\n` : ""}${greetInstruction}Задача для ответа клиенту:\n${opts.factualContext}\n\nНапиши ГОТОВУЮ реплику клиенту, не инструкцию.`,
+        text: `${compactHistory ? `История текущего диалога:\n${compactHistory}\n\n` : ""}${greetInstruction}${styleInstruction}Задача для ответа клиенту:\n${opts.factualContext}\n\nНапиши ГОТОВУЮ реплику клиенту, не инструкцию.`,
       },
     ],
     temperature: 0.7,
@@ -1369,7 +1406,16 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
 
   const tone = input.config.tone_instructions;
   const compose1 = (text: string) =>
-    compose({ apiKey, salon: input.salon, language, tone, history: input.history, factualContext: text, greet: isFirstContact });
+    compose({
+      apiKey,
+      salon: input.salon,
+      language,
+      tone,
+      greeting: input.config.greeting,
+      history: input.history,
+      factualContext: text,
+      greet: isFirstContact,
+    });
 
   // ----- Reset on cancel
   if (intent === "cancel") {
