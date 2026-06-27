@@ -1,0 +1,1 @@
+ALTER TABLE public.salons ADD COLUMN IF NOT EXISTS category_order text[] NOT NULL DEFAULT '{}'::text[];

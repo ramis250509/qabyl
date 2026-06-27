@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Dev Server (Vite + TanStack Start)",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["dev"],
+      "autoPort": true
+    },
+    {
+      "name": "Preview (production build)",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["run", "preview"],
+      "port": 4173
+    }
+  ]
+}

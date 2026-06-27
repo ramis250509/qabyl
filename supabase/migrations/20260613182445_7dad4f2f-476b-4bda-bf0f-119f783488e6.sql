@@ -1,0 +1,1 @@
+DROP FUNCTION IF EXISTS public.create_appointment(uuid, uuid, uuid, timestamptz, text, text, text, uuid);

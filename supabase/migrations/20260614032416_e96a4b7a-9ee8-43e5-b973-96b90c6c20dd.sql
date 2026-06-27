@@ -1,0 +1,1 @@
+ALTER TABLE public.salons ADD COLUMN IF NOT EXISTS multilang_enabled boolean NOT NULL DEFAULT false;

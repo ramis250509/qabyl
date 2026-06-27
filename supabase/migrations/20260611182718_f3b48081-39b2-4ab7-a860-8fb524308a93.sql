@@ -1,0 +1,2 @@
+ALTER TABLE public.salons DROP CONSTRAINT IF EXISTS salons_site_template_check;
+ALTER TABLE public.salons ADD CONSTRAINT salons_site_template_check CHECK (site_template IN ('minimal','premium','vivid','custom'));

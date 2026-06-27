@@ -1,0 +1,1 @@
+DROP POLICY IF EXISTS "Master updates salon appointments" ON public.appointments;
