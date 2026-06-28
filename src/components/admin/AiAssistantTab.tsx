@@ -11,6 +11,7 @@ import { useAuth } from "@/lib/auth-client";
 import { toast } from "sonner";
 import { Sparkles, Lock, Copy, RefreshCw, Webhook, MessageCircle } from "lucide-react";
 import { getWaWebhookConfig, regenerateWaWebhookToken } from "@/lib/wa-config.functions";
+import { WaSimulator } from "./WaSimulator";
 
 type Assistant = {
   salon_id: string;
@@ -338,6 +339,8 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
           </Button>
         </div>
       </Card>
+
+      <WaSimulator salonId={salonId} />
     </div>
   );
 }

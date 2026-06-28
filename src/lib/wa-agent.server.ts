@@ -1361,7 +1361,7 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
   // First contact = the assistant hasn't said anything yet in this session → greet warmly.
   // We trust an explicit `greeted` flag over history: history is loaded from `session_started_at`
   // and can be empty after a reload, which previously made the bot greet again and again.
-  const isFirstContact =
+  let isFirstContact =
     input.stateData.greeted !== true && !input.history.some((m) => m.direction === "out");
 
   // Determine language up front: prefer stored stateData, else detect.
@@ -1393,6 +1393,12 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
     else language = storedLang;
     debug.intent = intent;
     debug.entities = entities;
+  }
+
+  // Re-greet when user explicitly says hello and no booking is in progress yet.
+  // Handles the case where session persists (12h timeout) but the user starts fresh.
+  if (intent === "greet" && !input.stateData.service_id) {
+    isFirstContact = true;
   }
 
   // Working copy of state
@@ -1965,7 +1971,14 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
     try {
       reply = await compose1(factual);
     } catch (e: any) {
-      reply = instructionFallbackReply(factual, language, input.salon.salonName);
+      const raw = instructionFallbackReply(factual, language, input.salon.salonName);
+      if (isFirstContact && !/^\s*(здрав|привет|саламат|салам|hello|hi|hey|добр)/iu.test(raw)) {
+        const g = input.config.greeting?.trim() ||
+          (language === "ky" ? "Саламатсызбы!" : language === "en" ? "Hello!" : "Здравствуйте!");
+        reply = `${g} ${raw}`.trim();
+      } else {
+        reply = raw;
+      }
       debug.errors.push(`compose: ${e?.message ?? String(e)}`);
     }
     return {
