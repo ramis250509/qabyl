@@ -1,0 +1,17 @@
+C:\Users\Akbarov Ramis\OneDrive\Desktop\Qabyl\.claude\CLAUDE.md
+C:\Users\Akbarov Ramis\OneDrive\Desktop\Qabyl\.claude\skills\graphify\SKILL.md
+C:\Users\Akbarov Ramis\OneDrive\Desktop\Qabyl\.claude\skills\graphify\references\add-watch.md
+C:\Users\Akbarov Ramis\OneDrive\Desktop\Qabyl\.claude\skills\graphify\references\exports.md
+C:\Users\Akbarov Ramis\OneDrive\Desktop\Qabyl\.claude\skills\graphify\references\extraction-spec.md
+C:\Users\Akbarov Ramis\OneDrive\Desktop\Qabyl\.claude\skills\graphify\references\github-and-merge.md
+C:\Users\Akbarov Ramis\OneDrive\Desktop\Qabyl\.claude\skills\graphify\references\hooks.md
+C:\Users\Akbarov Ramis\OneDrive\Desktop\Qabyl\.claude\skills\graphify\references\query.md
+C:\Users\Akbarov Ramis\OneDrive\Desktop\Qabyl\.claude\skills\graphify\references\transcribe.md
+C:\Users\Akbarov Ramis\OneDrive\Desktop\Qabyl\.claude\skills\graphify\references\update.md
+C:\Users\Akbarov Ramis\OneDrive\Desktop\Qabyl\.lovable\plan.md
+C:\Users\Akbarov Ramis\OneDrive\Desktop\Qabyl\CLAUDE.md
+C:\Users\Akbarov Ramis\OneDrive\Desktop\Qabyl\WA_AGENT_IMPROVEMENTS.md
+C:\Users\Akbarov Ramis\OneDrive\Desktop\Qabyl\src\routes\README.md
+C:\Users\Akbarov Ramis\OneDrive\Desktop\Qabyl\public\apple-touch-icon.png
+C:\Users\Akbarov Ramis\OneDrive\Desktop\Qabyl\public\icon-192.png
+C:\Users\Akbarov Ramis\OneDrive\Desktop\Qabyl\public\icon-512.png

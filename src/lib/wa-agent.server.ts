@@ -1435,7 +1435,7 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
   // ----- Done state: graceful post-booking handling
   if (state === "done") {
     const newBookingIntents: Intent[] = [
-      "greet", "choose_service", "ask_services", "ask_price",
+      "choose_service", "ask_services", "ask_price",
       "choose_day", "choose_part_of_day", "choose_specific_time",
     ];
     if (newBookingIntents.includes(intent)) {
