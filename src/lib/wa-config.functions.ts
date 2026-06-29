@@ -58,6 +58,8 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
       state: z.string().default("idle"),
       stateData: z.record(z.unknown()).default({}),
       selectedBranchId: z.string().nullable().default(null),
+      imageBase64: z.string().optional(),
+      imageMime: z.string().optional(),
     }).parse(input)
   )
   .handler(async ({ data, context }) => {
@@ -73,11 +75,33 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
 
     if (!salon) throw new Error("Salon not found");
 
+    // Upload simulator image to storage if provided
+    let imageSignedUrl: string | null = null;
+    let imagePath: string | null = null;
+    if (data.imageBase64 && data.imageMime) {
+      const ext = data.imageMime.split("/")[1]?.replace(/[^a-z0-9]/gi, "") || "jpg";
+      imagePath = `simulator/${data.salonId}/${Date.now()}.${ext}`;
+      const bytes = Uint8Array.from(atob(data.imageBase64), (c) => c.charCodeAt(0));
+      const { error: upErr } = await supabaseAdmin.storage
+        .from("wa-media")
+        .upload(imagePath, bytes, { contentType: data.imageMime, upsert: false });
+      if (!upErr) {
+        const { data: s } = await supabaseAdmin.storage
+          .from("wa-media")
+          .createSignedUrl(imagePath, 600);
+        imageSignedUrl = s?.signedUrl ?? null;
+      }
+    }
+
+    const isImageOnly = imageSignedUrl && !data.messageText.trim();
     const incomingMsg: WaIncomingMessage = {
       id: crypto.randomUUID(),
       direction: "in",
-      kind: "text",
-      text_body: data.messageText,
+      kind: imageSignedUrl ? "image" : "text",
+      text_body: data.messageText || null,
+      media_signed_url: imageSignedUrl,
+      media_mime: data.imageMime ?? null,
+      media_path: imagePath,
       created_at: new Date().toISOString(),
     };
 

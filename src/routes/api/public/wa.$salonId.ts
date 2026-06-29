@@ -238,6 +238,11 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
           return ack();
         }
 
+        // Brief debounce: wait 700ms so that rapid follow-up messages (e.g. client sends
+        // "Привет" then "хочу на стрижку" in quick succession) accumulate before we start
+        // processing. The drain loop will then batch all pending messages into one turn.
+        await new Promise((r) => setTimeout(r, 700));
+
         // ---- Try to acquire processing lock; if another worker holds it, wait briefly
         // (it will pick up our just-inserted message in its loop).
         const lockId = crypto.randomUUID();

@@ -229,7 +229,7 @@ function availablePartsToday(nowHour: number): Array<"morning" | "afternoon" | "
 // (?<![\p{L}]) / (?![\p{L}]). Words that also exist in Russian (бар, etc.) are excluded to
 // avoid misdetecting Russian as Kyrgyz.
 const KY_WORD_RE =
-  /(?<![\p{L}])(салам(атсызбы|атчылык)?|жакшы|кандай|канча|ооба|жок|макул|бүгүн|бугун|эртең|эртен|эртеси|кеч(инде|ке|ки)?|таңда|түш(тө|кү)?|менин|жаз[\p{L}]*|куну|күнү|кереги|керек|рахмат|тушун[\p{L}]*|түшүн[\p{L}]*|саат|болот|кайра|кызмат[\p{L}]*)(?![\p{L}])/iu;
+  /(?<![\p{L}])(саламат[\p{L}]*|салам(атсызбы|атчылык)?|жакшы|кандай|канча|ооба|жок|макул|бүгүн|бугун|эртең|эртен|эртеси|кеч(инде|ке|ки)?|таңда|түш(тө|кү)?|менин|жаз[\p{L}]*|куну|күнү|кереги|керек|рахмат|тушун[\p{L}]*|түшүн[\p{L}]*|саат|болот|кайра|кызмат[\p{L}]*)(?![\p{L}])/iu;
 
 function detectLanguage(text: string): "ru" | "ky" | "en" {
   if (!text) return "ru";
@@ -820,15 +820,16 @@ async function compose(opts: {
   // Prepend a warm greeting on first contact (unless the reply already greets).
   const greetReply = (reply: string): string => {
     if (!opts.greet) return reply;
-    if (/^\s*(здрав|привет|саламат|салам|hello|hi|hey|добр)/i.test(reply)) return reply;
-    const g = opts.greeting && /\p{L}/u.test(opts.greeting)
-      ? opts.greeting.trim()
-      : opts.language === "ky"
-        ? "Саламатсызбы!"
-        : opts.language === "en"
-          ? "Hello!"
-          : "Здравствуйте!";
-    const shortHint = /коротко|кратко|без лишних слов|по делу|по делу/i.test(`${opts.tone ?? ""} ${opts.greeting ?? ""}`)
+    if (/^\s*(здрав|привет|саламат|салам|hello|hi|hey|добр)/iu.test(reply)) return reply;
+    // Only use the admin-configured greeting (typically in Russian) for Russian-speaking clients.
+    // For Kyrgyz/English clients, use a language-appropriate default instead.
+    const useConfigGreeting = opts.language === "ru" && opts.greeting && /\p{L}/u.test(opts.greeting);
+    const g = useConfigGreeting
+      ? opts.greeting!.trim()
+      : opts.language === "ky" ? "Саламатсызбы!"
+      : opts.language === "en" ? "Hello!"
+      : "Здравствуйте!";
+    const shortHint = (opts.language === "ru" && /коротко|кратко|без лишних слов|по делу/i.test(`${opts.tone ?? ""} ${opts.greeting ?? ""}`))
       ? "Коротко: "
       : "";
     return `${g} ${shortHint}${reply}`.trim();
@@ -960,9 +961,10 @@ function instructionFallbackReply(factual: string, language: "ru" | "ky" | "en",
   const text = factual.replace(/\s+/g, " ").trim();
   const serviceList = [...factual.matchAll(/^—\s+(.+)$/gm)].map((m) => m[1].trim()).filter(Boolean);
   if (serviceList.length) {
-    if (language === "ky") return `Бизде бар кызматтар: ${serviceList.join(", ")}. Кайсы кызматка жазыласыз?`;
-    if (language === "en") return `We offer: ${serviceList.join(", ")}. Which service would you like to book?`;
-    return `У нас есть: ${serviceList.join(", ")}. На какую услугу вас записать?`;
+    const list = serviceList.map((s) => `— ${s}`).join("\n");
+    if (language === "ky") return `Бизде бар кызматтар:\n${list}\n\nКайсы кызматка жазыласыз?`;
+    if (language === "en") return `We offer:\n${list}\n\nWhich service would you like to book?`;
+    return `У нас есть:\n${list}\n\nНа какую услугу вас записать?`;
   }
   const confirmMatch = text.match(/подтвердить запись:\s*услуга «(.+?)»,\s*(.+?)\s+в\s+([0-9:]+),\s*мастер\s+(.+?)\./i);
   if (confirmMatch) {

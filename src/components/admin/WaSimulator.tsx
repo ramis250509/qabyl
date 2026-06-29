@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Bot, RotateCcw, Send } from "lucide-react";
+import { Bot, ImagePlus, RotateCcw, Send, X } from "lucide-react";
 import { simulateWaMessage } from "@/lib/wa-config.functions";
 
 type WaState =
@@ -14,14 +14,18 @@ type WaState =
 type HistoryMsg = {
   id: string;
   direction: "in" | "out";
-  kind: "text";
+  kind: "text" | "image";
   text_body: string | null;
+  media_signed_url?: string | null;
+  media_mime?: string | null;
+  media_path?: string | null;
   created_at: string;
 };
 
 type ChatMessage = {
   role: "user" | "bot";
-  text: string;
+  text?: string;
+  imageDataUrl?: string;
   intent?: string;
   state?: string;
 };
@@ -33,18 +37,39 @@ export function WaSimulator({ salonId }: { salonId: string }) {
   const [agentStateData, setAgentStateData] = useState<Record<string, unknown>>({});
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
   const [inputText, setInputText] = useState("");
+  const [pendingImage, setPendingImage] = useState<{ dataUrl: string; base64: string; mime: string } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isLoading]);
 
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string;
+      // Extract base64 part: "data:image/jpeg;base64,<here>"
+      const [header, base64] = dataUrl.split(",");
+      const mime = header.match(/:(.*?);/)?.[1] ?? "image/jpeg";
+      setPendingImage({ dataUrl, base64, mime });
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  }
+
   async function send() {
     const text = inputText.trim();
-    if (!text || isLoading) return;
+    if ((!text && !pendingImage) || isLoading) return;
     setInputText("");
-    setMessages((prev) => [...prev, { role: "user", text }]);
+
+    const userMsg: ChatMessage = { role: "user", text: text || undefined, imageDataUrl: pendingImage?.dataUrl };
+    setMessages((prev) => [...prev, userMsg]);
+    const imageToSend = pendingImage;
+    setPendingImage(null);
     setIsLoading(true);
 
     const prevHistory = history;
@@ -57,14 +82,28 @@ export function WaSimulator({ salonId }: { salonId: string }) {
           state: agentState,
           stateData: agentStateData,
           selectedBranchId,
+          imageBase64: imageToSend?.base64,
+          imageMime: imageToSend?.mime,
         },
       });
 
       const now = new Date().toISOString();
-      const userMsg: HistoryMsg = { id: crypto.randomUUID(), direction: "in", kind: "text", text_body: text, created_at: now };
-      const botMsg: HistoryMsg = { id: crypto.randomUUID(), direction: "out", kind: "text", text_body: res.reply, created_at: now };
+      const inMsg: HistoryMsg = {
+        id: crypto.randomUUID(),
+        direction: "in",
+        kind: imageToSend ? "image" : "text",
+        text_body: text || null,
+        created_at: now,
+      };
+      const outMsg: HistoryMsg = {
+        id: crypto.randomUUID(),
+        direction: "out",
+        kind: "text",
+        text_body: res.reply,
+        created_at: now,
+      };
 
-      setHistory([...prevHistory, userMsg, botMsg]);
+      setHistory([...prevHistory, inMsg, outMsg]);
       setAgentState(res.nextState as WaState);
       setAgentStateData(res.nextStateData as Record<string, unknown>);
       setSelectedBranchId(res.selectedBranchId);
@@ -89,6 +128,7 @@ export function WaSimulator({ salonId }: { salonId: string }) {
     setAgentStateData({});
     setSelectedBranchId(null);
     setInputText("");
+    setPendingImage(null);
   }
 
   return (
@@ -114,13 +154,16 @@ export function WaSimulator({ salonId }: { salonId: string }) {
         {messages.map((m, i) => (
           <div key={i} className={`flex flex-col ${m.role === "user" ? "items-end" : "items-start"}`}>
             <div
-              className={`max-w-[82%] rounded-xl px-3 py-2 text-sm whitespace-pre-wrap break-words ${
+              className={`max-w-[82%] rounded-xl px-3 py-2 text-sm whitespace-pre-wrap break-words space-y-1 ${
                 m.role === "user"
                   ? "bg-primary text-primary-foreground"
                   : "bg-background border shadow-sm"
               }`}
             >
-              {m.text}
+              {m.imageDataUrl && (
+                <img src={m.imageDataUrl} alt="фото" className="rounded max-h-40 w-auto" />
+              )}
+              {m.text && <span>{m.text}</span>}
             </div>
             {m.role === "bot" && (m.intent || m.state) && (
               <p className="text-[10px] text-muted-foreground mt-0.5 px-1">
@@ -144,7 +187,40 @@ export function WaSimulator({ salonId }: { salonId: string }) {
         <div ref={bottomRef} />
       </div>
 
+      {pendingImage && (
+        <div className="flex items-center gap-2 px-1">
+          <div className="relative inline-block">
+            <img src={pendingImage.dataUrl} alt="preview" className="h-14 w-14 rounded object-cover border" />
+            <button
+              type="button"
+              onClick={() => setPendingImage(null)}
+              className="absolute -top-1.5 -right-1.5 bg-destructive text-destructive-foreground rounded-full p-0.5"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+          <span className="text-xs text-muted-foreground">Фото будет отправлено вместе с сообщением</span>
+        </div>
+      )}
+
       <div className="flex gap-2">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={handleFileChange}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          onClick={() => fileInputRef.current?.click()}
+          title="Прикрепить фото"
+          disabled={isLoading}
+        >
+          <ImagePlus className="h-4 w-4" />
+        </Button>
         <Input
           placeholder="Напишите сообщение клиента..."
           value={inputText}
@@ -157,7 +233,11 @@ export function WaSimulator({ salonId }: { salonId: string }) {
           }}
           disabled={isLoading}
         />
-        <Button type="button" onClick={send} disabled={isLoading || !inputText.trim()}>
+        <Button
+          type="button"
+          onClick={send}
+          disabled={isLoading || (!inputText.trim() && !pendingImage)}
+        >
           <Send className="h-4 w-4" />
         </Button>
       </div>
