@@ -328,7 +328,11 @@ async function callGemini(opts: {
       }
       const candidate = json?.candidates?.[0];
       const finishReason: string | undefined = candidate?.finishReason;
+      // Filter out Gemini's internal thinking parts (thought: true) before extracting text.
+      // When thinkingBudget > 0 the API returns thought-parts alongside the real output;
+      // joining them all produces corrupt JSON / garbled text.
       const text: string | undefined = candidate?.content?.parts
+        ?.filter((p: any) => !p?.thought)
         ?.map((p: any) => p?.text ?? "")
         .join("")
         .trim();
