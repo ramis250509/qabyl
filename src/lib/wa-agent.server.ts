@@ -790,7 +790,8 @@ ${compactHistory || "(пусто)"}
     const geminiIntent = (parsed.intent ?? "other") as Intent;
     const intent =
       deterministic.intent === "choose_service" && mergedEntities.service_id &&
-      ["other", "greet", "smalltalk", "ask_services", "ask_price"].includes(geminiIntent)
+      // When deterministic confidently found a service, override Gemini's weak intents
+      ["other", "greet", "smalltalk", "ask_services", "ask_price", "confirm_yes", "deny_no"].includes(geminiIntent)
         ? deterministic.intent
         // Trust deterministic when it explicitly found a query intent that Gemini misread as service choice
         : (["ask_services", "ask_price"].includes(deterministic.intent as string) &&
@@ -915,47 +916,53 @@ ${opts.tone ? `ОБЯЗАТЕЛЬНЫЕ правила тона и формул�
 function stuckClarifyReply(questionKey: string | undefined, language: "ru" | "ky" | "en"): string {
   const L = <T,>(ru: T, ky: T, en: T): T => (language === "ky" ? ky : language === "en" ? en : ru);
   switch (questionKey) {
-    case "service":
+    case 'photo':
       return L(
-        "Извините, не совсем поняла 🙂 Напишите, пожалуйста, название услуги — например «стрижка» или «маникюр».",
-        "Кечиресиз, толук түшүнбөй калдым 🙂 Кызматтын атын жазыңызчы — мисалы «чач кыркуу» же «маникюр».",
-        "Sorry, I didn't quite get that 🙂 Please type the service name — for example “haircut” or “manicure”.",
+        'Пришлите, пожалуйста, фото — нажмите на иконку изображения рядом с полем сообщения.',
+        'Сүрөттү жөнөтүңүзчү — билдирүү талаасынын жанындагы сүрөт баскычын басыңыз.',
+        'Please send a photo — tap the photo icon next to the message field.',
       );
-    case "part":
+    case 'service':
       return L(
-        "Кажется, я не совсем поняла 🙂 Подскажите, когда удобнее — утром, днём или вечером?",
-        "Сизди толук түшүнбөй калдым окшойт 🙂 Качан ыңгайлуу — эртең менен, түштө же кечинде?",
-        "Sorry, I didn't quite catch that 🙂 When works best — morning, afternoon, or evening?",
+        'Извините, не совсем поняла 🙂 Напишите, пожалуйста, название услуги — например «стрижка» или «маникюр».',
+        'Кечиресиз, толук түшүнбөй калдым 🙂 Кызматтын атын жазыңызчы — мисалы «чач кыркуу» же «маникюр».',
+        'Sorry, I didn\'t quite get that 🙂 Please type the service name — e.g. “haircut” or “manicure”.',
       );
-    case "slot":
+    case 'part':
       return L(
-        "Не совсем поняла 🙂 Назовите удобное время цифрами — например 12:30 — или номер из списка.",
-        "Толук түшүнбөдүм 🙂 Ыңгайлуу убакытты сан менен жазыңыз — мисалы 12:30 — же тизмедеги номерди.",
-        "I didn't quite get that 🙂 Tell me a time in numbers — e.g. 12:30 — or a number from the list.",
+        'Кажется, я не совсем поняла 🙂 Подскажите, когда удобнее — утром, днём или вечером?',
+        'Сизди толук түшүнбөй калдым окшойт 🙂 Качан ыңгайлуу — эртең менен, түштө же кечинде?',
+        'Sorry, I didn\'t quite catch that 🙂 When works best — morning, afternoon, or evening?',
       );
-    case "master":
+    case 'slot':
       return L(
-        "Подскажите имя мастера из списка или напишите «не принципиально».",
-        "Тизмедеги устанын атын айтыңыз же «баары бир» деп жазыңыз.",
-        "Tell me a master's name from the list, or just say “any”.",
+        'Не совсем поняла 🙂 Назовите удобное время цифрами — например 12:30 — или номер из списка.',
+        'Толук түшүнбөдүм 🙂 Ыңгайлуу убакытты сан менен жазыңыз — мисалы 12:30 — же тизмедеги номерди.',
+        'I didn\'t quite get that 🙂 Tell me a time in numbers — e.g. 12:30 — or a number from the list.',
       );
-    case "name":
+    case 'master':
       return L(
-        "Подскажите, пожалуйста, ваше имя — как к вам обращаться?",
-        "Атыңызды айтыңызчы — сизге кандай кайрылсам болот?",
-        "Could you tell me your name, please?",
+        'Подскажите имя мастера из списка или напишите «не принципиально».',
+        'Тизмедеги устанын атын айтыңыз же «баары бир» деп жазыңыз.',
+        'Tell me a master\'s name from the list, or just say “any”.',
       );
-    case "confirm":
+    case 'name':
       return L(
-        "Чтобы записать, напишите «да», либо назовите другое удобное время.",
-        "Жазыш үчүн «ооба» деп жазыңыз, же башка ыңгайлуу убакыт айтыңыз.",
-        "To book, reply “yes”, or tell me another time that suits you.",
+        'Подскажите, пожалуйста, ваше имя — как к вам обращаться?',
+        'Атыңызды айтыңызчы — сизге кандай кайрылсам болот?',
+        'Could you tell me your name, please?',
+      );
+    case 'confirm':
+      return L(
+        'Чтобы записать, напишите «да», либо назовите другое удобное время.',
+        'Жазыш үчүн «ооба» деп жазыңыз, же башка ыңгайлуу убакыт айтыңыз.',
+        'To book, reply “yes”, or tell me another time that suits you.',
       );
     default:
       return L(
-        "Извините, не совсем поняла 🙂 Уточните, пожалуйста, чем могу помочь с записью?",
-        "Кечиресиз, толук түшүнбөдүм 🙂 Жазылууда эмне менен жардам берейин?",
-        "Sorry, I didn't quite get that 🙂 How can I help you book an appointment?",
+        'Извините, не совсем поняла 🙂 Уточните, пожалуйста, чем могу помочь с записью?',
+        'Кечиресиз, толук түшүнбөдүм 🙂 Жазылууда эмне менен жардам берейин?',
+        'Sorry, I didn\'t quite get that 🙂 How can I help you book an appointment?',
       );
   }
 }
@@ -1701,11 +1708,13 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
       }
     } else if (state === "awaiting_photo") {
       // Photo expected but didn't arrive (upload failed or client sent text instead of image).
-      factual = `Фото не получилось открыть. Попроси прислать его ещё раз или скажи что мастер уточнит цену на месте.`;
+      factual = `Фото не получилось получить. Попроси прислать его ещё раз (нажать на иконку 📷 рядом с полем сообщения).`;
+      sd.last_prompt = "photo"; // ensures stuckClarifyReply says "send photo" not "write service"
       return finish();
     } else if (intent !== "confirm_yes") {
       factual = `Скажи, что услуга «${svcRow.name}» — с диапазоном цены ${svcRow.price}–${svcRow.price_max} сом, и попроси прислать фото, чтобы оценить стоимость точнее.`;
       state = "awaiting_photo";
+      sd.last_prompt = "photo";
       return finish();
     }
   }
