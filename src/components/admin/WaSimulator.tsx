@@ -123,7 +123,7 @@ export function WaSimulator({ salonId }: { salonId: string }) {
       setSelectedBranchId(res.selectedBranchId);
       setMessages((prev) => [
         ...prev,
-        { role: "bot", text: res.reply, intent: res.debug.intent, state: res.nextState },
+        { role: "bot", text: res.reply, intent: res.debug.intent ?? undefined, state: res.nextState },
       ]);
     } catch (e: any) {
       setMessages((prev) => [
