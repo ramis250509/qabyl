@@ -121,7 +121,11 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
       nextState: result.nextState,
       nextStateData: result.nextStateData,
       selectedBranchId: result.selectedBranchId,
-      debug: result.debug,
+      debug: {
+        intent: result.debug.intent ?? null,
+        actions: result.debug.actions,
+        errors: result.debug.errors,
+      },
     };
   });
 

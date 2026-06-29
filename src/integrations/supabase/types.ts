@@ -1207,37 +1207,23 @@ export type Database = {
     }
     Functions: {
       archive_old_appointments: { Args: never; Returns: number }
-      create_appointment:
-        | {
-            Args: {
-              _addon_ids?: string[]
-              _branch_id?: string
-              _client_name: string
-              _client_notes?: string
-              _client_phone: string
-              _master_id: string
-              _salon_id: string
-              _service_id: string
-              _starts_at: string
-            }
-            Returns: string
-          }
-        | {
-            Args: {
-              _addon_ids?: string[]
-              _branch_id?: string
-              _client_name: string
-              _client_notes?: string
-              _client_phone: string
-              _master_id: string
-              _price_override?: number
-              _salon_id: string
-              _service_id: string
-              _source?: string
-              _starts_at: string
-            }
-            Returns: string
-          }
+      create_appointment: {
+        Args: {
+          _addon_ids?: string[]
+          _branch_id?: string
+          _client_name: string
+          _client_notes?: string
+          _client_phone: string
+          _master_id: string
+          _price_override?: number
+          _salon_id: string
+          _service_id: string
+          _source?: string
+          _starts_at: string
+        }
+        Returns: string
+      }
+      drain_pending_wa_conversations: { Args: never; Returns: undefined }
       get_addons_for_service: {
         Args: { _service_id: string }
         Returns: {

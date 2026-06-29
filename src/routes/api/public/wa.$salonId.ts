@@ -270,8 +270,8 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
           const convSnapshot: any = lockedConv ?? conv;
 
           const creds: GreenApiCreds = {
-            instance: secrets.greenapi_instance,
-            token: secrets.greenapi_token,
+            instance: secrets.greenapi_instance ?? "",
+            token: secrets.greenapi_token ?? "",
           };
 
           // Load branches once.

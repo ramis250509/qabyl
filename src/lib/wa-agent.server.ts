@@ -284,6 +284,7 @@ async function callGemini(opts: {
   responseSchema?: unknown;
   temperature?: number;
   maxOutputTokens?: number;
+  thinkingBudget?: number;
 }): Promise<{ ok: boolean; text?: string; error?: string }> {
   const body: any = {
     contents: opts.contents ?? [{ role: "user", parts: opts.parts }],
@@ -291,9 +292,9 @@ async function callGemini(opts: {
       temperature: opts.temperature ?? 0.4,
       maxOutputTokens: opts.maxOutputTokens ?? 2048,
       // Gemini 2.5 Flash can spend the token budget on hidden "thinking".
-      // Enable up to 5000 tokens of thinking for complex reasoning (intent classification, parsing).
-      // This improves accuracy on ambiguous/multilingual inputs without lengthening the actual reply.
-      thinkingConfig: { thinkingBudget: 5000 },
+      // Allow callers (vision, JSON-only flows) to disable thinking with thinkingBudget=0
+      // so the entire output budget goes to the actual response.
+      thinkingConfig: { thinkingBudget: opts.thinkingBudget ?? 5000 },
     },
   };
   if (opts.responseMimeType) body.generationConfig.responseMimeType = opts.responseMimeType;
@@ -304,6 +305,7 @@ async function callGemini(opts: {
 
   const url = `${GEMINI_BASE}/${opts.model}:generateContent?key=${encodeURIComponent(opts.apiKey)}`;
 
+  let lastQuotaError: string | null = null;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const r = await fetch(url, {
@@ -312,7 +314,13 @@ async function callGemini(opts: {
         body: JSON.stringify(body),
       });
       const txt = await r.text();
-      if (r.status === 429 || r.status >= 500) {
+      if (r.status === 429) {
+        // Quota exhausted on the user's direct Gemini API key. Retrying won't help — break
+        // immediately and fall back to Lovable AI Gateway (same Gemini model, billed via Lovable).
+        lastQuotaError = `gemini 429: ${txt.slice(0, 200)}`;
+        break;
+      }
+      if (r.status >= 500) {
         if (attempt < 2) {
           await new Promise((res) => setTimeout(res, 400 * (attempt + 1)));
           continue;
@@ -356,7 +364,81 @@ async function callGemini(opts: {
       return { ok: false, error: e?.message ?? String(e) };
     }
   }
-  return { ok: false, error: "gemini unknown" };
+
+  // Fallback: direct Gemini key is exhausted. Try Lovable AI Gateway with an equivalent
+  // Gemini model. Same multimodal (text + image) support, billed via Lovable credits.
+  const fb = await callViaLovableGateway(opts);
+  if (fb.ok) return fb;
+  return { ok: false, error: lastQuotaError ?? fb.error ?? "gemini unknown" };
+}
+
+// ----- Lovable AI Gateway fallback (OpenAI-compatible chat completions)
+async function callViaLovableGateway(opts: {
+  systemInstruction?: string;
+  parts: GeminiPart[];
+  contents?: GeminiContent[];
+  responseMimeType?: "application/json" | "text/plain";
+  responseSchema?: unknown;
+  temperature?: number;
+  maxOutputTokens?: number;
+}): Promise<{ ok: boolean; text?: string; error?: string }> {
+  const key = process.env.LOVABLE_API_KEY;
+  if (!key) return { ok: false, error: "no LOVABLE_API_KEY for fallback" };
+
+  // Translate Gemini parts → OpenAI content blocks (text + image_url with data: URLs).
+  const toOpenAIContent = (parts: GeminiPart[]): any[] =>
+    parts.map((p) =>
+      "text" in p
+        ? { type: "text", text: p.text }
+        : {
+            type: "image_url",
+            image_url: { url: `data:${p.inline_data.mime_type};base64,${p.inline_data.data}` },
+          },
+    );
+
+  const messages: any[] = [];
+  if (opts.systemInstruction) messages.push({ role: "system", content: opts.systemInstruction });
+  if (opts.contents?.length) {
+    for (const c of opts.contents) {
+      messages.push({
+        role: c.role === "model" ? "assistant" : "user",
+        content: toOpenAIContent(c.parts),
+      });
+    }
+  } else {
+    messages.push({ role: "user", content: toOpenAIContent(opts.parts) });
+  }
+
+  const body: any = {
+    model: "google/gemini-2.5-flash",
+    messages,
+    temperature: opts.temperature ?? 0.4,
+    max_tokens: Math.max(512, opts.maxOutputTokens ?? 2048),
+  };
+  if (opts.responseMimeType === "application/json") {
+    body.response_format = { type: "json_object" };
+  }
+
+  try {
+    const r = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${key}`,
+        "Lovable-API-Key": key,
+      },
+      body: JSON.stringify(body),
+    });
+    const txt = await r.text();
+    if (!r.ok) return { ok: false, error: `lovable gw ${r.status}: ${txt.slice(0, 300)}` };
+    let json: any;
+    try { json = JSON.parse(txt); } catch { return { ok: false, error: `lovable gw bad json: ${txt.slice(0, 200)}` }; }
+    const text: string | undefined = json?.choices?.[0]?.message?.content?.trim();
+    if (!text) return { ok: false, error: `lovable gw empty: ${txt.slice(0, 200)}` };
+    return { ok: true, text };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? String(e) };
+  }
 }
 
 function normalizeForMatch(text: string): string {
@@ -1022,6 +1104,13 @@ function instructionFallbackReply(factual: string, language: "ru" | "ky" | "en",
     if (language === "en") return `${nearestMatch[1]} isn't free. Nearest times: ${nearestMatch[2]}. Which one works?`;
     return `На ${nearestMatch[1]} свободного окна нет. Ближайшее время: ${nearestMatch[2]}. Какое подойдёт?`;
   }
+  // Vision/download failed but salon's price range was voiced in the factual.
+  const rangeFail = text.match(/ориентировочная стоимость «(.+?)» — (\d+)[–-](\d+) сом/i);
+  if (rangeFail) {
+    if (language === "ky") return `«${rangeFail[1]}» үчүн болжолдуу баасы — ${rangeFail[2]}–${rangeFail[3]} сом (так баасын уста жеринде айтат). Кайсы күнгө жазыласыз?`;
+    if (language === "en") return `Approximate price for «${rangeFail[1]}» — ${rangeFail[2]}–${rangeFail[3]} som (master will confirm on site). What day works for you?`;
+    return `Ориентировочная стоимость «${rangeFail[1]}» — ${rangeFail[2]}–${rangeFail[3]} сом (точную мастер озвучит на месте). На какой день вас записать?`;
+  }
   if (/не получилось открыть фото|не получилось оценить по фото/i.test(text)) {
     if (language === "ky") return "Сүрөттү ача алган жокмын. Дагы бир жолу жөнөтүңүзчү, же баасын уста жеринде айтат.";
     if (language === "en") return "I couldn't open the photo. Please send it again, or the master will price it on site.";
@@ -1284,7 +1373,10 @@ ${opts.pricingRules ? `Правила оценки от салона: ${opts.pri
       required: ["price", "explanation"],
     },
     temperature: 0.2,
-    maxOutputTokens: 200,
+    maxOutputTokens: 1024,
+    // Vision call returns a tiny JSON — don't waste budget on hidden "thinking",
+    // it leaves nothing for the actual output and we get finishReason=MAX_TOKENS.
+    thinkingBudget: 0,
   });
   if (!res.ok || !res.text) return { error: res.error ?? "vision failed" };
   try {
@@ -1698,8 +1790,9 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
       const dl = await downloadImageAsBase64(lastImage.media_signed_url);
       if ("error" in dl) {
         debug.errors.push(`photo download: ${dl.error}`);
-        factual = `Не получилось открыть фото. Попроси прислать его ещё раз или мастер уточнит цену на месте.`;
-        state = "awaiting_photo";
+        factual = `Скажи: фото не удалось открыть, ориентировочная стоимость «${svcRow.name}» — ${svcRow.price}–${svcRow.price_max} сом (точную мастер уточнит на месте). Спроси на какой день записать.`;
+        state = "collecting";
+        sd.price_skipped = true;
         return finish();
       }
       const priced = await priceFromPhoto({
@@ -1718,7 +1811,7 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
         // → factual is shown instead of being swallowed by stuckClarifyReply.
         state = "collecting";
         sd.price_skipped = true;
-        factual = `Не получилось оценить по фото. Скажи, что точную стоимость мастер озвучит на месте, и предложи выбрать день для записи.`;
+        factual = `Скажи: по фото точную сумму определить не вышло, ориентировочная стоимость «${svcRow.name}» — ${svcRow.price}–${svcRow.price_max} сом (точную мастер озвучит на месте). Затем сразу спроси на какой день записать.`;
         return finish();
       } else {
         sd.priced_value = priced.price;
