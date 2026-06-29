@@ -624,7 +624,7 @@ function deterministicParse(opts: {
 
   // Exact yes / no / any-master, now incl. Kyrgyz (ооба/макул = yes, жок = no, баары бир = any).
   // Extended patterns to catch more variations including typos and abbreviations.
-  if (/(^|\s)(да|ага|ок|окей|оке|хорошо|хорош|записывайте|подтверждаю|ооба|макул|макуль|yes|ага|угу)(\s|$)/.test(t)) intent = intent ?? "confirm_yes";
+  if (/(^|\s)(да|ага|ок|окей|оке|хорошо|хорош|записывайте|подтверждаю|подтверди|верно|правильно|так точно|конечно|давай|давайте|ладно|ооба|макул|макуль|туура|болот|жакшы|yes|угу|yep|yeah)(\s|$)/.test(t)) intent = intent ?? "confirm_yes";
   if (/(^|\s)(нет|неа|ни|другое|не подходит|жок|no|неэ|нее)(\s|$)/.test(t)) intent = intent ?? "deny_no";
   if (/(^|\s)(любой|любому|без разницы|не принципиально|все равно|всё равно|любое|неважно|не важно|баары бир|баарыбир|бары бир|равно)(\s|$)/.test(t)) intent = intent ?? "any_master";
   // Typo-tolerant yes/no for short confirmations ("оке", "нееет", "ооаба", "макуль") — increased maxDist.
@@ -919,13 +919,13 @@ async function compose(opts: {
   // Prepend a warm greeting on first contact (unless the reply already greets).
   const greetReply = (reply: string): string => {
     if (!opts.greet) return reply;
-    if (/^\s*(здрав|привет|саламат|салам|ваалейкум|hello|hi|hey|добр)/iu.test(reply)) return reply;
-    // Only use the admin-configured greeting (typically in Russian) for Russian-speaking clients.
-    // For Kyrgyz/English clients, use a language-appropriate default instead.
-    const useConfigGreeting = opts.language === "ru" && opts.greeting && /\p{L}/u.test(opts.greeting);
-    const g = useConfigGreeting
-      ? opts.greeting!.trim()
-      : (opts.islamicGreeting && opts.language === "ky") ? "Ваалейкум Ассалам!"
+    // If client used Islamic greeting but reply doesn't respond in kind — override it.
+    if (opts.islamicGreeting && /^\s*(ваалейкум|wa.?alaikum)/iu.test(reply)) return reply;
+    if (!opts.islamicGreeting && /^\s*(здрав|привет|саламат|салам|ваалейкум|hello|hi|hey|добр)/iu.test(reply)) return reply;
+    // Islamic greeting overrides the salon's custom greeting for all languages.
+    const useConfigGreeting = !opts.islamicGreeting && opts.language === "ru" && opts.greeting && /\p{L}/u.test(opts.greeting);
+    const g = opts.islamicGreeting ? "Ваалейкум ас-салям!"
+      : useConfigGreeting ? opts.greeting!.trim()
       : opts.language === "ky" ? "Саламатсызбы!"
       : opts.language === "en" ? "Hello!"
       : "Здравствуйте!";
@@ -952,7 +952,8 @@ ${opts.tone ? `ОБЯЗАТЕЛЬНЫЕ правила тона и формул�
 
   // Deterministic answers for list/choice prompts are safer than asking Gemini
   // to paraphrase them: the model was adding non-existent services in live chats.
-  if (/^—\s+[^\n]+/m.test(opts.factualContext)) {
+  // Accept any dash-like character (—, –, -) to be robust against editor differences.
+  if (/^[-–—]\s+[^\n]+/m.test(opts.factualContext)) {
     return greetReply(instructionFallbackReply(opts.factualContext, opts.language, opts.salon.salonName));
   }
 
@@ -1066,10 +1067,11 @@ function humanHandoffReply(language: "ru" | "ky" | "en", salonName?: string): st
 
 function instructionFallbackReply(factual: string, language: "ru" | "ky" | "en", salonName?: string): string {
   const text = factual.replace(/\s+/g, " ").trim();
-  const serviceList = [...factual.matchAll(/^—\s+(.+)$/gm)].map((m) => m[1].trim()).filter(Boolean);
+  const serviceList = [...factual.matchAll(/^[-–—]\s+(.+)$/gm)].map((m) => m[1].trim()).filter(Boolean);
   if (serviceList.length) {
     const list = serviceList.map((s) => `— ${s}`).join("\n");
-    if (language === "ky") return `Бизде бар кызматтар:\n${list}\n\nКайсы кызматка жазыласыз?`;
+    const namePrefix = salonName ? `«${salonName}» — ` : "";
+    if (language === "ky") return `${namePrefix}бизде бар кызматтар:\n${list}\n\nКайсы кызматка жазыласыз?`;
     if (language === "en") return `We offer:\n${list}\n\nWhich service would you like to book?`;
     return `У нас есть:\n${list}\n\nНа какую услугу вас записать?`;
   }

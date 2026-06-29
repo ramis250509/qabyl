@@ -67,13 +67,17 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { runWaAgent } = await import("@/lib/wa-agent.server");
 
-    const [{ data: salon }, { data: assistant }, { data: branchRows }] = await Promise.all([
+    const [salonResult, assistantResult, branchResult] = await Promise.all([
       supabaseAdmin.from("salons").select("id, name, timezone").eq("id", data.salonId).maybeSingle(),
       supabaseAdmin.from("salon_ai_assistant").select("greeting, tone_instructions, pricing_rules, languages").eq("salon_id", data.salonId).maybeSingle(),
       supabaseAdmin.from("branches").select("id, name, address").eq("salon_id", data.salonId).eq("is_active", true).order("sort_order"),
     ]);
 
-    if (!salon) throw new Error("Salon not found");
+    if (salonResult.error) throw new Error(`DB error (проверьте SUPABASE_SERVICE_ROLE_KEY): ${salonResult.error.message}`);
+    if (!salonResult.data) throw new Error("Salon not found");
+    const salon = salonResult.data;
+    const assistant = assistantResult.data;
+    const branchRows = branchResult.data;
 
     // For the simulator, pass the image as a data URL directly — no Supabase upload needed.
     // downloadImageAsBase64() in the agent handles data: URLs by extracting the base64 inline.
