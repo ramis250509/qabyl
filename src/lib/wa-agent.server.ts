@@ -1664,7 +1664,10 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
       factual = `Извинись: услуги ещё не настроены в системе. Попроси связаться с салоном напрямую.`;
       return finish();
     }
-    const top = services.slice(0, 8).map((s: any) => `— ${s.name}`).join("\n");
+    const top = services.slice(0, 8).map((s: any) => {
+      const price = s.price_type === "range" ? `${s.price}–${s.price_max} сом` : `${s.price} сом`;
+      return `— ${s.name}: ${price}`;
+    }).join("\n");
     if (intent === "greet") {
       factual = `Поприветствуй клиента от имени салона «${input.salon.salonName}» и предложи помочь с записью. Перечисли услуги:\n${top}`;
     } else if (intent === "ask_price" || intent === "ask_services") {
