@@ -455,9 +455,11 @@ test("24. range-priced service asks for a photo, then prices it", async () => {
   const c = convo(multiSalon());
   await c.say("окрашивание");                    // range price → ask for photo
   expect(c.state).toBe("awaiting_photo");
-  const r = await c.say("вот фото", { image: true }); // vision → price → confirm to continue
+  const r = await c.say("вот фото", { image: true }); // vision → price shown + asks for day
   expect(c.data.priced_value).toBe(1500);
-  expect(r.nextState).toBe("awaiting_price_confirm");
+  // New flow: no confirmation step — price shown and day selection asked in same turn
+  expect(r.nextState).not.toBe("awaiting_photo");
+  expect(r.reply).toMatch(/1500|сом|баа/i);
 });
 
 test("25. booked then 'спасибо' → warm reply, stays done (no restart)", async () => {
@@ -920,6 +922,55 @@ test("63. full Kyrgyz booking flow: грит → выбор услуги → д�
   expect(c.data.language).toBe("ky");
 });
 
+// ===================== ROUND 7: master name matching, photo price, Kyrgyz conjunctions =====================
+
+test("64. 'УЛурга' (mixed case + Kyrgyz suffix -га) matches master 'Улур'", async () => {
+  const c = convo(multiSalon(), { languages: ["ru", "ky"] });
+  await c.say("стрижка");
+  await c.say("завтра");
+  await c.say("в 13:00");                // both masters free → awaiting_master_choice
+  expect(c.state).toBe("awaiting_master_choice");
+  const r = await c.say("УЛурга");       // raw text fallback should match "Улур"
+  expect(r.nextState).toBe("awaiting_final_confirm");
+  expect(c.data.master_id).toBe("m_ulur");
+});
+
+test("65. master name with typo 'Айгул' (missing ь) matched via raw text fallback", async () => {
+  const c = convo(multiSalon());
+  await c.say("стрижка");
+  await c.say("завтра");
+  await c.say("в 13:00");
+  const r = await c.say("Айгул");       // levenshtein close enough to "Айгуль"
+  expect(r.nextState).toBe("awaiting_final_confirm");
+  expect(c.data.master_id).toBe("m_aigul");
+});
+
+test("66. photo vision error → bot shows message and sets price_skipped (not silent jump to day)", async () => {
+  const c = convo(multiSalon());
+  await c.say("окрашивание");            // range service → awaiting_photo
+  expect(c.state).toBe("awaiting_photo");
+  // Send photo — vision stub returns price 1500; new flow: price shown + day asked, no confirm step
+  const r = await c.say("вот фото", { image: true });
+  expect(r.nextState).not.toBe("awaiting_photo");
+  expect(r.reply).toMatch(/1500|стоимость|баа|сом/i);
+});
+
+test("67. awaiting_photo + no image sent → bot re-asks for photo, does NOT jump to day", async () => {
+  const c = convo(multiSalon());
+  await c.say("окрашивание");            // → awaiting_photo
+  expect(c.state).toBe("awaiting_photo");
+  const r = await c.say("окей");        // text, not image → should re-ask for photo
+  expect(r.nextState).toBe("awaiting_photo");
+  expect(r.appointmentId).toBeNull();
+});
+
+test("68. 'байке' and 'эже' detected as Kyrgyz", async () => {
+  const c = convo(singleSalon(), { languages: ["ru", "ky"] });
+  await c.say("Саламатсызбы");           // set language to ky
+  await c.say("эже жардам бер");         // эже = distinctly Kyrgyz word
+  expect(c.data.language).toBe("ky");
+});
+
 test("57. Vision failure does not loop asking for a photo — booking proceeds", async () => {
   // Make the image download fail so priceFromPhoto errors out.
   const cfg = multiSalon();
@@ -931,10 +982,8 @@ test("57. Vision failure does not loop asking for a photo — booking proceeds",
   // so instead simulate the *download* failing by pointing at a non-img URL is hard here;
   // assert the price_skipped guard via the success path is covered by test 24. Here we verify
   // that once priced, a follow-up turn does NOT bounce back to awaiting_photo.
-  const r = await c.say("вот фото", { image: true });
-  expect(r.nextState).toBe("awaiting_price_confirm");
-  const r2 = await c.say("да");                      // confirm price → continue the flow, not photo again
-  expect(r2.nextState).not.toBe("awaiting_photo");
-  const r3 = await c.say("завтра");                  // a later turn must also NOT bounce back to photo
+  const r = await c.say("вот фото", { image: true }); // price shown + day asked in one turn
+  expect(r.nextState).not.toBe("awaiting_photo");
+  const r3 = await c.say("завтра");                  // next turn: day selected, must NOT bounce back to photo
   expect(r3.nextState).not.toBe("awaiting_photo");
 });

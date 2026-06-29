@@ -229,7 +229,7 @@ function availablePartsToday(nowHour: number): Array<"morning" | "afternoon" | "
 // (?<![\p{L}]) / (?![\p{L}]). Words that also exist in Russian (бар, etc.) are excluded to
 // avoid misdetecting Russian as Kyrgyz.
 const KY_WORD_RE =
-  /(?<![\p{L}])(алейкум|ассалму|саламат[\p{L}]*|салам(атсызбы|атчылык)?|жакшы|кандай|канча|ооба|жок|макул|бүгүн|бугун|эртең|эртен|эртеси|кеч(инде|ке|ки)?|таңда|түш(тө|кү)?|менин|жаз[\p{L}]*|куну|күнү|кереги|керек|рахмат|тушун[\p{L}]*|түшүн[\p{L}]*|саат|болот|кайра|кызмат[\p{L}]*)(?![\p{L}])/iu;
+  /(?<![\p{L}])(алейкум|ассалму|байке|эже|аке|иним|кандайс[\p{L}]*|саламат[\p{L}]*|салам(атсызбы|атчылык)?|жакшы|кандай|канча|ооба|жок|макул|бүгүн|бугун|эртең|эртен|эртеси|кеч(инде|ке|ки)?|таңда|түш(тө|кү)?|менин|жаз[\p{L}]*|куну|күнү|кереги|керек|рахмат|тушун[\p{L}]*|түшүн[\p{L}]*|саат|болот|кайра|кызмат[\p{L}]*)(?![\p{L}])/iu;
 
 function detectLanguage(text: string): "ru" | "ky" | "en" {
   if (!text) return "ru";
@@ -996,7 +996,10 @@ function instructionFallbackReply(factual: string, language: "ru" | "ky" | "en",
   // Several masters free for the chosen slot.
   const masterChoice = text.match(/на\s+([0-9:]+)\s+свободны мастера\s+(.+?)\.\s*спроси/i);
   if (masterChoice) {
-    if (language === "ky") return `${masterChoice[1]} бош усталар: ${masterChoice[2]}. Кимге жазайын, же «баары бир»?`;
+    if (language === "ky") {
+      const names = masterChoice[2].replace(/ и /g, " жана ");
+      return `${masterChoice[1]} бош усталар: ${names}. Кимге жазайын, же «баары бир»?`;
+    }
     if (language === "en") return `Available masters at ${masterChoice[1]}: ${masterChoice[2]}. Who should I book, or "any"?`;
     return `На ${masterChoice[1]} свободны мастера ${masterChoice[2]}. К кому записать или «не принципиально»?`;
   }
@@ -1018,6 +1021,12 @@ function instructionFallbackReply(factual: string, language: "ru" | "ky" | "en",
     return "Пришлите, пожалуйста, фото — так мастер оценит стоимость точнее.";
   }
   const priceConfirm = text.match(/около\s+(\d+)\s*сом/i);
+  if (priceConfirm && /ориентировочная стоимость|на какой день записать/i.test(text)) {
+    // New flow: show price + disclaimer + ask for day (no confirmation step)
+    if (language === "ky") return `Болжолдуу баасы — ${priceConfirm[1]} сом (так баасын уста жеринде айтат). Кайсы күнгө жазыласыз: бүгүн, эртең же башка күнгө?`;
+    if (language === "en") return `Approximate price — ${priceConfirm[1]} som (master will confirm on site). What day works for you?`;
+    return `Примерная стоимость — около ${priceConfirm[1]} сом (точную мастер озвучит на месте). На какой день вас записать?`;
+  }
   if (priceConfirm && /продолжаем|подбор времени|стоимость по фото/i.test(text)) {
     if (language === "ky") return `Болжолдуу баасы — ${priceConfirm[1]} сом. Убакыт тандоону улантабызбы?`;
     if (language === "en") return `Approximate price — ${priceConfirm[1]} som. Shall we continue picking a time?`;
@@ -1679,17 +1688,22 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
       });
       if ("error" in priced) {
         debug.errors.push(`vision: ${priced.error}`);
-        factual = `Не получилось оценить по фото. Скажи, что точную стоимость мастер озвучит на месте, а пока подбери удобное время.`;
-        // Proceed without a price override, and remember we skipped so we don't re-ask for a photo.
+        factual = `Не получилось оценить по фото. Скажи, что точную стоимость мастер озвучит на месте, и предложи продолжить запись.`;
         sd.priced_value = undefined;
         sd.price_skipped = true;
+        return finish(); // show the message before proceeding to day selection on next turn
       } else {
         sd.priced_value = priced.price;
-        factual = `Скажи: стоимость по фото составит около ${priced.price} сом (${priced.explanation}). Спроси, продолжаем подбор времени?`;
-        state = "awaiting_price_confirm";
+        state = "collecting"; // move past awaiting_photo so next turn goes to day selection
+        // Show price with disclaimer and immediately ask for day — no extra confirmation step.
+        factual = `Скажи: по фото ориентировочная стоимость «${svcRow.name}» — около ${priced.price} сом (${priced.explanation}). Цена примерная, точную мастер уточнит на месте. Затем сразу спроси на какой день записать.`;
         return finish();
       }
-    } else if (intent !== "confirm_yes" && state !== "awaiting_photo") {
+    } else if (state === "awaiting_photo") {
+      // Photo expected but didn't arrive (upload failed or client sent text instead of image).
+      factual = `Фото не получилось открыть. Попроси прислать его ещё раз или скажи что мастер уточнит цену на месте.`;
+      return finish();
+    } else if (intent !== "confirm_yes") {
       factual = `Скажи, что услуга «${svcRow.name}» — с диапазоном цены ${svcRow.price}–${svcRow.price_max} сом, и попроси прислать фото, чтобы оценить стоимость точнее.`;
       state = "awaiting_photo";
       return finish();
@@ -1832,6 +1846,11 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
       chosen = matchMasterByName(candidates, entities.master_name);
     } else if (intent === "any_master") {
       chosen = pickMasterFromCandidates(masters, sd.candidate_master_ids);
+    } else if (state === "awaiting_master_choice" && combinedLastText.trim()) {
+      // Gemini didn't extract master_name — try matching the raw message directly.
+      // Handles "УЛурга" (Kyrgyz case suffix -га) → "Улур", typos, mixed case, etc.
+      chosen = matchMasterByName(candidates, combinedLastText.trim());
+      if (chosen) debug.actions.push(`master_from_raw:${chosen.name}`);
     }
     if (chosen) {
       sd.master_id = chosen.id;
@@ -1841,11 +1860,13 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
       // Re-ask the master question with the valid names (don't fall through to a wrong prompt).
       const names = candidates.map((m) => m.name);
       const timeHuman = formatTimeInTz(sd.slot_start, input.salon.timezone);
+      const andWord = language === "ky" ? " жана " : " и ";
+      const anyPhrase = language === "ky" ? "баары бир" : "не принципиально";
       const prefix =
         entities.master_name && sd.last_prompt === "master"
-          ? `Скажи: такого мастера на это время нет. На ${timeHuman} свободны: ${names.join(" и ")}.`
-          : `Скажи: на ${timeHuman} свободны мастера ${names.join(" и ")}.`;
-      factual = `${prefix} Спроси, к кому записать или «не принципиально».`;
+          ? `Скажи: такого мастера на это время нет. На ${timeHuman} свободны: ${names.join(andWord)}.`
+          : `Скажи: на ${timeHuman} свободны мастера ${names.join(andWord)}.`;
+      factual = `${prefix} Спроси, к кому записать или «${anyPhrase}»`;
       sd.last_prompt = "master";
       state = "awaiting_master_choice";
       return finish();
