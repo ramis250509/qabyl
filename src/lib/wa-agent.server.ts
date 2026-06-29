@@ -1803,7 +1803,7 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
         // → factual is shown instead of being swallowed by stuckClarifyReply.
         state = "collecting";
         sd.price_skipped = true;
-        factual = `Не получилось оценить по фото. Скажи, что точную стоимость мастер озвучит на месте, и предложи выбрать день для записи.`;
+        factual = `Скажи: по фото точную сумму определить не вышло, ориентировочная стоимость «${svcRow.name}» — ${svcRow.price}–${svcRow.price_max} сом (точную мастер озвучит на месте). Затем сразу спроси на какой день записать.`;
         return finish();
       } else {
         sd.priced_value = priced.price;
