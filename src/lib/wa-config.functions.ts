@@ -75,25 +75,11 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
 
     if (!salon) throw new Error("Salon not found");
 
-    // Upload simulator image to storage if provided
-    let imageSignedUrl: string | null = null;
-    let imagePath: string | null = null;
-    if (data.imageBase64 && data.imageMime) {
-      const ext = data.imageMime.split("/")[1]?.replace(/[^a-z0-9]/gi, "") || "jpg";
-      imagePath = `simulator/${data.salonId}/${Date.now()}.${ext}`;
-      const bytes = Uint8Array.from(atob(data.imageBase64), (c) => c.charCodeAt(0));
-      const { error: upErr } = await supabaseAdmin.storage
-        .from("wa-media")
-        .upload(imagePath, bytes, { contentType: data.imageMime, upsert: false });
-      if (!upErr) {
-        const { data: s } = await supabaseAdmin.storage
-          .from("wa-media")
-          .createSignedUrl(imagePath, 600);
-        imageSignedUrl = s?.signedUrl ?? null;
-      }
-    }
-
-    const isImageOnly = imageSignedUrl && !data.messageText.trim();
+    // For the simulator, pass the image as a data URL directly — no Supabase upload needed.
+    // downloadImageAsBase64() in the agent handles data: URLs by extracting the base64 inline.
+    const imageSignedUrl = (data.imageBase64 && data.imageMime)
+      ? `data:${data.imageMime};base64,${data.imageBase64}`
+      : null;
     const incomingMsg: WaIncomingMessage = {
       id: crypto.randomUUID(),
       direction: "in",
@@ -101,7 +87,7 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
       text_body: data.messageText || null,
       media_signed_url: imageSignedUrl,
       media_mime: data.imageMime ?? null,
-      media_path: imagePath,
+      media_path: null,
       created_at: new Date().toISOString(),
     };
 

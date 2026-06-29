@@ -1292,6 +1292,17 @@ ${opts.pricingRules ? `Правила оценки от салона: ${opts.pri
 }
 
 async function downloadImageAsBase64(url: string): Promise<{ base64: string; mime: string } | { error: string }> {
+  // Simulator passes a data URL directly — extract base64 without any network request.
+  if (url.startsWith("data:")) {
+    const comma = url.indexOf(",");
+    if (comma === -1) return { error: "invalid data url" };
+    const header = url.slice(0, comma);
+    const base64 = url.slice(comma + 1);
+    const mime = header.match(/:(.*?);/)?.[1] ?? "image/jpeg";
+    if (!base64) return { error: "empty data url" };
+    return { base64, mime };
+  }
+
   // Green-API signed URLs expire (~600s) and the network can stall — without a timeout a slow
   // fetch would hang the whole webhook (and the per-conversation lock) until it gave up.
   const controller = new AbortController();
