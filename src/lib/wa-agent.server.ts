@@ -1366,7 +1366,10 @@ ${opts.pricingRules ? `Правила оценки от салона: ${opts.pri
       required: ["price", "explanation"],
     },
     temperature: 0.2,
-    maxOutputTokens: 200,
+    maxOutputTokens: 1024,
+    // Vision call returns a tiny JSON — don't waste budget on hidden "thinking",
+    // it leaves nothing for the actual output and we get finishReason=MAX_TOKENS.
+    thinkingBudget: 0,
   });
   if (!res.ok || !res.text) return { error: res.error ?? "vision failed" };
   try {
