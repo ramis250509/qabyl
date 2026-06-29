@@ -1784,7 +1784,8 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
       if ("error" in dl) {
         debug.errors.push(`photo download: ${dl.error}`);
         factual = `Скажи: фото не удалось открыть, ориентировочная стоимость «${svcRow.name}» — ${svcRow.price}–${svcRow.price_max} сом (точную мастер уточнит на месте). Спроси на какой день записать.`;
-        state = "awaiting_photo";
+        state = "collecting";
+        sd.price_skipped = true;
         return finish();
       }
       const priced = await priceFromPhoto({
