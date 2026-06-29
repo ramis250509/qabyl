@@ -365,11 +365,10 @@ async function callGemini(opts: {
     }
   }
 
-  // Fallback: direct Gemini key is exhausted. Try Lovable AI Gateway with an equivalent
-  // Gemini model. Same multimodal (text + image) support, billed via Lovable credits.
-  const fb = await callViaLovableGateway(opts);
-  if (fb.ok) return fb;
-  return { ok: false, error: lastQuotaError ?? fb.error ?? "gemini unknown" };
+  // No fallback: the user explicitly requested that every call go through their own
+  // Gemini API key (paid subscription) and never spend Lovable credits. Surface the
+  // 429/quota error as-is so they can see it in logs and top up Gemini billing.
+  return { ok: false, error: lastQuotaError ?? "gemini unknown" };
 }
 
 // ----- Lovable AI Gateway fallback (OpenAI-compatible chat completions)
