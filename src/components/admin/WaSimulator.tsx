@@ -49,16 +49,30 @@ export function WaSimulator({ salonId }: { salonId: string }) {
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const dataUrl = ev.target?.result as string;
-      // Extract base64 part: "data:image/jpeg;base64,<here>"
-      const [header, base64] = dataUrl.split(",");
-      const mime = header.match(/:(.*?);/)?.[1] ?? "image/jpeg";
-      setPendingImage({ dataUrl, base64, mime });
-    };
-    reader.readAsDataURL(file);
     e.target.value = "";
+    // Resize to max 1024px and compress to JPEG 80% — keeps base64 under ~300KB
+    // so the server function body stays well within size limits.
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      const MAX = 1024;
+      let { width, height } = img;
+      if (width > MAX || height > MAX) {
+        if (width >= height) { height = Math.round(height * MAX / width); width = MAX; }
+        else { width = Math.round(width * MAX / height); height = MAX; }
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext("2d")!.drawImage(img, 0, 0, width, height);
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+      const comma = dataUrl.indexOf(",");
+      const base64 = dataUrl.slice(comma + 1);
+      setPendingImage({ dataUrl, base64, mime: "image/jpeg" });
+    };
+    img.onerror = () => URL.revokeObjectURL(objectUrl);
+    img.src = objectUrl;
   }
 
   async function send() {
