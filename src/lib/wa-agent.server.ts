@@ -917,6 +917,7 @@ function stuckClarifyReply(questionKey: string | undefined, language: "ru" | "ky
   const L = <T,>(ru: T, ky: T, en: T): T => (language === "ky" ? ky : language === "en" ? en : ru);
   switch (questionKey) {
     case 'photo':
+    case 'photo_retry':
       return L(
         'Пришлите, пожалуйста, фото — нажмите на иконку изображения рядом с полем сообщения.',
         'Сүрөттү жөнөтүңүзчү — билдирүү талаасынын жанындагы сүрөт баскычын басыңыз.',
@@ -1706,21 +1707,23 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
       });
       if ("error" in priced) {
         debug.errors.push(`vision: ${priced.error}`);
-        factual = `Не получилось оценить по фото. Скажи, что точную стоимость мастер озвучит на месте, и предложи продолжить запись.`;
-        sd.priced_value = undefined;
+        // Change state to "collecting" so finish() sees state change → sameQuestion=false
+        // → factual is shown instead of being swallowed by stuckClarifyReply.
+        state = "collecting";
         sd.price_skipped = true;
-        return finish(); // show the message before proceeding to day selection on next turn
+        factual = `Не получилось оценить по фото. Скажи, что точную стоимость мастер озвучит на месте, и предложи выбрать день для записи.`;
+        return finish();
       } else {
         sd.priced_value = priced.price;
         state = "collecting"; // move past awaiting_photo so next turn goes to day selection
-        // Show price with disclaimer and immediately ask for day — no extra confirmation step.
         factual = `Скажи: по фото ориентировочная стоимость «${svcRow.name}» — около ${priced.price} сом (${priced.explanation}). Цена примерная, точную мастер уточнит на месте. Затем сразу спроси на какой день записать.`;
         return finish();
       }
     } else if (state === "awaiting_photo") {
-      // Photo expected but didn't arrive (upload failed or client sent text instead of image).
-      factual = `Фото не получилось получить. Попроси прислать его ещё раз (нажать на иконку 📷 рядом с полем сообщения).`;
-      sd.last_prompt = "photo"; // ensures stuckClarifyReply says "send photo" not "write service"
+      // Photo expected but didn't arrive — use a DIFFERENT last_prompt so finish() doesn't
+      // trigger sameQuestion and swallow this message with stuckClarifyReply.
+      factual = `Фото не получилось получить. Попроси прислать его ещё раз через иконку 📷.`;
+      sd.last_prompt = "photo_retry";
       return finish();
     } else if (intent !== "confirm_yes") {
       factual = `Скажи, что услуга «${svcRow.name}» — с диапазоном цены ${svcRow.price}–${svcRow.price_max} сом, и попроси прислать фото, чтобы оценить стоимость точнее.`;
