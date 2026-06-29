@@ -1104,6 +1104,13 @@ function instructionFallbackReply(factual: string, language: "ru" | "ky" | "en",
     if (language === "en") return `${nearestMatch[1]} isn't free. Nearest times: ${nearestMatch[2]}. Which one works?`;
     return `На ${nearestMatch[1]} свободного окна нет. Ближайшее время: ${nearestMatch[2]}. Какое подойдёт?`;
   }
+  // Vision/download failed but salon's price range was voiced in the factual.
+  const rangeFail = text.match(/ориентировочная стоимость «(.+?)» — (\d+)[–-](\d+) сом/i);
+  if (rangeFail) {
+    if (language === "ky") return `«${rangeFail[1]}» үчүн болжолдуу баасы — ${rangeFail[2]}–${rangeFail[3]} сом (так баасын уста жеринде айтат). Кайсы күнгө жазыласыз?`;
+    if (language === "en") return `Approximate price for «${rangeFail[1]}» — ${rangeFail[2]}–${rangeFail[3]} som (master will confirm on site). What day works for you?`;
+    return `Ориентировочная стоимость «${rangeFail[1]}» — ${rangeFail[2]}–${rangeFail[3]} сом (точную мастер озвучит на месте). На какой день вас записать?`;
+  }
   if (/не получилось открыть фото|не получилось оценить по фото/i.test(text)) {
     if (language === "ky") return "Сүрөттү ача алган жокмын. Дагы бир жолу жөнөтүңүзчү, же баасын уста жеринде айтат.";
     if (language === "en") return "I couldn't open the photo. Please send it again, or the master will price it on site.";
