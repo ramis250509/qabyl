@@ -229,14 +229,16 @@ function availablePartsToday(nowHour: number): Array<"morning" | "afternoon" | "
 // (?<![\p{L}]) / (?![\p{L}]). Words that also exist in Russian (бар, etc.) are excluded to
 // avoid misdetecting Russian as Kyrgyz.
 const KY_WORD_RE =
-  /(?<![\p{L}])(саламат[\p{L}]*|салам(атсызбы|атчылык)?|жакшы|кандай|канча|ооба|жок|макул|бүгүн|бугун|эртең|эртен|эртеси|кеч(инде|ке|ки)?|таңда|түш(тө|кү)?|менин|жаз[\p{L}]*|куну|күнү|кереги|керек|рахмат|тушун[\p{L}]*|түшүн[\p{L}]*|саат|болот|кайра|кызмат[\p{L}]*)(?![\p{L}])/iu;
+  /(?<![\p{L}])(алейкум|ассалму|саламат[\p{L}]*|салам(атсызбы|атчылык)?|жакшы|кандай|канча|ооба|жок|макул|бүгүн|бугун|эртең|эртен|эртеси|кеч(инде|ке|ки)?|таңда|түш(тө|кү)?|менин|жаз[\p{L}]*|куну|күнү|кереги|керек|рахмат|тушун[\p{L}]*|түшүн[\p{L}]*|саат|болот|кайра|кызмат[\p{L}]*)(?![\p{L}])/iu;
 
 function detectLanguage(text: string): "ru" | "ky" | "en" {
   if (!text) return "ru";
   const lower = text.toLowerCase();
   const hasKyrgyzLetters = /[ңүөҢҮӨ]/.test(text);
   const hasLatinKyrgyzSignals = /\b(salam|salamat|bugun|bugin|erten|kec|kyrgyz|kizmat|chach|kyzmat|kyrgyzstan|sizin|biz|jany|ja?an|manikur|pedikur)\b/i.test(lower);
-  if (hasKyrgyzLetters || KY_WORD_RE.test(lower) || hasLatinKyrgyzSignals) return "ky";
+  // Islamic greeting used as standard Kyrgyz greeting in Kyrgyzstan — treat as Kyrgyz signal.
+  const hasIslamicGreeting = /ассаламу?\s*а?лейку?м|ассалму\s*а?лейку?м/i.test(text);
+  if (hasKyrgyzLetters || KY_WORD_RE.test(lower) || hasLatinKyrgyzSignals || hasIslamicGreeting) return "ky";
   if (/[а-яё]/i.test(lower)) return "ru";
   if (/^[\x00-\x7f\s]+$/.test(text) && /[a-z]/i.test(text)) return "en";
   return "ru";
@@ -250,6 +252,7 @@ function confidentLanguage(text: string): boolean {
   const lower = text.toLowerCase();
   if (/[ңүөҢҮӨ]/.test(text)) return true;
   if (KY_WORD_RE.test(lower)) return true;
+  if (/ассаламу?\s*а?лейку?м|ассалму/i.test(text)) return true;
   if (/\b(salam|salamat|bugun|bugin|erten|kec|kizmat|chach|kyrgyz|jany|sizin|biz|kanday|kansha)\b/i.test(lower)) return true;
   if (/^[\x00-\x7f\s]+$/.test(text) && /[a-z]/i.test(text)) return true;
   return false;
@@ -460,11 +463,15 @@ function findServiceByText(
   // Lowered threshold from 55 to 45 to catch more fuzzy matches, and allow service-like short phrases.
   if (best && best.score >= 45) return best.service;
   if (hasServiceSignal && !best) {
-    const fallback = services.find((s) =>
-      normalizeForMatch(s.name).includes(t.split(" ")[0] ?? "") ||
-      t.includes(normalizeForMatch(s.name).split(" ")[0] ?? ""),
-    );
-    if (fallback) return fallback;
+    // Only use multi-char tokens (≥3 chars) to avoid matching prepositions like "а", "в", "на".
+    const firstToken = (t.split(" ").find((tok) => tok.length >= 3)) ?? "";
+    if (firstToken) {
+      const fallback = services.find((s) =>
+        normalizeForMatch(s.name).includes(firstToken) ||
+        t.includes(normalizeForMatch(s.name).split(" ")[0] ?? ""),
+      );
+      if (fallback) return fallback;
+    }
   }
   return null;
 }
@@ -567,7 +574,8 @@ function deterministicParse(opts: {
   const service = findServiceByText(raw, opts.services);
   if (service) {
     entities.service_id = service.id;
-    if (!intent || ["greet", "smalltalk", "other", "ask_services"].includes(intent)) intent = "choose_service";
+    // Do NOT override ask_services — client is asking what's available, not choosing a specific service.
+    if (!intent || ["greet", "smalltalk", "other"].includes(intent)) intent = "choose_service";
   }
 
   const branch = opts.branches.find((b) => {
@@ -583,7 +591,7 @@ function deterministicParse(opts: {
   if (!intent && /(какие|какая|что есть|услуги|прайс|цены|стоимость|сколько|кызмат|услуга)/.test(t)) {
     intent = /(сколько|цена|цены|стоимость|прайс)/.test(t) ? "ask_price" : "ask_services";
   }
-  if (!intent && /(здрав|привет|салам|ассаламу|hello|hi|salam|salamat)/.test(t)) intent = "greet";
+  if (!intent && /(здрав|привет|салам|ассаламу|ассалму|алейкум|hello|hi|salam|salamat)/.test(t)) intent = "greet";
   if (!intent) intent = "other";
 
   return { intent, entities, language: lang };
@@ -784,10 +792,14 @@ ${compactHistory || "(пусто)"}
       deterministic.intent === "choose_service" && mergedEntities.service_id &&
       ["other", "greet", "smalltalk", "ask_services", "ask_price"].includes(geminiIntent)
         ? deterministic.intent
-        : deterministic.intent && deterministic.intent !== "other" &&
-            (geminiIntent === "other" || geminiIntent === "greet" || geminiIntent === "smalltalk")
+        // Trust deterministic when it explicitly found a query intent that Gemini misread as service choice
+        : (["ask_services", "ask_price"].includes(deterministic.intent as string) &&
+           geminiIntent === "choose_service" && !mergedEntities.service_id)
           ? deterministic.intent
-          : geminiIntent;
+          : deterministic.intent && deterministic.intent !== "other" &&
+              (geminiIntent === "other" || geminiIntent === "greet" || geminiIntent === "smalltalk")
+            ? deterministic.intent
+            : geminiIntent;
     return {
       intent: promoteIntentFromEntities(intent as Intent, mergedEntities),
       entities: mergedEntities,
@@ -815,17 +827,19 @@ async function compose(opts: {
   history?: WaIncomingMessage[];
   factualContext: string; // what the user must hear, in any language; Gemini translates/polishes
   greet?: boolean; // true on the very first assistant message → warm greeting up front
+  islamicGreeting?: boolean; // client opened with "Ассалму алейкум" — respond with "Ваалейкум Ассалам"
 }): Promise<string> {
   const langName = opts.language === "ky" ? "кыргызском" : opts.language === "en" ? "английском" : "русском";
   // Prepend a warm greeting on first contact (unless the reply already greets).
   const greetReply = (reply: string): string => {
     if (!opts.greet) return reply;
-    if (/^\s*(здрав|привет|саламат|салам|hello|hi|hey|добр)/iu.test(reply)) return reply;
+    if (/^\s*(здрав|привет|саламат|салам|ваалейкум|hello|hi|hey|добр)/iu.test(reply)) return reply;
     // Only use the admin-configured greeting (typically in Russian) for Russian-speaking clients.
     // For Kyrgyz/English clients, use a language-appropriate default instead.
     const useConfigGreeting = opts.language === "ru" && opts.greeting && /\p{L}/u.test(opts.greeting);
     const g = useConfigGreeting
       ? opts.greeting!.trim()
+      : (opts.islamicGreeting && opts.language === "ky") ? "Ваалейкум Ассалам!"
       : opts.language === "ky" ? "Саламатсызбы!"
       : opts.language === "en" ? "Hello!"
       : "Здравствуйте!";
@@ -1413,6 +1427,7 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
   let factual = "";
 
   const tone = input.config.tone_instructions;
+  const islamicGreeting = /ассаламу?\s*а?лейку?м|ассалму/i.test(combinedLastText);
   const compose1 = (text: string) =>
     compose({
       apiKey,
@@ -1423,6 +1438,7 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
       history: input.history,
       factualContext: text,
       greet: isFirstContact,
+      islamicGreeting,
     });
 
   // ----- Reset on cancel

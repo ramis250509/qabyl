@@ -845,6 +845,81 @@ test("56. salon tone_instructions reach the Gemini compose prompt", async () => 
   expect(composeSystemInstructions.some((s) => s.includes("комбо стрижка+укладка"))).toBe(true);
 });
 
+// ===================== ROUND 6: Islamic greeting, language fix, service list format =====================
+
+test("58. 'Ассалму аллейкум' → detected as Kyrgyz, language set to ky", async () => {
+  const c = convo(singleSalon(), { languages: ["ru", "ky"] });
+  await c.say("Ассалму аллейкум");
+  expect(c.data.language).toBe("ky");
+});
+
+test("59. 'Ассалму аллейкум' → reply starts with Ваалейкум or Ассалам (Islamic response)", async () => {
+  const c = convo(singleSalon(), { languages: ["ru", "ky"] });
+  const r = await c.say("Ассалму аллейкум");
+  expect(c.data.language).toBe("ky");
+  expect(/Ваалейкум|Ассалам/i.test(r.reply)).toBe(true);
+});
+
+test("59b. 'Ассалму аллейкум' (no ky in languages) → clamped to ru, no crash", async () => {
+  const c = convo(singleSalon(), { languages: ["ru"] });
+  const r = await c.say("Ассалму аллейкум");
+  expect(r.reply.length).toBeGreaterThan(0);
+  expect(r.appointmentId).toBeNull();
+});
+
+test("59c. 'Саламатсыбы' (typo for саламатсызбы) → detected as Kyrgyz", async () => {
+  const c = convo(singleSalon(), { languages: ["ru", "ky"] });
+  await c.say("Саламатсыбы");
+  expect(c.data.language).toBe("ky");
+});
+
+test("60. 'какие у вас услуги?' after service prompt → lists services, no day jump", async () => {
+  const c = convo(multiSalon());
+  await c.say("хочу записаться");         // bot asks: which service?
+  const r = await c.say("а какие у вас услуги есть?");
+  expect(r.appointmentId).toBeNull();
+  expect(r.nextState).toBe("collecting"); // still collecting service, NOT jumped to day
+  // Reply must contain at least one service name
+  expect(/Стрижка|Маникюр|Окрашивание/i.test(r.reply)).toBe(true);
+});
+
+test("60b. 'сколько стоит стрижка?' → lists price, no day jump", async () => {
+  const c = convo(multiSalon());
+  const r = await c.say("сколько стоит стрижка?");
+  expect(r.appointmentId).toBeNull();
+  // Should not jump straight to day selection
+  expect(r.nextState).not.toBe("awaiting_part_of_day");
+});
+
+test("61. service list is formatted with newlines not commas", async () => {
+  const c = convo(multiSalon());
+  const r = await c.say("Привет");
+  // With newline formatting, each service is on its own line
+  expect(r.reply).toContain("\n");
+  // Services are NOT comma-joined
+  expect(/Стрижка, Маникюр/.test(r.reply)).toBe(false);
+});
+
+test("62. Islamic greeting mid-session switches language to ky (confidentLanguage = true)", async () => {
+  const c = convo(singleSalon(), { languages: ["ru", "ky"] });
+  await c.say("Привет");                  // start in Russian
+  expect(c.data.language).toBe("ru");
+  await c.say("Ассалму аллейкум");        // Islamic greeting → confident ky signal → switch
+  expect(c.data.language).toBe("ky");
+});
+
+test("63. full Kyrgyz booking flow: грит → выбор услуги → день → время → подтверждение", async () => {
+  const c = convo(singleSalon(), { languages: ["ru", "ky"] });
+  await c.say("Саламатсызбы");            // greet in Kyrgyz → language = ky
+  expect(c.data.language).toBe("ky");
+  // choose service + day + time in one shot (Kyrgyz)
+  await c.say("эртең 12:45", { gemini: { intent: "choose_specific_time", language: "ky", entities: { day_relative: "tomorrow", specific_time: "12:45" } } });
+  expect(c.state).toBe("awaiting_final_confirm");
+  const r = await c.say("ооба");          // Kyrgyz "yes"
+  expect(r.appointmentId).not.toBeNull();
+  expect(c.data.language).toBe("ky");
+});
+
 test("57. Vision failure does not loop asking for a photo — booking proceeds", async () => {
   // Make the image download fail so priceFromPhoto errors out.
   const cfg = multiSalon();
