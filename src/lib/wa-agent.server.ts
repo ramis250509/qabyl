@@ -1783,7 +1783,7 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
       const dl = await downloadImageAsBase64(lastImage.media_signed_url);
       if ("error" in dl) {
         debug.errors.push(`photo download: ${dl.error}`);
-        factual = `Не получилось открыть фото. Попроси прислать его ещё раз или мастер уточнит цену на месте.`;
+        factual = `Скажи: фото не удалось открыть, ориентировочная стоимость «${svcRow.name}» — ${svcRow.price}–${svcRow.price_max} сом (точную мастер уточнит на месте). Спроси на какой день записать.`;
         state = "awaiting_photo";
         return finish();
       }
