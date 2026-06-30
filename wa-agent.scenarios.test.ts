@@ -284,6 +284,28 @@ test("8. date-only message (single) auto-service + sets day", async () => {
   expect(r.appointmentId).toBeNull();
 });
 
+test("8b. confirm 'да' when Gemini returns a stray service_id entity → still books (no loop)", async () => {
+  // Production bug repro: at awaiting_final_confirm the client says "да". Gemini classifies it
+  // as confirm_yes but ALSO returns a spurious service_id entity. The re-resolve guard must NOT
+  // fire for confirm_yes, otherwise the slot is dropped and the summary loops forever.
+  const c = convo(singleSalon());
+  const r1 = await c.say("Запишите меня на завтра в 12:45");
+  expect(r1.nextState).toBe("awaiting_final_confirm");
+  const r2 = await c.say("да", { gemini: { intent: "confirm_yes", entities: { service_id: "svc_hair" } } });
+  expect(r2.appointmentId).not.toBeNull();
+  expect(r2.nextState).toBe("done");
+  expect(c.db.appointments).toHaveLength(1);
+});
+
+test("8c. confirm 'да, все верно' with stray day_relative entity → still books", async () => {
+  const c = convo(singleSalon());
+  const r1 = await c.say("Запишите меня на завтра в 12:45");
+  expect(r1.nextState).toBe("awaiting_final_confirm");
+  const r2 = await c.say("да, все верно", { gemini: { intent: "confirm_yes", entities: { day_relative: "tomorrow" } } });
+  expect(r2.appointmentId).not.toBeNull();
+  expect(r2.nextState).toBe("done");
+});
+
 test("9. change time at confirm step → re-confirm new time, no double booking", async () => {
   const c = convo(singleSalon());
   await bookToConfirm(c, "завтра", "в 12:45");
