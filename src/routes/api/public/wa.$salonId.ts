@@ -4,13 +4,16 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
   greenApiSendMessage,
+  greenApiSendButtons,
+  greenApiSendListMessage,
   normalizeChatIdToPhone,
-  runWaAgentV2,
+  runWaAgentV3,
   type GreenApiCreds,
   type WaAgentInput,
   type WaAgentState,
   type WaBranchInfo,
   type WaIncomingMessage,
+  type WaInteractiveMessage,
 } from "@/lib/wa-agent.server";
 
 const LOCK_TTL_SECONDS = 25;
@@ -95,6 +98,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         let textBody: string | null = null;
         let imageDownloadUrl: string | null = null;
         let imageMime: string | null = null;
+        let selectedId: string | null = null; // V3: button/list selection
         const mt = md?.typeMessage;
         if (mt === "textMessage" || mt === "extendedTextMessage") {
           textBody =
@@ -105,6 +109,12 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
           imageDownloadUrl = md?.fileMessageData?.downloadUrl ?? null;
           imageMime = md?.fileMessageData?.mimeType ?? "image/jpeg";
           textBody = md?.fileMessageData?.caption ?? null;
+        } else if (mt === "buttonsResponseMessage") {
+          selectedId = md?.buttonsResponseMessage?.selectedButtonId ?? null;
+          textBody = md?.buttonsResponseMessage?.selectedButtonBody ?? selectedId;
+        } else if (mt === "listResponseMessage") {
+          selectedId = md?.listResponseMessage?.listResponseRow?.rowId ?? null;
+          textBody = md?.listResponseMessage?.listResponseRow?.title ?? selectedId;
         } else {
           // Unsupported types — just ack quietly.
           return ack();
@@ -226,6 +236,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             text_body: textBody,
             media_path: mediaPath,
             green_api_message_id: greenIdMessage ?? null,
+            ...(selectedId ? { meta: { selected_id: selectedId } } : {}),
           })
           .select("id")
           .single();
@@ -299,7 +310,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             // 1) Load unprocessed inbound messages for this conversation
             const { data: pending } = await supabaseAdmin
               .from("wa_messages")
-              .select("id, direction, kind, text_body, media_path, created_at")
+              .select("id, direction, kind, text_body, media_path, created_at, meta")
               .eq("conversation_id", convId)
               .eq("direction", "in")
               .is("processed_at", null)
@@ -327,6 +338,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
                 media_signed_url: signed,
                 media_path: m.media_path,
                 created_at: m.created_at,
+                selected_id: (m as any).meta?.selected_id ?? null,
               });
             }
 
@@ -372,7 +384,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
 
             let result;
             try {
-              result = await runWaAgentV2(input);
+              result = await runWaAgentV3(input);
             } catch (e: any) {
               console.error("[wa] runWaAgent threw", e?.message ?? e);
               const reply =
@@ -400,25 +412,44 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
               break;
             }
 
-            // 5) Send reply — but skip the network send if it is byte-for-byte identical to the
-            // previous reply in this same pass (prevents the duplicated "Когда удобнее…" we saw).
+            // 5) Send reply — skip network if byte-for-byte identical to previous in this pass.
+            // If result has an interactiveMessage (V3), send it instead of plain text.
             const isDuplicateReply = result.reply.trim() === (lastSentReply ?? "").trim();
-            const sent = isDuplicateReply
-              ? { ok: true, idMessage: undefined as string | undefined }
-              : await greenApiSendMessage(creds, chatId, result.reply);
-            if (!isDuplicateReply) lastSentReply = result.reply;
+            let sentIdMessage: string | undefined;
+            if (!isDuplicateReply) {
+              const im: WaInteractiveMessage | undefined = result.interactiveMessage;
+              if (im) {
+                let res;
+                if (im.kind === "buttons") {
+                  res = await greenApiSendButtons(creds, chatId, im.text, im.buttons);
+                } else {
+                  res = await greenApiSendListMessage(creds, chatId, im.text, im.buttonText, im.sections);
+                }
+                sentIdMessage = res.ok ? res.idMessage : undefined;
+                if (!res.ok) {
+                  // Interactive failed — fall back to plain text
+                  const fallback = await greenApiSendMessage(creds, chatId, result.reply);
+                  sentIdMessage = fallback.ok ? fallback.idMessage : undefined;
+                }
+              } else {
+                const res = await greenApiSendMessage(creds, chatId, result.reply);
+                sentIdMessage = res.ok ? res.idMessage : undefined;
+              }
+              lastSentReply = result.reply;
+            }
             await supabaseAdmin.from("wa_messages").insert({
               conversation_id: convId,
               salon_id: salonId,
               direction: "out",
               kind: "text",
               text_body: result.reply,
-              green_api_message_id: sent.ok ? sent.idMessage ?? null : null,
+              green_api_message_id: sentIdMessage ?? null,
               meta: {
                 intent: result.debug.intent ?? null,
                 actions: result.debug.actions,
                 errors: result.debug.errors,
                 state: result.nextState,
+                interactive: result.interactiveMessage?.kind ?? null,
                 duplicateSuppressed: isDuplicateReply || undefined,
               } as any,
             });
