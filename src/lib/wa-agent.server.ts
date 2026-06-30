@@ -2283,3 +2283,337 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
     };
   }
 }
+
+// ============================================================
+// V2: Gemini Function Calling Agent (replaces the state machine)
+// ============================================================
+
+type GeminiV2Content = { role: "user" | "model"; parts: any[] };
+
+async function callGeminiTools(opts: {
+  apiKey: string;
+  systemInstruction: string;
+  contents: GeminiV2Content[];
+  tools: any[];
+}): Promise<{ ok: boolean; parts?: any[]; error?: string }> {
+  const body: any = {
+    systemInstruction: { parts: [{ text: opts.systemInstruction }] },
+    contents: opts.contents,
+    tools: [{ functionDeclarations: opts.tools }],
+    toolConfig: { functionCallingConfig: { mode: "AUTO" } },
+    generationConfig: {
+      temperature: 0.4,
+      maxOutputTokens: 2048,
+      thinkingConfig: { thinkingBudget: 0 },
+    },
+  };
+
+  const url = `${GEMINI_BASE}/${MODEL_TEXT}:generateContent?key=${encodeURIComponent(opts.apiKey)}`;
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const txt = await r.text();
+    if (!r.ok) return { ok: false, error: `gemini ${r.status}: ${txt.slice(0, 300)}` };
+    let json: any;
+    try { json = JSON.parse(txt); } catch { return { ok: false, error: `gemini bad json: ${txt.slice(0, 200)}` }; }
+    const parts: any[] = (json?.candidates?.[0]?.content?.parts ?? []).filter((p: any) => !p?.thought);
+    return { ok: true, parts };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? String(e) };
+  }
+}
+
+function buildSystemPromptV2(
+  salon: WaSalonContext,
+  config: WaAssistantConfig,
+  branches: WaBranchInfo[],
+  todayDate: string,
+  todayHuman: string,
+): string {
+  const lines: string[] = [
+    `Ты — живой администратор салона красоты «${salon.salonName}».`,
+    `Пишешь клиенту в WhatsApp. Коротко, по-человечески, без канцелярита. 1–3 предложения. Никакого markdown. Эмодзи — не более одного.`,
+    `Отвечай СТРОГО на том языке, на котором написал клиент — русский или кыргызский. Не смешивай языки.`,
+    config.greeting ? `Первое сообщение клиенту начни с: ${config.greeting}` : "",
+    config.tone_instructions ? `Правила общения (обязательно соблюдай): ${config.tone_instructions}` : "",
+    `Сегодня: ${todayHuman} (${todayDate}).`,
+    ``,
+    `ЦЕЛЬ — помочь клиенту записаться на услугу. Порядок:`,
+    branches.length > 1
+      ? `0. Сначала ВСЕГДА спроси, в какой из наших филиалов хочет записаться клиент (вызови get_branches). Не переходи к услуге пока филиал не выбран.`
+      : ``,
+    `1. Узнай услугу — вызови get_services чтобы показать список.`,
+    `2. Узнай дату и удобное время суток (утро/день/вечер).`,
+    `3. Покажи свободные слоты — вызови get_available_slots.`,
+    `4. Если мастеров несколько — предложи выбрать.`,
+    `5. Спроси имя клиента.`,
+    `6. Вслух подтверди детали: «Записываю: [услуга], [дата], [время], мастер [имя], стоимость [цена]. Всё верно?»`,
+    `7. После «да» — вызови create_appointment.`,
+    `8. Поздравь с записью.`,
+    ``,
+    `ВАЖНО:`,
+    `- Используй ТОЛЬКО данные из инструментов. Не выдумывай услуги, цены, слоты, имена.`,
+    `- create_appointment — только после явного «да» клиента.`,
+    `- Если слот занят (ошибка) — извинись и предложи другое время.`,
+    config.pricing_rules ? `Оценка стоимости по фото: ${config.pricing_rules}` : "",
+  ];
+  return lines.filter(Boolean).join("\n");
+}
+
+const V2_TOOL_DECLARATIONS = [
+  {
+    name: "get_branches",
+    description: "Получить список филиалов салона",
+    parameters: { type: "object", properties: {} },
+  },
+  {
+    name: "get_services",
+    description: "Получить список услуг с ценами и длительностью",
+    parameters: {
+      type: "object",
+      properties: {
+        branch_id: { type: "string", description: "ID филиала (необязательно)" },
+      },
+    },
+  },
+  {
+    name: "get_masters",
+    description: "Получить мастеров, выполняющих данную услугу",
+    parameters: {
+      type: "object",
+      properties: {
+        service_id: { type: "string", description: "ID услуги" },
+        branch_id: { type: "string", description: "ID филиала (необязательно)" },
+      },
+      required: ["service_id"],
+    },
+  },
+  {
+    name: "get_available_slots",
+    description: "Получить свободные временные слоты на дату. Возвращает до 5 ближайших.",
+    parameters: {
+      type: "object",
+      properties: {
+        service_id: { type: "string", description: "ID услуги" },
+        date: { type: "string", description: "Дата в формате YYYY-MM-DD" },
+        master_id: { type: "string", description: "ID конкретного мастера (необязательно)" },
+      },
+      required: ["service_id", "date"],
+    },
+  },
+  {
+    name: "create_appointment",
+    description: "Создать запись клиента. Вызывать ТОЛЬКО после явного подтверждения клиента.",
+    parameters: {
+      type: "object",
+      properties: {
+        service_id: { type: "string" },
+        master_id: { type: "string" },
+        slot_start: { type: "string", description: "ISO timestamp начала слота (из get_available_slots)" },
+        client_name: { type: "string" },
+        branch_id: { type: "string", description: "ID выбранного филиала (если несколько)" },
+        price_override: { type: "number", description: "Согласованная цена для range-услуг" },
+      },
+      required: ["service_id", "master_id", "slot_start", "client_name"],
+    },
+  },
+];
+
+async function executeV2Tool(
+  name: string,
+  args: Record<string, any>,
+  input: WaAgentInput,
+  db: AdminClient,
+): Promise<any> {
+  switch (name) {
+    case "get_branches":
+      return { branches: input.branches.map((b) => ({ id: b.id, name: b.name, address: b.address })) };
+
+    case "get_services": {
+      const services = await loadServicesForSalon(db, input.salon.salonId);
+      return {
+        services: services.map((s: any) => ({
+          id: s.id,
+          name: s.name,
+          price: s.price_type === "range" ? `${s.price}–${s.price_max} сом` : `${s.price} сом`,
+          price_type: s.price_type,
+          duration_min: s.duration_min,
+        })),
+      };
+    }
+
+    case "get_masters": {
+      const masters = await loadMastersForService(
+        db, input.salon.salonId,
+        args.service_id as string,
+        (args.branch_id as string | null) ?? null,
+      );
+      return { masters: masters.map((m) => ({ id: m.id, name: m.name })) };
+    }
+
+    case "get_available_slots": {
+      const { isoLocalDate } = nowInTz(input.salon.timezone);
+      const minStart = args.date === isoLocalDate ? new Date() : undefined;
+      let masters: DbMaster[];
+      if (args.master_id) {
+        masters = [{ id: args.master_id as string, name: "", branch_id: null, sort_order: 0, service_ids: [] }];
+      } else {
+        masters = await loadMastersForService(db, input.salon.salonId, args.service_id as string, null);
+      }
+      const slots = await fetchMergedSlots({
+        db, masters,
+        serviceId: args.service_id as string,
+        day: args.date as string,
+        tz: input.salon.timezone,
+        minStartTime: minStart,
+        limit: 5,
+      });
+      return {
+        date: args.date,
+        slots: slots.map((s) => ({
+          start: s.start,
+          time: formatTimeInTz(s.start, input.salon.timezone),
+          master_ids: s.master_ids,
+        })),
+      };
+    }
+
+    case "create_appointment": {
+      const rpcArgs: any = {
+        _salon_id: input.salon.salonId,
+        _master_id: args.master_id,
+        _service_id: args.service_id,
+        _starts_at: args.slot_start,
+        _client_name: args.client_name,
+        _client_phone: input.client.phone,
+        _client_notes: null,
+        _branch_id: (args.branch_id as string | null) ?? null,
+        _addon_ids: [],
+        _source: "ai_assistant",
+      };
+      if (args.price_override != null) rpcArgs._price_override = args.price_override;
+      const { data: newId, error } = await db.rpc("create_appointment", rpcArgs);
+      if (error) return { success: false, error: error.message };
+      return { success: true, appointment_id: newId };
+    }
+
+    default:
+      return { error: `Unknown tool: ${name}` };
+  }
+}
+
+export async function runWaAgentV2(input: WaAgentInput): Promise<WaAgentResult> {
+  const db = await getAdmin();
+  const apiKey = process.env.GEMINI_API_KEY ?? "";
+  const { isoLocalDate, humanDate } = nowInTz(input.salon.timezone);
+
+  const debug: WaAgentResult["debug"] = { actions: [], errors: [] };
+  let appointmentId: string | null = null;
+  let selectedBranchId = input.selectedBranchId;
+
+  // V2 stores full Gemini conversation in state_data.v2_history
+  const v2History: GeminiV2Content[] = ((input.stateData as any).v2_history ?? []) as GeminiV2Content[];
+
+  // Build client message parts (text + optional inline image)
+  const clientParts: any[] = [];
+  for (const m of input.lastMessages) {
+    if (m.kind === "image" && m.media_signed_url) {
+      try {
+        const r = await fetch(m.media_signed_url);
+        if (r.ok) {
+          const ab = await r.arrayBuffer();
+          const bytes = new Uint8Array(ab);
+          let bin = "";
+          for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+          if (m.text_body) clientParts.push({ text: m.text_body });
+          clientParts.push({ inlineData: { mimeType: m.media_mime ?? "image/jpeg", data: btoa(bin) } });
+        }
+      } catch (e: any) {
+        debug.errors.push(`image_fetch: ${e?.message ?? String(e)}`);
+        if (m.text_body) clientParts.push({ text: m.text_body });
+      }
+    } else if (m.text_body) {
+      clientParts.push({ text: m.text_body });
+    }
+  }
+
+  if (clientParts.length === 0) {
+    return {
+      reply: "",
+      nextState: input.state === "done" ? "done" : "collecting",
+      nextStateData: input.stateData,
+      appointmentId: null,
+      selectedBranchId,
+      debug,
+    };
+  }
+
+  const systemPrompt = buildSystemPromptV2(input.salon, input.config, input.branches, isoLocalDate, humanDate);
+  const contents: GeminiV2Content[] = [...v2History, { role: "user", parts: clientParts }];
+
+  let reply = "";
+  const MAX_TOOL_ITERS = 8;
+
+  for (let iter = 0; iter < MAX_TOOL_ITERS; iter++) {
+    const res = await callGeminiTools({ apiKey, systemInstruction: systemPrompt, contents, tools: V2_TOOL_DECLARATIONS });
+
+    if (!res.ok || !res.parts) {
+      debug.errors.push(`gemini_tools iter${iter}: ${res.error ?? "no parts"}`);
+      reply = input.stateData.language === "ky"
+        ? "Кечиресиз, техникалык ката. Бир аздан кийин кайра жазыңыз."
+        : "Извините, техническая ошибка. Попробуйте чуть позже.";
+      break;
+    }
+
+    const parts = res.parts;
+    contents.push({ role: "model", parts });
+
+    const functionCalls = parts.filter((p: any) => p.functionCall);
+    const textPart = parts.find((p: any) => typeof p.text === "string" && p.text.trim());
+
+    if (functionCalls.length === 0) {
+      reply = textPart?.text?.trim() ?? "";
+      break;
+    }
+
+    const toolResults: any[] = [];
+    for (const part of functionCalls) {
+      const { name, args } = part.functionCall as { name: string; args: Record<string, any> };
+      debug.actions.push(`tool:${name}`);
+      try {
+        const result = await executeV2Tool(name, args ?? {}, input, db);
+        if (name === "create_appointment" && result.appointment_id) {
+          appointmentId = result.appointment_id as string;
+          if (args.branch_id) selectedBranchId = args.branch_id as string;
+        }
+        toolResults.push({ functionResponse: { name, response: result } });
+      } catch (e: any) {
+        debug.errors.push(`tool_${name}: ${e?.message ?? String(e)}`);
+        toolResults.push({ functionResponse: { name, response: { error: e?.message ?? "failed" } } });
+      }
+    }
+    contents.push({ role: "user", parts: toolResults });
+  }
+
+  if (!reply) {
+    reply = "Извините, не удалось обработать запрос. Напишите ещё раз.";
+    debug.errors.push("no text reply after tool loop");
+  }
+
+  // Strip inlineData from history before saving (avoid storing large base64 images in DB)
+  const historyToSave = contents.slice(-30).map((c) => ({
+    ...c,
+    parts: c.parts.map((p: any) => (p.inlineData ? { text: "[фото]" } : p)),
+  }));
+
+  const nextState: WaAgentState = appointmentId ? "done" : "collecting";
+  const nextStateData: WaAgentStateData = {
+    language: input.stateData.language,
+    ...(appointmentId ? {} : { v2_history: historyToSave } as any),
+  };
+
+  return { reply, nextState, nextStateData, appointmentId, selectedBranchId, debug };
+}

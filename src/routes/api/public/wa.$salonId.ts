@@ -5,7 +5,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import {
   greenApiSendMessage,
   normalizeChatIdToPhone,
-  runWaAgent,
+  runWaAgentV2,
   type GreenApiCreds,
   type WaAgentInput,
   type WaAgentState,
@@ -372,7 +372,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
 
             let result;
             try {
-              result = await runWaAgent(input);
+              result = await runWaAgentV2(input);
             } catch (e: any) {
               console.error("[wa] runWaAgent threw", e?.message ?? e);
               const reply =
