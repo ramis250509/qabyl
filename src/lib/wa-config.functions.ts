@@ -68,7 +68,7 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
     const { runWaAgent } = await import("@/lib/wa-agent.server");
 
     const [salonResult, assistantResult, branchResult] = await Promise.all([
-      supabaseAdmin.from("salons").select("id, name, timezone").eq("id", data.salonId).maybeSingle(),
+      supabaseAdmin.from("salons").select("id, name, timezone, working_hours, address").eq("id", data.salonId).maybeSingle(),
       supabaseAdmin.from("salon_ai_assistant").select("greeting, tone_instructions, pricing_rules, languages").eq("salon_id", data.salonId).maybeSingle(),
       supabaseAdmin.from("branches").select("id, name, address").eq("salon_id", data.salonId).eq("is_active", true).order("sort_order"),
     ]);
@@ -118,6 +118,10 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
       selectedBranchId: data.selectedBranchId,
       state: data.state as WaAgentState,
       stateData: data.stateData as WaAgentStateData,
+      salonInfo: {
+        working_hours: (salon as any).working_hours ?? null,
+        address: (salon as any).address ?? null,
+      },
     });
 
     return {

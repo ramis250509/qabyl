@@ -65,7 +65,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             .maybeSingle(),
           supabaseAdmin
             .from("salons")
-            .select("id, name, timezone, ai_assistant_enabled")
+            .select("id, name, timezone, ai_assistant_enabled, working_hours, address")
             .eq("id", salonId)
             .maybeSingle(),
           supabaseAdmin
@@ -364,6 +364,10 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
               selectedBranchId: curSelectedBranch,
               state: curState,
               stateData: curStateData,
+              salonInfo: {
+                working_hours: (salon as any).working_hours ?? null,
+                address: (salon as any).address ?? null,
+              },
             };
 
             let result;

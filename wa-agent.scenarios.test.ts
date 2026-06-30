@@ -128,6 +128,7 @@ function convo(
     branches?: any[];
     languages?: string[];
     assistantConfig?: Partial<typeof CONFIG>;
+    salonInfo?: { working_hours: Record<string, string> | null; address: string | null } | null;
   } = {},
 ) {
   (globalThis as any).__WA_DB__ = makeDb(cfg);
@@ -139,6 +140,7 @@ function convo(
   const branches = opts.branches ?? [];
   const config = { ...CONFIG, ...opts.assistantConfig, languages: opts.assistantConfig?.languages ?? opts.languages ?? ["ru"] };
   const clientName = opts.clientName === undefined ? "Рамис" : opts.clientName;
+  const salonInfo = opts.salonInfo ?? null;
   return {
     db,
     get state() { return state; },
@@ -159,7 +161,7 @@ function convo(
         salon: SALON, config,
         client: { phone: "996700000000", name: clientName },
         history: [...history], lastMessages, branches,
-        selectedBranchId, state, stateData,
+        selectedBranchId, state, stateData, salonInfo,
       };
       const res = await runWaAgent(input);
       for (const m of lastMessages) history.push({ ...m });
@@ -986,4 +988,252 @@ test("57. Vision failure does not loop asking for a photo — booking proceeds",
   expect(r.nextState).not.toBe("awaiting_photo");
   const r3 = await c.say("завтра");                  // next turn: day selected, must NOT bounce back to photo
   expect(r3.nextState).not.toBe("awaiting_photo");
+});
+
+// =========================================================================
+// CONVERSATIONAL AI (TESTS 69–93) — human-like answers, no forced booking
+// =========================================================================
+
+const SALON_HOURS: Record<string, string> = {
+  mon: "10:00–20:00", tue: "10:00–20:00", wed: "10:00–20:00",
+  thu: "10:00–20:00", fri: "10:00–20:00", sat: "11:00–18:00", sun: "Выходной",
+};
+const SALON_INFO_WITH_HOURS = { working_hours: SALON_HOURS, address: null };
+
+// ---- Smalltalk ----
+
+test("69. 'как дела?' → natural reply, no booking push, no internal instruction echo", async () => {
+  const c = convo(multiSalon());
+  const r = await c.say("как дела?");
+  expect(r.appointmentId).toBeNull();
+  expect(r.nextState).not.toBe("awaiting_final_confirm");
+  expect(r.nextState).not.toBe("done");
+  expect(r.reply.length).toBeGreaterThan(0);
+  expect(/^(спроси|скажи|поприветствуй|ответь|перечисл)/i.test(r.reply)).toBe(false);
+});
+
+test("70. Kyrgyz smalltalk 'кандайс?' → friendly reply without starting booking", async () => {
+  const c = convo(multiSalon(), { languages: ["ru", "ky"] });
+  const r = await c.say("кандайс?", { gemini: { intent: "smalltalk", language: "ky", entities: {} } });
+  expect(r.appointmentId).toBeNull();
+  expect(r.nextState).not.toBe("done");
+  expect(r.reply.length).toBeGreaterThan(0);
+  expect(/^(спроси|скажи|поприветствуй)/i.test(r.reply)).toBe(false);
+});
+
+test("71. 'эмне кылатасыз?' → lists services, no forced booking start", async () => {
+  const c = convo(multiSalon(), { languages: ["ru", "ky"] });
+  const r = await c.say("эмне кылатасыз?", { gemini: { intent: "ask_services", language: "ky", entities: {} } });
+  expect(r.appointmentId).toBeNull();
+  expect(r.nextState).not.toBe("awaiting_final_confirm");
+  expect(r.reply).toMatch(/стрижк|маникюр|окрашив|кызмат|услуг/i);
+});
+
+// ---- Capability questions ----
+
+test("72. 'вы делаете маникюр?' → confirms yes + price, no booking started", async () => {
+  const c = convo(multiSalon());
+  const r = await c.say("вы делаете маникюр?");
+  expect(r.appointmentId).toBeNull();
+  expect(r.nextState).not.toBe("awaiting_final_confirm");
+  expect(r.nextState).not.toBe("done");
+  expect(r.reply).toMatch(/маникюр|800|делаем|услуг/i);
+});
+
+test("73. 'вы можете сделать стрижку?' → confirms service + price", async () => {
+  const c = convo(multiSalon());
+  const r = await c.say("вы можете сделать стрижку?");
+  expect(r.appointmentId).toBeNull();
+  expect(r.nextState).not.toBe("done");
+  expect(r.reply).toMatch(/стрижк|500|делаем|услуг/i);
+});
+
+test("74. 'у вас есть окрашивание?' → mentions price range 1000–3000", async () => {
+  const c = convo(multiSalon());
+  const r = await c.say("у вас есть окрашивание?");
+  expect(r.appointmentId).toBeNull();
+  expect(r.reply).toMatch(/окрашив|1000|3000|делаем|услуг/i);
+});
+
+// ---- Schedule questions ----
+
+test("75. 'вы работаете завтра?' + working_hours → replies with schedule", async () => {
+  const c = convo(singleSalon(), { salonInfo: SALON_INFO_WITH_HOURS });
+  const r = await c.say("вы работаете завтра?");
+  expect(r.appointmentId).toBeNull();
+  expect(r.nextState).not.toBe("awaiting_final_confirm");
+  expect(r.reply).toMatch(/10:00|20:00|режим|расписание|работ/i);
+});
+
+test("76. 'когда вы открываетесь?' + working_hours → replies with opening time", async () => {
+  const c = convo(singleSalon(), { salonInfo: SALON_INFO_WITH_HOURS });
+  const r = await c.say("когда вы открываетесь?");
+  expect(r.appointmentId).toBeNull();
+  expect(r.reply).toMatch(/10:00|режим|расписание|работ/i);
+});
+
+test("77. 'до скольки работаете?' + working_hours → replies with hours", async () => {
+  const c = convo(singleSalon(), { salonInfo: SALON_INFO_WITH_HOURS });
+  const r = await c.say("до скольки работаете?");
+  expect(r.appointmentId).toBeNull();
+  expect(r.reply).toMatch(/20:00|18:00|режим|расписание|работ/i);
+});
+
+test("78. 'вы работаете в воскресенье?' → mentions выходной in reply", async () => {
+  const c = convo(singleSalon(), { salonInfo: SALON_INFO_WITH_HOURS });
+  const r = await c.say("вы работаете в воскресенье?");
+  expect(r.appointmentId).toBeNull();
+  expect(r.reply).toMatch(/выходн|Вс|режим|расписание/i);
+});
+
+test("79. 'у вас есть выходные?' (with Gemini ask_schedule) → schedule info", async () => {
+  const c = convo(singleSalon(), { salonInfo: SALON_INFO_WITH_HOURS });
+  // Deterministic sees "у вас есть" as ask_capability; Gemini corrects to ask_schedule
+  const r = await c.say("у вас есть выходные?", { gemini: { intent: "ask_schedule", language: "ru", entities: {} } });
+  expect(r.appointmentId).toBeNull();
+  expect(r.reply).toMatch(/Вс|выходн|режим|расписание/i);
+});
+
+test("80. schedule question with NO working_hours data → suggests contacting admin", async () => {
+  const c = convo(singleSalon(), { salonInfo: { working_hours: null, address: null } });
+  const r = await c.say("вы работаете завтра?");
+  expect(r.appointmentId).toBeNull();
+  expect(r.reply).toMatch(/администратор|уточнит|часы/i);
+});
+
+// ---- Other conversational ----
+
+test("81. 'привет, я новый клиент' → greeting reply, no appointment created", async () => {
+  const c = convo(multiSalon());
+  const r = await c.say("привет, я новый клиент");
+  expect(r.appointmentId).toBeNull();
+  expect(r.nextState).not.toBe("done");
+  expect(r.reply.length).toBeGreaterThan(0);
+  expect(/^(спроси|скажи|ответь|поприветствуй)/i.test(r.reply)).toBe(false);
+});
+
+test("82. 'спасибо большое за ответ' → friendly acknowledgement, no booking push", async () => {
+  const c = convo(multiSalon());
+  const r = await c.say("спасибо большое за ответ");
+  expect(r.appointmentId).toBeNull();
+  expect(r.reply.length).toBeGreaterThan(0);
+  expect(/^(спроси|скажи|поприветствуй)/i.test(r.reply)).toBe(false);
+});
+
+test("83. 'я просто хотел узнать' → natural reply, no appointment started", async () => {
+  const c = convo(multiSalon());
+  const r = await c.say("я просто хотел узнать");
+  expect(r.appointmentId).toBeNull();
+  expect(r.nextState).not.toBe("awaiting_final_confirm");
+  expect(r.reply.length).toBeGreaterThan(0);
+});
+
+// ---- Kyrgyz capability ----
+
+test("84. Kyrgyz 'сиз маникюр кыласызбы?' (ask_capability inject) → confirms + price", async () => {
+  const c = convo(multiSalon(), { languages: ["ru", "ky"] });
+  const r = await c.say("сиз маникюр кыласызбы?", {
+    gemini: { intent: "ask_capability", language: "ky", entities: { service_id: "svc_nail" } },
+  });
+  expect(r.appointmentId).toBeNull();
+  expect(r.nextState).not.toBe("done");
+  expect(r.reply).toMatch(/маникюр|800|делаем|жасайбыз/i);
+});
+
+// ---- Mid-booking resilience ----
+
+test("85. capability question mid-booking does not reset booking state", async () => {
+  const c = convo(multiSalon());
+  await c.say("маникюр");
+  await c.say("завтра");
+  await c.say("в 13:00");                          // only Айгуль → direct confirm
+  expect(c.state).toBe("awaiting_final_confirm");
+  const savedService = c.data.service_id;
+  const savedSlot = c.data.slot_start;
+  const r = await c.say("а вы делаете стрижку?");  // ask_capability for different service
+  expect(r.appointmentId).toBeNull();
+  // booking data must be intact — capability handler returns early, no entity update runs
+  expect(c.data.service_id).toBe(savedService);
+  expect(c.data.slot_start).toBe(savedSlot);
+  expect(c.state).toBe("awaiting_final_confirm");
+});
+
+test("86. schedule question mid-booking does not reset booking state", async () => {
+  const c = convo(singleSalon(), { salonInfo: SALON_INFO_WITH_HOURS });
+  await c.say("запишите меня на завтра в 12:30");
+  expect(c.state).toBe("awaiting_final_confirm");
+  const savedSlot = c.data.slot_start;
+  const r = await c.say("вы работаете в субботу?");
+  expect(r.appointmentId).toBeNull();
+  expect(r.reply).toMatch(/11:00|18:00|режим|расписание/i);  // Сб: 11:00–18:00
+  expect(c.data.slot_start).toBe(savedSlot);
+  expect(c.state).toBe("awaiting_final_confirm");
+});
+
+// ---- Service not offered ----
+
+test("87. 'вы делаете свадебный макияж?' (not in list) → honest answer, lists alternatives", async () => {
+  const c = convo(multiSalon());
+  const r = await c.say("вы делаете свадебный макияж?");
+  expect(r.appointmentId).toBeNull();
+  expect(r.nextState).not.toBe("done");
+  expect(r.reply).toMatch(/стрижк|маникюр|окрашив|услуг|интересует/i);
+});
+
+test("88. 'вы сможете сделать стрижку?' → confirms yes + price", async () => {
+  const c = convo(multiSalon());
+  const r = await c.say("вы сможете сделать стрижку?");
+  expect(r.appointmentId).toBeNull();
+  expect(r.reply).toMatch(/стрижк|500|делаем|услуг/i);
+});
+
+// ---- Sequential flow ----
+
+test("89. smalltalk then booking → booking completes normally", async () => {
+  const c = convo(singleSalon());
+  const r1 = await c.say("как дела?", { gemini: { intent: "smalltalk", language: "ru", entities: {} } });
+  expect(r1.appointmentId).toBeNull();
+  expect(r1.nextState).not.toBe("done");
+  // Immediately request a booking — flow must not be broken by prior smalltalk
+  await c.say("запишите на завтра в 12:00");
+  const r3 = await c.say("да");
+  expect(r3.appointmentId).not.toBeNull();
+});
+
+// ---- Kyrgyz schedule ----
+
+test("90. Kyrgyz 'иштейсизби?' + working_hours → schedule reply", async () => {
+  const c = convo(singleSalon(), { languages: ["ru", "ky"], salonInfo: SALON_INFO_WITH_HOURS });
+  // Deterministic already detects ask_schedule via "иштейсизби"; inject Gemini for language
+  const r = await c.say("иштейсизби?", { gemini: { intent: "ask_schedule", language: "ky", entities: {} } });
+  expect(r.appointmentId).toBeNull();
+  expect(r.reply).toMatch(/10:00|20:00|Пн|режим|расписание/i);
+});
+
+// ---- Regression ----
+
+test("91. REGRESSION: 'да' in awaiting_final_confirm books (re-resolve guard fix)", async () => {
+  const c = convo(singleSalon());
+  await c.say("запишите меня на завтра в 12:45");
+  expect(c.state).toBe("awaiting_final_confirm");
+  // Inject Gemini returning service_id entity for "да" — was the bug trigger before the fix
+  const r = await c.say("да", { gemini: { intent: "confirm_yes", language: "ru", entities: { service_id: "svc_hair" } } });
+  expect(r.appointmentId).not.toBeNull();
+  expect(r.nextState).toBe("done");
+});
+
+test("92. 'спасибо, не надо' after capability answer → no booking forced", async () => {
+  const c = convo(multiSalon());
+  await c.say("вы делаете маникюр?");
+  const r = await c.say("спасибо, не надо");
+  expect(r.appointmentId).toBeNull();
+  expect(r.nextState).not.toBe("awaiting_final_confirm");
+  expect(r.reply.length).toBeGreaterThan(0);
+});
+
+test("93. 'вы работаете по пятницам?' + working_hours → schedule with Friday hours", async () => {
+  const c = convo(singleSalon(), { salonInfo: SALON_INFO_WITH_HOURS });
+  const r = await c.say("вы работаете по пятницам?");
+  expect(r.appointmentId).toBeNull();
+  expect(r.reply).toMatch(/10:00|20:00|Пт|режим|расписание/i);
 });

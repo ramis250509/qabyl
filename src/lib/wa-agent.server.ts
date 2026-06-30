@@ -84,6 +84,11 @@ export type WaAgentStateData = {
   needs_human?: boolean; // bot gave up after repeated confusion → conversation flagged for a live admin
 };
 
+export type WaSalonInfo = {
+  working_hours: Record<string, string> | null; // { mon: "10:00–20:00", sun: "Выходной", ... }
+  address: string | null;
+};
+
 export type WaAgentInput = {
   salon: WaSalonContext;
   config: WaAssistantConfig;
@@ -94,6 +99,7 @@ export type WaAgentInput = {
   selectedBranchId: string | null;
   state: WaAgentState;
   stateData: WaAgentStateData;
+  salonInfo?: WaSalonInfo | null; // optional: for schedule/address questions
 };
 
 export type WaAgentResult = {
@@ -656,10 +662,26 @@ function deterministicParse(opts: {
     }
   }
 
+  // Schedule/hours question — takes priority over day extraction so "вы работаете завтра?" stays a schedule question
+  const isScheduleQ =
+    /(вы\s+работаете|вы\s+открыты|у\s+вас\s+выходной|часы\s+работы|расписани[ея]|как\s+вы\s+работаете|когда\s+(вы\s+)?открыв|во\s+сколько\s+(открыв|закрыв)|до\s+скольки|иштейсизби|иш\s+убакытыңыз|саат\s+нечеде\s+ачылас)/i.test(raw);
+  if (isScheduleQ) {
+    intent = "ask_schedule";
+    entities.day_relative = undefined; // "завтра" in schedule question is NOT a booking day
+  }
+
+  // Capability question: "вы делаете X?", "у вас есть X?", "можно ли X?"
+  // Only set if intent not already decided by strong booking signals
+  const isCapabilityQ =
+    /(вы\s+(делаете|можете|сможете|умеете)|у\s+вас\s+(есть|делают|можно|имеется)|можно\s+ли\s+у\s+вас|сизде\s+(?:бар|жасайс)|сиз\s+(?:жасайсызбы|кыласызбы|кыла\s+аласызбы))/i.test(raw);
+  if (isCapabilityQ && (!intent || ["greet", "smalltalk", "other"].includes(intent))) {
+    intent = "ask_capability";
+  }
+
   const service = findServiceByText(raw, opts.services);
   if (service) {
     entities.service_id = service.id;
-    // Do NOT override ask_services — client is asking what's available, not choosing a specific service.
+    // Do NOT override ask_services / ask_capability — client is asking, not choosing yet.
     if (!intent || ["greet", "smalltalk", "other"].includes(intent)) intent = "choose_service";
   }
 
@@ -707,6 +729,8 @@ type Intent =
   | "greet"
   | "smalltalk"
   | "ask_services"
+  | "ask_schedule"      // "вы работаете завтра?", "когда открываетесь?"
+  | "ask_capability"    // "вы делаете маникюр?", "можно ли у вас X?"
   | "choose_service"
   | "choose_day"
   | "choose_part_of_day"
@@ -782,10 +806,12 @@ async function classify(opts: {
 Если клиент пишет HH:MM или "в 14", "в 6 вечера" — заполни specific_time как "HH:MM" в 24-часовом формате.
 Намерения:
 - greet: приветствие, "ассаламу алейкум", "здравствуйте", "привет"
-- smalltalk: благодарность, "ладно", "хорошо", без действия
-- ask_services: "какие услуги?", "что у вас есть?", "сколько стоит ...?"
-- choose_service: клиент назвал услугу — подбери service_id по названию из таблицы услуг, либо service_query (свободный текст)
-- choose_day: клиент назвал день
+- smalltalk: светская беседа без запроса ("как дела?", "кандайс?", "спасибо", "ладно")
+- ask_services: "какие услуги?", "что у вас есть?", "расскажите о ваших услугах"
+- ask_schedule: вопрос о часах/расписании ("вы работаете завтра?", "когда открываетесь?", "до скольки работаете?", "у вас выходной в воскресенье?", "иштейсизби?")
+- ask_capability: вопрос, делает ли салон услугу ("вы делаете маникюр?", "можно ли у вас сделать X?", "вы сможете X?", "сиз маникюр кыласызбы?") — если есть подходящая услуга, укажи service_id
+- choose_service: клиент ХОЧЕТ записаться на услугу (не просто спрашивает о ней) — подбери service_id
+- choose_day: клиент назвал день для записи
 - choose_part_of_day: клиент указал часть дня (утро/день/вечер)
 - choose_specific_time: клиент назвал конкретный час (specific_time)
 - choose_master: клиент выбрал мастера по имени (master_name)
@@ -798,6 +824,7 @@ async function classify(opts: {
 - give_name: клиент представился, имя в client_name
 - choose_branch: клиент назвал филиал (branch_id из таблицы филиалов)
 - other: ничего из перечисленного
+ВАЖНО: "как дела?", "кандайс?", "эмне кылатасыз?" — это smalltalk, НЕ other. "Вы делаете маникюр?" — это ask_capability, НЕ choose_service. "Вы работаете завтра?" — это ask_schedule, НЕ choose_day.
 Можно выбирать несколько entities одновременно (например choose_service + choose_specific_time).
 В этом случае intent — самое "продвигающее" (например choose_specific_time важнее choose_service).`;
 
@@ -1213,8 +1240,41 @@ function instructionFallbackReply(factual: string, language: "ru" | "ky" | "en",
     if (language === "en") return "What name should I use for the booking?";
     return "Подскажите, пожалуйста, как к вам обращаться?";
   }
+  // Schedule question with hours data
+  const schedHours = text.match(/расписание:\s*(.+?)\.\s*Ответь/i);
+  if (schedHours) {
+    if (language === "ky") return `Иштөө убактыбыз: ${schedHours[1]}.`;
+    if (language === "en") return `Our working hours: ${schedHours[1]}.`;
+    return `Режим работы: ${schedHours[1]}.`;
+  }
+  // Schedule question without hours data
+  if (/данных о расписании нет|уточнить у администратора/i.test(text)) {
+    if (language === "ky") return "Иштөө убакытын администратор менен тактасаңыз болот.";
+    if (language === "en") return "Please check our working hours with the admin directly.";
+    return "Точные часы работы уточните у администратора, пожалуйста.";
+  }
+  // Capability question: yes, we do it
+  const doCapability = text.match(/делаем ли мы «(.+?)».*стоимость\s+(.+?)(?:\.|Мягко|$)/is);
+  if (doCapability) {
+    if (language === "ky") return `Ооба, «${doCapability[1]}» жасайбыз! Баасы — ${doCapability[2].trim()}.`;
+    if (language === "en") return `Yes, we do "${doCapability[1]}"! Price — ${doCapability[2].trim()}.`;
+    return `Да, делаем «${doCapability[1]}»! Стоимость — ${doCapability[2].trim()}.`;
+  }
+  // Capability question: general (list what we offer)
+  if (/спрашивает о возможностях/i.test(text)) {
+    if (language === "ky") return "Биздин кызматтар жөнүндө суроо берсеңиз — жардам берем!";
+    if (language === "en") return "Happy to tell you about our services! What would you like to know?";
+    return "Расскажу о наших услугах с удовольствием! Что именно вас интересует?";
+  }
+  // Smalltalk — friendly, no booking push
+  if (/без навязывания записи|просто светская беседа/i.test(text)) {
+    if (language === "ky") return "Рахмат! Жардам керек болсо — жазыңыз.";
+    if (language === "en") return "Thanks! Feel free to ask if you need anything.";
+    return "Рады помочь! Если возникнут вопросы — пишите.";
+  }
+
   if (language === "ky") return "Тактап коюңузчу, кандай кызматка жазыласыз?";
-  if (language === "en") return "Please уточните, which service would you like to book?".replace("уточните", "clarify");
+  if (language === "en") return "Please clarify, which service would you like to book?";
   return "Подскажите, пожалуйста, на какую услугу вас записать?";
 }
 
@@ -1581,6 +1641,57 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
     };
   }
 
+  // ----- General conversational answers — run BEFORE the booking state machine so these
+  // questions are handled naturally regardless of where the client is in the booking flow.
+
+  if (intent === "ask_schedule") {
+    const wh = input.salonInfo?.working_hours as Record<string, string> | null | undefined;
+    const dayKeys = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
+    const dayLabels: Record<string, string> = {
+      mon: language === "ky" ? "Дүйш" : "Пн",
+      tue: language === "ky" ? "Шейш" : "Вт",
+      wed: language === "ky" ? "Шарш" : "Ср",
+      thu: language === "ky" ? "Бейш" : "Чт",
+      fri: language === "ky" ? "Жума" : "Пт",
+      sat: language === "ky" ? "Ишем" : "Сб",
+      sun: language === "ky" ? "Жек" : "Вс",
+    };
+    if (wh && dayKeys.some((k) => wh[k])) {
+      const hoursStr = dayKeys
+        .map((k) => (wh[k] ? `${dayLabels[k]}: ${wh[k]}` : null))
+        .filter(Boolean)
+        .join(", ");
+      factual = `Клиент спрашивает о расписании работы. Расписание: ${hoursStr}. Ответь коротко и по-человечески, выдели нужный день если клиент спрашивал конкретно.`;
+    } else {
+      factual = `Клиент спрашивает о расписании. Данных о расписании нет. Вежливо предложи уточнить у администратора.`;
+    }
+    return finish();
+  }
+
+  if (intent === "ask_capability") {
+    const capSvc = entities.service_id ? services.find((s: any) => s.id === entities.service_id) : null;
+    if (capSvc) {
+      const priceStr =
+        (capSvc as any).price_type === "range"
+          ? `${(capSvc as any).price}–${(capSvc as any).price_max} сом`
+          : `${(capSvc as any).price} сом`;
+      factual = `Клиент спросил, делаем ли мы «${(capSvc as any).name}». Ответь: да, делаем, стоимость ${priceStr}. Мягко предложи записаться, если интересно.`;
+    } else {
+      const serviceList = services
+        .slice(0, 6)
+        .map((s: any) => {
+          const p =
+            (s as any).price_type === "range"
+              ? `${(s as any).price}–${(s as any).price_max}`
+              : (s as any).price;
+          return `${(s as any).name}: ${p} сом`;
+        })
+        .join(", ");
+      factual = `Клиент спрашивает о возможностях салона: "${combinedLastText}". Ответь честно. Наши услуги: ${serviceList}. Если спрошенная услуга есть — скажи что делаем; если нет — скажи что не делаем и предложи что есть.`;
+    }
+    return finish();
+  }
+
   // ----- Done state: graceful post-booking handling
   if (state === "done") {
     const newBookingIntents: Intent[] = [
@@ -1727,8 +1838,13 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
   // ----- If the client changes time/day/service while we're on the confirmation step,
   // drop the resolved slot and step out of confirm so the flow re-resolves and re-confirms
   // with the NEW details (instead of booking the stale slot).
+  // IMPORTANT: skip this guard for confirm_yes / deny_no — a confirmation is never a topic change.
+  // Gemini sometimes returns a stray service_id entity even for "да", which previously caused the
+  // guard to fire and loop the confirmation message instead of creating the appointment.
   if (
     state === "awaiting_final_confirm" &&
+    intent !== "confirm_yes" &&
+    intent !== "deny_no" &&
     (entities.specific_time || entities.day_relative || entities.day_iso || entities.service_id || entities.part_of_day)
   ) {
     sd.slot_start = undefined;
@@ -1766,8 +1882,14 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
     } else if (intent === "ask_price" || intent === "ask_services") {
       factual = `Клиент спросил об услугах/ценах. Перечисли услуги с ценами:\n${services.slice(0, 10).map((s: any) => `— ${s.name}: ${s.price_type === "range" ? `${s.price}–${s.price_max}` : s.price} сом`).join("\n")}\nСпроси, на какую услугу записать.`;
     } else if (intent === "smalltalk" || intent === "other") {
-      // Non-booking message with no context — respond naturally and hint at booking
-      factual = `Клиент написал: "${combinedLastText}". Ответь коротко и дружелюбно, затем мягко предложи помочь с записью в салон «${input.salon.salonName}».`;
+      // If the message has no booking signals (no service/day/time) — pure smalltalk.
+      // Answer naturally WITHOUT immediately pushing to booking.
+      const hasBookingSignal = entities.service_id || entities.day_relative || entities.day_iso || entities.specific_time;
+      if (!hasBookingSignal) {
+        factual = `Клиент написал: "${combinedLastText}". Ответь по-человечески и тепло, без навязывания записи. Если это просто светская беседа — поддержи её кратко.`;
+        sd.last_prompt = "service"; state = "collecting"; return finish();
+      }
+      factual = `Клиент написал: "${combinedLastText}". Ответь дружелюбно и мягко предложи помочь с записью в салон «${input.salon.salonName}».`;
     } else if (sd.last_prompt === "service") {
       // We already asked once and the client still didn't name a service — escalate gently
       // instead of repeating the exact same question verbatim.
