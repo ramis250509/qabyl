@@ -3222,6 +3222,14 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     return finish(msg, "awaiting_slot_choice", newV3, buildSlotListMsg(slots, tz, language));
   }
 
+  function detectPartOfDayV3(text: string): "morning" | "afternoon" | "evening" | null {
+    const t = text.toLowerCase();
+    if (/обед|түш(түн|тө|кө)?\b|туш(тун|то|ко)?\b|полдень|дн[ёе]м/i.test(t)) return "afternoon";
+    if (/утр[оаы]|таң\w*|эртең\s*менен|эртен\s*менен/i.test(t)) return "morning";
+    if (/вечер|кеч(инде|ке|ки)?\b/i.test(t)) return "evening";
+    return null;
+  }
+
   // ===== awaiting_slot_choice =====
   if (state === "awaiting_slot_choice") {
     const slotsCache = v3.slots_cache ?? [];
@@ -3255,6 +3263,28 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
 
     const mockSlots: MergedSlot[] = slotsCache.map((s) => ({ start: s.start, end: s.end, master_ids: s.masterIds }));
     if (!slot) {
+      const partOfDay = combinedText ? detectPartOfDayV3(combinedText) : null;
+      if (partOfDay && slotsCache.length > 0) {
+        const ranges: Record<typeof partOfDay, [number, number]> = { morning: [0, 12], afternoon: [12, 17], evening: [17, 24] };
+        const [lo, hi] = ranges[partOfDay];
+        const filtered = mockSlots.filter((s) => {
+          const h = parseInt(formatTimeInTz(s.start, tz).split(":")[0], 10);
+          return h >= lo && h < hi;
+        });
+        const label = partOfDay === "morning"
+          ? (language === "ky" ? "эртең менен" : "утром")
+          : partOfDay === "afternoon"
+          ? (language === "ky" ? "түштө" : "днём")
+          : (language === "ky" ? "кечинде" : "вечером");
+        if (filtered.length > 0) {
+          const msg = language === "ky" ? `Бош убакыттар ${label}:` : `Свободное время ${label}:`;
+          return finish(msg, "awaiting_slot_choice", v3, buildSlotListMsg(filtered, tz, language));
+        }
+        const msg = language === "ky"
+          ? `${label.charAt(0).toUpperCase() + label.slice(1)} бош орун жок. Башка убакытты тандаңыз:`
+          : `${label.charAt(0).toUpperCase() + label.slice(1)} свободных окон нет. Выберите другое время:`;
+        return finish(msg, "awaiting_slot_choice", v3, buildSlotListMsg(mockSlots, tz, language));
+      }
       const msg = language === "ky" ? "Убакытты тандаңыз:" : "Пожалуйста, выберите время:";
       if (slotsCache.length > 0) return finish(msg, "awaiting_slot_choice", v3, buildSlotListMsg(mockSlots, tz, language));
       const dateMap = buildDateMap(tz, 7);
