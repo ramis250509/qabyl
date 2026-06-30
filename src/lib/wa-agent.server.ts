@@ -2754,6 +2754,22 @@ function truncateRowTitle(name: string, max = 24): string {
   return cut.trimEnd() + "…";
 }
 
+function formatDurationV3(minutes: number | null | undefined, language: "ru" | "ky" | "en"): string {
+  if (!minutes || minutes <= 0) return "";
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (language === "ky") {
+    const parts = [h > 0 ? `${h} саат` : null, m > 0 ? `${m} мүн` : null].filter(Boolean);
+    return parts.join(" ");
+  }
+  if (language === "en") {
+    const parts = [h > 0 ? `${h}h` : null, m > 0 ? `${m}m` : null].filter(Boolean);
+    return parts.join(" ");
+  }
+  const parts = [h > 0 ? `${h} ч` : null, m > 0 ? `${m} мин` : null].filter(Boolean);
+  return parts.join(" ");
+}
+
 function buildServiceListMsg(services: any[], language: "ru" | "ky" | "en"): WaInteractiveMessage {
   const question = language === "ky" ? "Кайсы кызматты тандайсыз?" : "Какую услугу выбираете?";
   const btnText = language === "ky" ? "Кызматты тандоо" : "Выбрать услугу";
@@ -2768,10 +2784,12 @@ function buildServiceListMsg(services: any[], language: "ru" | "ky" | "en"): WaI
     title,
     rows: rows.map((s: any) => {
       const priceStr = s.price_type === "range" ? `от ${s.price} сом` : `${s.price} сом`;
+      const durationStr = formatDurationV3(s.duration_min, language);
+      const description = durationStr ? `${priceStr} · ${durationStr}` : priceStr;
       return {
         rowId: `svc_${s.id}`,
         title: truncateRowTitle(s.name),
-        description: priceStr.slice(0, 72),
+        description: description.slice(0, 72),
         // Full untruncated name — WhatsApp itself caps row titles at 24 chars,
         // but the admin simulator uses this to show the real name in full.
         fullName: s.name,
