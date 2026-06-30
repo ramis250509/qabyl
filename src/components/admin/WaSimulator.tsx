@@ -201,7 +201,7 @@ export function WaSimulator({ salonId }: { salonId: string }) {
                     {m.interactive.buttons.map((btn) => (
                       <button
                         key={btn.id}
-                        disabled={isLoading || i < messages.length - 1}
+                        disabled={isLoading}
                         onClick={() => send({ text: btn.text, selectedId: btn.id })}
                         className="text-xs px-3 py-1.5 rounded-full border border-primary text-primary bg-background hover:bg-primary/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                       >
@@ -222,8 +222,9 @@ export function WaSimulator({ salonId }: { salonId: string }) {
                         {sec.rows.map((row) => (
                           <button
                             key={row.rowId}
-                            disabled={isLoading || i < messages.length - 1}
+                            disabled={isLoading}
                             onClick={() => send({ text: row.title, selectedId: row.rowId })}
+                            title={row.description ?? row.title}
                             className="w-full text-left px-3 py-2 border-t first:border-t-0 hover:bg-muted/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                           >
                             <div className="text-sm font-medium leading-tight">{row.title}</div>

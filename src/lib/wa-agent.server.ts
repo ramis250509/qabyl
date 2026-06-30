@@ -2745,14 +2745,23 @@ function buildBranchListMsg(branches: WaBranchInfo[]): WaInteractiveMessage {
 
 function buildServiceListMsg(services: any[], language: "ru" | "ky" | "en"): WaInteractiveMessage {
   const question = language === "ky" ? "Кайсы кызматты тандайсыз?" : "Какую услугу выбираете?";
-  const rows = services.slice(0, 10).map((s: any) => ({
-    rowId: `svc_${s.id}`,
-    title: s.name.slice(0, 24),
-    description: s.price_type === "range"
-      ? `от ${s.price} сом`.slice(0, 72)
-      : `${s.price} сом`.slice(0, 72),
+  const btnText = language === "ky" ? "Кызматты тандоо" : "Выбрать услугу";
+  // Group by category
+  const grouped = new Map<string, any[]>();
+  for (const s of services) {
+    const cat = s.category ?? (language === "ky" ? "Кызматтар" : "Услуги");
+    if (!grouped.has(cat)) grouped.set(cat, []);
+    grouped.get(cat)!.push(s);
+  }
+  const sections = Array.from(grouped.entries()).map(([title, rows]) => ({
+    title,
+    rows: rows.map((s: any) => ({
+      rowId: `svc_${s.id}`,
+      title: s.name.slice(0, 24), // Green API hard limit
+      description: (s.price_type === "range" ? `от ${s.price} сом` : `${s.price} сом`).slice(0, 72),
+    })),
   }));
-  return { kind: "list", text: question, buttonText: "Выбрать услугу", sections: [{ rows }] };
+  return { kind: "list", text: question, buttonText: btnText, sections };
 }
 
 function buildDateListMsg(
@@ -2904,13 +2913,14 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     let greet = islamicGreeting
       ? (language === "ky" ? "Ваалейкум ассалам! " : "Ваалейкум ас-салям! ")
       : "";
-    const customGreet = input.config.greeting;
-    if (customGreet) {
-      greet += customGreet;
-    } else if (language === "ky") {
+    // Language-aware greeting: Kyrgyz/English always use native greeting;
+    // Russian falls back to custom admin greeting if set.
+    if (language === "ky") {
       greet += `Саламатсызбы! Мен «${input.salon.salonName}» салонунун жардамчысымын.`;
+    } else if (language === "en") {
+      greet += `Hello! I'm your assistant at «${input.salon.salonName}».`;
     } else {
-      greet += `Здравствуйте! Я помощник салона «${input.salon.salonName}».`;
+      greet += input.config.greeting ?? `Здравствуйте! Я помощник салона «${input.salon.salonName}».`;
     }
 
     if (!singleBranch) {
@@ -2924,6 +2934,29 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         ? `${greet}\n\nКызматтар азырынча жок. Салонго түз кайрылыңыз.`
         : `${greet}\n\nУслуги ещё не настроены. Пожалуйста, свяжитесь с салоном напрямую.`;
       return finish(msg, "done", v3);
+    }
+
+    // If the client's first message already names a service or asks a capability question,
+    // auto-select it instead of showing the full menu.
+    const mentionedSvc = combinedText ? findServiceByText(combinedText, services) as any : null;
+    if (mentionedSvc) {
+      debug.actions.push(`first_msg_svc_match:${mentionedSvc.id}`);
+      const isCapabilityQ = /\?|делаете|умеете|есть ли|жасайсыз|барбы|барм[ы|ы]?/i.test(combinedText);
+      const newV3 = { ...v3, service_id: mentionedSvc.id, service_name: mentionedSvc.name, price_type: mentionedSvc.price_type, price_min: mentionedSvc.price, price_max: mentionedSvc.price_max };
+      const confirm = isCapabilityQ
+        ? (language === "ky"
+            ? `${greet}\n\nИя, «${mentionedSvc.name}» кызматы бар!`
+            : `${greet}\n\nДа, у нас есть «${mentionedSvc.name}»!`)
+        : greet;
+      if (mentionedSvc.price_type === "range") {
+        const ask = language === "ky"
+          ? `Баасы ${mentionedSvc.price}–${mentionedSvc.price_max} сом. Так баасын аныктоо үчүн фото жиберсеңиз болот же "жоксуз фото" деп жазыңыз.`
+          : `Цена от ${mentionedSvc.price} до ${mentionedSvc.price_max} сом. Пришлите фото для точной оценки или напишите "без фото".`;
+        return finish(`${confirm}\n\n${ask}`, "awaiting_photo", newV3);
+      }
+      const dateMap = buildDateMap(tz, 7);
+      const q = language === "ky" ? "Кайсы күнгө жазыласыз?" : "На какую дату?";
+      return finish(`${confirm}\n\n${q}`, "awaiting_date_choice", newV3, buildDateListMsg(dateMap, language));
     }
 
     if (services.length === 1) {
@@ -2993,7 +3026,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     }
 
     if (!serviceId) {
-      const faqCue = /\?|расписани|часы|работаете|адрес|где вы|умеете|делаете|ведёте|принимаете/i.test(combinedText);
+      const faqCue = /\?|расписани|часы|работаете|адрес|где вы|умеете|делаете|ведёте|принимаете|жасайсыз|иштейсиз|убакт|дарек|канча|барбы/i.test(combinedText);
       const faqReply = (faqCue && combinedText)
         ? await callGeminiV3Faq(apiKey, input.salon.salonName, input.salonInfo, input.config, combinedText, language)
         : "";
