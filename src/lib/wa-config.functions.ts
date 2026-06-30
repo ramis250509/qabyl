@@ -58,6 +58,7 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
       state: z.string().default("idle"),
       stateData: z.record(z.unknown()).default({}),
       selectedBranchId: z.string().nullable().default(null),
+      selectedId: z.string().nullable().default(null),
       imageBase64: z.string().optional(),
       imageMime: z.string().optional(),
     }).parse(input)
@@ -65,7 +66,7 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     await assertSalonAccess(context.supabase, context.userId, data.salonId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { runWaAgent } = await import("@/lib/wa-agent.server");
+    const { runWaAgentV3: runWaAgent } = await import("@/lib/wa-agent.server");
 
     const [salonResult, assistantResult, branchResult] = await Promise.all([
       supabaseAdmin.from("salons").select("id, name, timezone, working_hours, address").eq("id", data.salonId).maybeSingle(),
@@ -93,6 +94,7 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
       media_mime: data.imageMime ?? null,
       media_path: null,
       created_at: new Date().toISOString(),
+      selected_id: data.selectedId ?? null,
     };
 
     const result = await runWaAgent({
@@ -129,6 +131,7 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
       nextState: result.nextState,
       nextStateData: result.nextStateData,
       selectedBranchId: result.selectedBranchId,
+      interactiveMessage: result.interactiveMessage ?? null,
       debug: {
         intent: result.debug.intent ?? null,
         actions: result.debug.actions,

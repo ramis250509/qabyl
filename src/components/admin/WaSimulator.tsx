@@ -7,9 +7,10 @@ import { Bot, ImagePlus, RotateCcw, Send, X } from "lucide-react";
 import { simulateWaMessage } from "@/lib/wa-config.functions";
 
 type WaState =
-  | "idle" | "awaiting_branch" | "collecting" | "awaiting_photo"
-  | "awaiting_price_confirm" | "awaiting_part_of_day" | "awaiting_slot_choice"
-  | "awaiting_master_choice" | "awaiting_name" | "awaiting_final_confirm" | "done";
+  | "idle" | "awaiting_branch" | "collecting" | "awaiting_service" | "awaiting_photo"
+  | "awaiting_price_confirm" | "awaiting_date_choice" | "awaiting_part_of_day"
+  | "awaiting_slot_choice" | "awaiting_master_choice" | "awaiting_name"
+  | "awaiting_final_confirm" | "done";
 
 type HistoryMsg = {
   id: string;
@@ -20,7 +21,12 @@ type HistoryMsg = {
   media_mime?: string | null;
   media_path?: string | null;
   created_at: string;
+  selected_id?: string | null;
 };
+
+type InteractiveMessage =
+  | { kind: "buttons"; text: string; buttons: Array<{ id: string; text: string }> }
+  | { kind: "list"; text: string; buttonText: string; sections: Array<{ title?: string; rows: Array<{ rowId: string; title: string; description?: string }> }> };
 
 type ChatMessage = {
   role: "user" | "bot";
@@ -28,6 +34,7 @@ type ChatMessage = {
   imageDataUrl?: string;
   intent?: string;
   state?: string;
+  interactive?: InteractiveMessage | null;
 };
 
 export function WaSimulator({ salonId }: { salonId: string }) {
@@ -50,8 +57,6 @@ export function WaSimulator({ salonId }: { salonId: string }) {
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = "";
-    // Resize to max 1024px and compress to JPEG 80% — keeps base64 under ~300KB
-    // so the server function body stays well within size limits.
     const img = new Image();
     const objectUrl = URL.createObjectURL(file);
     img.onload = () => {
@@ -67,20 +72,20 @@ export function WaSimulator({ salonId }: { salonId: string }) {
       canvas.height = height;
       canvas.getContext("2d")!.drawImage(img, 0, 0, width, height);
       const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
-      const comma = dataUrl.indexOf(",");
-      const base64 = dataUrl.slice(comma + 1);
+      const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
       setPendingImage({ dataUrl, base64, mime: "image/jpeg" });
     };
     img.onerror = () => URL.revokeObjectURL(objectUrl);
     img.src = objectUrl;
   }
 
-  async function send() {
-    const text = inputText.trim();
-    if ((!text && !pendingImage) || isLoading) return;
-    setInputText("");
+  async function send(opts?: { text?: string; selectedId?: string }) {
+    const text = opts?.text ?? inputText.trim();
+    const selectedId = opts?.selectedId ?? null;
+    if ((!text && !pendingImage && !selectedId) || isLoading) return;
+    if (!opts) setInputText("");
 
-    const userMsg: ChatMessage = { role: "user", text: text || undefined, imageDataUrl: pendingImage?.dataUrl };
+    const userMsg: ChatMessage = { role: "user", text: text || (selectedId ? `[tap: ${selectedId}]` : undefined), imageDataUrl: pendingImage?.dataUrl };
     setMessages((prev) => [...prev, userMsg]);
     const imageToSend = pendingImage;
     setPendingImage(null);
@@ -96,6 +101,7 @@ export function WaSimulator({ salonId }: { salonId: string }) {
           state: agentState,
           stateData: agentStateData,
           selectedBranchId,
+          selectedId,
           imageBase64: imageToSend?.base64,
           imageMime: imageToSend?.mime,
         },
@@ -107,6 +113,7 @@ export function WaSimulator({ salonId }: { salonId: string }) {
         direction: "in",
         kind: imageToSend ? "image" : "text",
         text_body: text || null,
+        selected_id: selectedId,
         created_at: now,
       };
       const outMsg: HistoryMsg = {
@@ -123,7 +130,13 @@ export function WaSimulator({ salonId }: { salonId: string }) {
       setSelectedBranchId(res.selectedBranchId);
       setMessages((prev) => [
         ...prev,
-        { role: "bot", text: res.reply, intent: res.debug.intent ?? undefined, state: res.nextState },
+        {
+          role: "bot",
+          text: res.reply,
+          intent: res.debug.intent ?? undefined,
+          state: res.nextState,
+          interactive: (res as any).interactiveMessage ?? null,
+        },
       ]);
     } catch (e: any) {
       setMessages((prev) => [
@@ -179,6 +192,53 @@ export function WaSimulator({ salonId }: { salonId: string }) {
               )}
               {m.text && <span>{m.text}</span>}
             </div>
+
+            {/* Interactive message: render buttons or list rows */}
+            {m.role === "bot" && m.interactive && (
+              <div className="max-w-[82%] mt-1.5 space-y-1.5">
+                {m.interactive.kind === "buttons" && (
+                  <div className="flex gap-2 flex-wrap">
+                    {m.interactive.buttons.map((btn) => (
+                      <button
+                        key={btn.id}
+                        disabled={isLoading || i < messages.length - 1}
+                        onClick={() => send({ text: btn.text, selectedId: btn.id })}
+                        className="text-xs px-3 py-1.5 rounded-full border border-primary text-primary bg-background hover:bg-primary/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      >
+                        {btn.text}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {m.interactive.kind === "list" && (
+                  <div className="border rounded-lg bg-background shadow-sm overflow-hidden w-56">
+                    {m.interactive.sections.map((sec, si) => (
+                      <div key={si}>
+                        {sec.title && (
+                          <div className="px-3 py-1 text-[10px] font-semibold uppercase text-muted-foreground bg-muted/40">
+                            {sec.title}
+                          </div>
+                        )}
+                        {sec.rows.map((row) => (
+                          <button
+                            key={row.rowId}
+                            disabled={isLoading || i < messages.length - 1}
+                            onClick={() => send({ text: row.title, selectedId: row.rowId })}
+                            className="w-full text-left px-3 py-2 border-t first:border-t-0 hover:bg-muted/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                          >
+                            <div className="text-sm font-medium leading-tight">{row.title}</div>
+                            {row.description && (
+                              <div className="text-[11px] text-muted-foreground leading-tight mt-0.5">{row.description}</div>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {m.role === "bot" && (m.intent || m.state) && (
               <p className="text-[10px] text-muted-foreground mt-0.5 px-1">
                 {[
@@ -249,7 +309,7 @@ export function WaSimulator({ salonId }: { salonId: string }) {
         />
         <Button
           type="button"
-          onClick={send}
+          onClick={() => send()}
           disabled={isLoading || (!inputText.trim() && !pendingImage)}
         >
           <Send className="h-4 w-4" />
