@@ -2743,6 +2743,17 @@ function buildBranchListMsg(branches: WaBranchInfo[]): WaInteractiveMessage {
   };
 }
 
+// Green API / WhatsApp hard-caps list row titles at 24 chars. Truncate at a
+// word boundary (not mid-word) and, when truncated, move the full name into
+// the description so no information is lost.
+function truncateRowTitle(name: string, max = 24): string {
+  if (name.length <= max) return name;
+  const slice = name.slice(0, max - 1);
+  const lastSpace = slice.lastIndexOf(" ");
+  const cut = lastSpace > 10 ? slice.slice(0, lastSpace) : slice;
+  return cut.trimEnd() + "…";
+}
+
 function buildServiceListMsg(services: any[], language: "ru" | "ky" | "en"): WaInteractiveMessage {
   const question = language === "ky" ? "Кайсы кызматты тандайсыз?" : "Какую услугу выбираете?";
   const btnText = language === "ky" ? "Кызматты тандоо" : "Выбрать услугу";
@@ -2755,11 +2766,15 @@ function buildServiceListMsg(services: any[], language: "ru" | "ky" | "en"): WaI
   }
   const sections = Array.from(grouped.entries()).map(([title, rows]) => ({
     title,
-    rows: rows.map((s: any) => ({
-      rowId: `svc_${s.id}`,
-      title: s.name.slice(0, 24), // Green API hard limit
-      description: (s.price_type === "range" ? `от ${s.price} сом` : `${s.price} сом`).slice(0, 72),
-    })),
+    rows: rows.map((s: any) => {
+      const priceStr = s.price_type === "range" ? `от ${s.price} сом` : `${s.price} сом`;
+      const truncated = s.name.length > 24;
+      return {
+        rowId: `svc_${s.id}`,
+        title: truncateRowTitle(s.name),
+        description: (truncated ? `${s.name} · ${priceStr}` : priceStr).slice(0, 72),
+      };
+    }),
   }));
   return { kind: "list", text: question, buttonText: btnText, sections };
 }
@@ -2856,6 +2871,38 @@ async function callGeminiV3Faq(
   }
 }
 
+const NATIVE_FALLBACK_GREETING: Record<"ky" | "en", string> = {
+  ky: "Саламатсызбы! Жардам бере аламбы?",
+  en: "Hello! How can I help you?",
+};
+
+async function translateGreetingV3(
+  apiKey: string,
+  text: string,
+  targetLang: "ky" | "en",
+): Promise<string> {
+  if (!apiKey || !text.trim()) return "";
+  const langName = targetLang === "ky" ? "кыргызский" : "английский";
+  const sys = `Переведи текст приветствия администратора салона красоты на ${langName} язык. Сохрани тон, эмодзи и форматирование (переносы строк). Верни только перевод, без кавычек и пояснений.`;
+  const url = `${GEMINI_BASE}/${MODEL_TEXT}:generateContent?key=${apiKey}`;
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: sys }] },
+        contents: [{ role: "user", parts: [{ text }] }],
+        toolConfig: { functionCallingConfig: { mode: "NONE" } },
+        generationConfig: { temperature: 0.3, maxOutputTokens: 400, thinkingConfig: { thinkingBudget: 0 } },
+      }),
+    });
+    const json: any = await r.json();
+    return json?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? "";
+  } catch {
+    return "";
+  }
+}
+
 export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> {
   const db = await getAdmin();
   const apiKey = process.env.GEMINI_API_KEY ?? "";
@@ -2913,14 +2960,15 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     let greet = islamicGreeting
       ? (language === "ky" ? "Ваалейкум ассалам! " : "Ваалейкум ас-салям! ")
       : "";
-    // Language-aware greeting: Kyrgyz/English always use native greeting;
-    // Russian falls back to custom admin greeting if set.
-    if (language === "ky") {
-      greet += `Саламатсызбы! Мен «${input.salon.salonName}» салонунун жардамчысымын.`;
-    } else if (language === "en") {
-      greet += `Hello! I'm your assistant at «${input.salon.salonName}».`;
+    // The admin writes one greeting in Russian; for other client languages we
+    // translate it on the fly (constrained to the salon's enabled languages),
+    // instead of hardcoding per-language strings.
+    const baseGreeting = input.config.greeting?.trim() || `Здравствуйте! Я помощник салона «${input.salon.salonName}».`;
+    if (language === "ru") {
+      greet += baseGreeting;
     } else {
-      greet += input.config.greeting ?? `Здравствуйте! Я помощник салона «${input.salon.salonName}».`;
+      const translated = await translateGreetingV3(apiKey, baseGreeting, language);
+      greet += translated || NATIVE_FALLBACK_GREETING[language];
     }
 
     if (!singleBranch) {

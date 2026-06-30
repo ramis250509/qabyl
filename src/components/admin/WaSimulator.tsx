@@ -211,11 +211,11 @@ export function WaSimulator({ salonId }: { salonId: string }) {
                   </div>
                 )}
                 {m.interactive.kind === "list" && (
-                  <div className="border rounded-lg bg-background shadow-sm overflow-hidden w-56">
+                  <div className="border rounded-lg bg-background shadow-sm overflow-hidden w-64">
                     {m.interactive.sections.map((sec, si) => (
-                      <div key={si}>
+                      <div key={si} className={si > 0 ? "border-t-4 border-muted" : ""}>
                         {sec.title && (
-                          <div className="px-3 py-1 text-[10px] font-semibold uppercase text-muted-foreground bg-muted/40">
+                          <div className="px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-primary bg-primary/10">
                             {sec.title}
                           </div>
                         )}
