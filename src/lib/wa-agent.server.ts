@@ -107,7 +107,7 @@ export type WaAgentInput = {
 
 export type WaInteractiveMessage =
   | { kind: "buttons"; text: string; buttons: Array<{ id: string; text: string }> }
-  | { kind: "list"; text: string; buttonText: string; sections: Array<{ title?: string; rows: Array<{ rowId: string; title: string; description?: string }> }> };
+  | { kind: "list"; text: string; buttonText: string; sections: Array<{ title?: string; rows: Array<{ rowId: string; title: string; description?: string; fullName?: string }> }> };
 
 export type WaAgentResult = {
   reply: string;
@@ -2768,11 +2768,13 @@ function buildServiceListMsg(services: any[], language: "ru" | "ky" | "en"): WaI
     title,
     rows: rows.map((s: any) => {
       const priceStr = s.price_type === "range" ? `от ${s.price} сом` : `${s.price} сом`;
-      const truncated = s.name.length > 24;
       return {
         rowId: `svc_${s.id}`,
         title: truncateRowTitle(s.name),
-        description: (truncated ? `${s.name} · ${priceStr}` : priceStr).slice(0, 72),
+        description: priceStr.slice(0, 72),
+        // Full untruncated name — WhatsApp itself caps row titles at 24 chars,
+        // but the admin simulator uses this to show the real name in full.
+        fullName: s.name,
       };
     }),
   }));

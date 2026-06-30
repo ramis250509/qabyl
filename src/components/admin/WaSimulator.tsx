@@ -26,7 +26,7 @@ type HistoryMsg = {
 
 type InteractiveMessage =
   | { kind: "buttons"; text: string; buttons: Array<{ id: string; text: string }> }
-  | { kind: "list"; text: string; buttonText: string; sections: Array<{ title?: string; rows: Array<{ rowId: string; title: string; description?: string }> }> };
+  | { kind: "list"; text: string; buttonText: string; sections: Array<{ title?: string; rows: Array<{ rowId: string; title: string; description?: string; fullName?: string }> }> };
 
 type ChatMessage = {
   role: "user" | "bot";
@@ -211,7 +211,7 @@ export function WaSimulator({ salonId }: { salonId: string }) {
                   </div>
                 )}
                 {m.interactive.kind === "list" && (
-                  <div className="border rounded-lg bg-background shadow-sm overflow-hidden w-64">
+                  <div className="border rounded-lg bg-background shadow-sm overflow-hidden w-72">
                     {m.interactive.sections.map((sec, si) => (
                       <div key={si} className={si > 0 ? "border-t-4 border-muted" : ""}>
                         {sec.title && (
@@ -223,11 +223,10 @@ export function WaSimulator({ salonId }: { salonId: string }) {
                           <button
                             key={row.rowId}
                             disabled={isLoading}
-                            onClick={() => send({ text: row.title, selectedId: row.rowId })}
-                            title={row.description ?? row.title}
+                            onClick={() => send({ text: row.fullName ?? row.title, selectedId: row.rowId })}
                             className="w-full text-left px-3 py-2 border-t first:border-t-0 hover:bg-muted/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                           >
-                            <div className="text-sm font-medium leading-tight">{row.title}</div>
+                            <div className="text-sm font-medium leading-snug break-words">{row.fullName ?? row.title}</div>
                             {row.description && (
                               <div className="text-[11px] text-muted-foreground leading-tight mt-0.5">{row.description}</div>
                             )}

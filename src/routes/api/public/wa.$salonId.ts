@@ -423,7 +423,11 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
                 if (im.kind === "buttons") {
                   res = await greenApiSendButtons(creds, chatId, im.text, im.buttons);
                 } else {
-                  res = await greenApiSendListMessage(creds, chatId, im.text, im.buttonText, im.sections);
+                  const wireSections = im.sections.map((sec) => ({
+                    title: sec.title,
+                    rows: sec.rows.map(({ rowId, title, description }) => ({ rowId, title, description })),
+                  }));
+                  res = await greenApiSendListMessage(creds, chatId, im.text, im.buttonText, wireSections);
                 }
                 sentIdMessage = res.ok ? res.idMessage : undefined;
                 if (!res.ok) {
