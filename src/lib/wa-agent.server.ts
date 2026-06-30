@@ -2295,12 +2295,20 @@ async function callGeminiTools(opts: {
   systemInstruction: string;
   contents: GeminiV2Content[];
   tools: any[];
+  allowedFunctionNames?: string[]; // restrict which tools can fire on this turn
 }): Promise<{ ok: boolean; parts?: any[]; error?: string }> {
+  // Empty array → block all tools (mode NONE). Non-empty → restrict to that list.
+  const noTools = Array.isArray(opts.allowedFunctionNames) && opts.allowedFunctionNames.length === 0;
+  const fcConfig: any = noTools
+    ? { mode: "NONE" }
+    : opts.allowedFunctionNames
+      ? { mode: "AUTO", allowedFunctionNames: opts.allowedFunctionNames }
+      : { mode: "AUTO" };
   const body: any = {
     systemInstruction: { parts: [{ text: opts.systemInstruction }] },
     contents: opts.contents,
-    tools: [{ functionDeclarations: opts.tools }],
-    toolConfig: { functionCallingConfig: { mode: "AUTO" } },
+    ...(noTools ? {} : { tools: [{ functionDeclarations: opts.tools }] }),
+    toolConfig: { functionCallingConfig: fcConfig },
     generationConfig: {
       temperature: 0.4,
       maxOutputTokens: 2048,
@@ -2562,9 +2570,20 @@ export async function runWaAgentV2(input: WaAgentInput): Promise<WaAgentResult> 
 
   let reply = "";
   const MAX_TOOL_ITERS = 8;
+  // On the very first user message restrict which tools Gemini can call.
+  // Single-branch: no tools at all (empty list → no function calls, Gemini just greets + asks service).
+  // Multi-branch: only get_branches, so Gemini can list branches but not proactively dump services.
+  const isFirstMessage = v2History.length === 0;
+  const firstTurnAllowed = isFirstMessage
+    ? (branches.length > 1 ? ["get_branches"] : [])
+    : undefined;
 
   for (let iter = 0; iter < MAX_TOOL_ITERS; iter++) {
-    const res = await callGeminiTools({ apiKey, systemInstruction: systemPrompt, contents, tools: V2_TOOL_DECLARATIONS });
+    const allowedNames = iter === 0 ? firstTurnAllowed : undefined;
+    const res = await callGeminiTools({
+      apiKey, systemInstruction: systemPrompt, contents, tools: V2_TOOL_DECLARATIONS,
+      allowedFunctionNames: allowedNames,
+    });
 
     if (!res.ok || !res.parts) {
       debug.errors.push(`gemini_tools iter${iter}: ${res.error ?? "no parts"}`);
