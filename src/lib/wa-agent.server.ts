@@ -953,8 +953,8 @@ async function compose(opts: {
     const useConfigGreeting = !opts.islamicGreeting && opts.language === "ru" && opts.greeting && /\p{L}/u.test(opts.greeting);
     const g = opts.islamicGreeting ? "Ваалейкум ас-салям!"
       : useConfigGreeting ? opts.greeting!.trim()
-      : opts.language === "ky" ? "Саламатсызбы!"
-      : opts.language === "en" ? "Hello!"
+      : opts.language === "ky" ? `Саламатсызбы! Мен «${opts.salon.salonName}» салонунун жардамчысымын.`
+      : opts.language === "en" ? `Hello! I'm your assistant at "${opts.salon.salonName}".`
       : "Здравствуйте!";
     const shortHint = (opts.language === "ru" && /коротко|кратко|без лишних слов|по делу/i.test(`${opts.tone ?? ""} ${opts.greeting ?? ""}`))
       ? "Коротко: "
@@ -1196,10 +1196,17 @@ function instructionFallbackReply(factual: string, language: "ru" | "ky" | "en",
     if (language === "en") return "What time or day should I book for?";
     return "На какое время или день вас записать?";
   }
+  if (/в\s+какой\s+филиал|филиал.*записат/i.test(text)) {
+    const lines = text.match(/^[-–—]\s+.+/mg) ?? [];
+    const list = lines.length ? "\n" + lines.join("\n") : "";
+    if (language === "ky") return `Кайсы филиалга жазыласыз?${list}`;
+    if (language === "en") return `Which branch would you like to visit?${list}`;
+    return `В какой филиал запишем?${list}`;
+  }
   if (/поприветствуй|помочь с записью|на какую услугу записать/i.test(text)) {
-    if (language === "ky") return `Саламатсызбы${salonName ? `! Бул «${salonName}»` : ""}. Кайсы кызматка жазыласыз?`;
-    if (language === "en") return `Hello${salonName ? `! This is ${salonName}` : ""}. Which service would you like to book?`;
-    return `Здравствуйте${salonName ? `! Вас приветствует «${salonName}»` : ""}. На какую услугу вас записать?`;
+    if (language === "ky") return `Кайсы кызматка жазыласыз?`;
+    if (language === "en") return `Which service would you like to book?`;
+    return `На какую услугу вас записать?`;
   }
   const partAsk = text.match(/удобнее\.?\s*доступные варианты:\s*([^.]*)/i);
   if (partAsk) {
@@ -1612,7 +1619,7 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
   let factual = "";
 
   const tone = input.config.tone_instructions;
-  const islamicGreeting = /ассаламу?\s*а?лейку?м|ассалму/i.test(combinedLastText);
+  const islamicGreeting = /ассаламу?\s*а?лейку?м|ассалму|салам\s+а?ллейку?м/i.test(combinedLastText);
   const compose1 = (text: string) =>
     compose({
       apiKey,
