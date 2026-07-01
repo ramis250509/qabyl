@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { Sparkles, Lock, Copy, RefreshCw, Webhook, MessageCircle } from "lucide-react";
 import { getWaWebhookConfig, regenerateWaWebhookToken } from "@/lib/wa-config.functions";
 import { WaSimulator } from "./WaSimulator";
+import { AiServiceListEditor } from "./AiServiceListEditor";
 
 type Assistant = {
   salon_id: string;
@@ -339,6 +340,10 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
           </Button>
         </div>
       </Card>
+
+      <div className={!premiumEnabled ? "opacity-60 pointer-events-none select-none" : ""}>
+        <AiServiceListEditor salonId={salonId} />
+      </div>
 
       <WaSimulator salonId={salonId} />
     </div>

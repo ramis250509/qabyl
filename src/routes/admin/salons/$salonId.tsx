@@ -28,7 +28,7 @@ import { SiteTab } from "@/components/admin/SiteTab";
 import { SalonShareCard } from "@/components/admin/SalonShareCard";
 import { ReviewsTab } from "@/components/admin/ReviewsTab";
 import { formatPrice } from "@/lib/price";
-import { BranchHoursEditor, defaultBranchHours } from "@/components/admin/BranchHoursEditor";
+import { BranchHoursEditor, defaultBranchHours, type BranchHours } from "@/components/admin/BranchHoursEditor";
 import { MasterDayOverrides } from "@/components/admin/MasterDayOverrides";
 import { AiAssistantTab } from "@/components/admin/AiAssistantTab";
 // WaChatsTab tab hidden from UI by request; component kept for future use.
@@ -104,7 +104,7 @@ function SalonEdit() {
           </TabsList>
         </div>
 
-        <TabsContent value="info"><SalonInfoTab salon={salon} onSaved={(s) => setSalon(s)} /></TabsContent>
+        <TabsContent value="info"><SalonInfoTab salon={salon} onSaved={(s) => setSalon(s)} onOpenBranchesTab={() => setActiveTab("branches")} /></TabsContent>
         <TabsContent value="branches"><BranchesTab salonId={salonId} /></TabsContent>
         <TabsContent value="site"><SiteTab salon={salon} onSaved={(s) => setSalon(s)} /></TabsContent>
         <TabsContent value="reviews"><ReviewsTab salonId={salonId} /></TabsContent>
@@ -123,7 +123,7 @@ function SalonEdit() {
   );
 }
 
-function SalonInfoTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => void }) {
+function SalonInfoTab({ salon, onSaved, onOpenBranchesTab }: { salon: any; onSaved: (s: any) => void; onOpenBranchesTab?: () => void }) {
   const [form, setForm] = useState(salon);
   const [saving, setSaving] = useState(false);
   const [tzNow, setTzNow] = useState("");
@@ -171,7 +171,8 @@ function SalonInfoTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => voi
 
 
   return (
-    <Card className="p-4 sm:p-6 space-y-4 max-w-2xl">
+    <div className="space-y-6 max-w-2xl">
+    <Card className="p-4 sm:p-6 space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div><Label>Название</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
         <div>
@@ -259,6 +260,150 @@ function SalonInfoTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => voi
         <p className="text-xs text-muted-foreground mt-1">Не забудьте нажать «Сохранить» после загрузки.</p>
       </div>
       <Button onClick={save} disabled={saving}>{saving ? "..." : "Сохранить"}</Button>
+    </Card>
+    <SalonScheduleCard salonId={salon.id} onOpenBranchesTab={onOpenBranchesTab} />
+    </div>
+  );
+}
+
+const SCHEDULE_DOW_KEYS: Record<number, string> = { 0: "sun", 1: "mon", 2: "tue", 3: "wed", 4: "thu", 5: "fri", 6: "sat" };
+
+function formatWorkingHoursForAgent(hours: BranchHours): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (let dow = 0; dow <= 6; dow++) {
+    const intervals = hours[String(dow)] ?? [];
+    out[SCHEDULE_DOW_KEYS[dow]] = intervals.length > 0
+      ? intervals.map((iv) => `${iv.start}–${iv.end}`).join(", ")
+      : "Выходной";
+  }
+  return out;
+}
+
+// Общий график салона (вкладка «Информация») — доступен только когда у салона ровно
+// один филиал: в этом случае график салона и график филиала — одно и то же, и мы
+// напрямую редактируем branches.working_hours (единственный источник, который читает
+// get_available_slots()). При >=2 филиалах график настраивается отдельно для каждого
+// во вкладке «Филиалы», чтобы не терять гибкость сетевых салонов.
+function SalonScheduleCard({ salonId, onOpenBranchesTab }: { salonId: string; onOpenBranchesTab?: () => void }) {
+  const [branches, setBranches] = useState<any[] | null>(null);
+  const [hours, setHours] = useState<BranchHours>(defaultBranchHours());
+  const [saving, setSaving] = useState(false);
+  const [conflicts, setConflicts] = useState<any[] | null>(null);
+  const [pendingSave, setPendingSave] = useState(false);
+
+  async function load() {
+    const { data } = await supabase
+      .from("branches")
+      .select("id, working_hours")
+      .eq("salon_id", salonId)
+      .order("sort_order");
+    setBranches(data ?? []);
+    if (data && data.length === 1) {
+      setHours((data[0].working_hours as BranchHours) ?? defaultBranchHours());
+    }
+  }
+  useEffect(() => { load(); }, [salonId]);
+
+  if (branches === null) return null;
+
+  if (branches.length !== 1) {
+    return (
+      <Card className="p-4 sm:p-6 space-y-2">
+        <h2 className="font-semibold">График работы</h2>
+        <p className="text-sm text-muted-foreground">
+          {branches.length === 0
+            ? "Сначала добавьте филиал во вкладке «Филиалы» — там же настраивается график работы."
+            : "У салона несколько филиалов — график настраивается отдельно для каждого во вкладке «Филиалы»."}
+        </p>
+        {onOpenBranchesTab && (
+          <Button variant="outline" size="sm" onClick={onOpenBranchesTab}>Перейти к филиалам</Button>
+        )}
+      </Card>
+    );
+  }
+
+  const branch = branches[0];
+
+  async function findConflicts(newHours: BranchHours): Promise<any[]> {
+    const closedDows = Object.keys(newHours)
+      .filter((dow) => (newHours[dow]?.length ?? 0) === 0)
+      .map(Number);
+    if (closedDows.length === 0) return [];
+    const horizon = new Date(Date.now() + 56 * 24 * 60 * 60 * 1000).toISOString();
+    const { data } = await supabase
+      .from("appointments")
+      .select("id, client_name, starts_at")
+      .eq("branch_id", branch.id)
+      .eq("status", "confirmed")
+      .gte("starts_at", new Date().toISOString())
+      .lte("starts_at", horizon)
+      .order("starts_at");
+    return (data ?? []).filter((a: any) => closedDows.includes(new Date(a.starts_at).getDay()));
+  }
+
+  async function doSave() {
+    setSaving(true);
+    const { error: branchErr } = await supabase.from("branches").update({ working_hours: hours }).eq("id", branch.id);
+    if (branchErr) { setSaving(false); return toast.error(branchErr.message); }
+    // Keep salons.working_hours (a human-readable summary the WA assistant reads for
+    // FAQ answers like "what are your hours") in sync with the real slot-blocking data.
+    const { error: salonErr } = await supabase
+      .from("salons")
+      .update({ working_hours: formatWorkingHoursForAgent(hours) })
+      .eq("id", salonId);
+    setSaving(false);
+    if (salonErr) return toast.error(salonErr.message);
+    toast.success("График сохранён");
+    setConflicts(null);
+    setPendingSave(false);
+  }
+
+  async function onSaveClick() {
+    setSaving(true);
+    const found = await findConflicts(hours);
+    setSaving(false);
+    if (found.length > 0) {
+      setConflicts(found);
+      setPendingSave(true);
+      return;
+    }
+    doSave();
+  }
+
+  return (
+    <Card className="p-4 sm:p-6 space-y-4">
+      <div>
+        <h2 className="font-semibold">График работы</h2>
+        <p className="text-xs text-muted-foreground">
+          Общий график салона. Если выставить выходной — в этот день запись недоступна ни к одному мастеру.
+        </p>
+      </div>
+      <BranchHoursEditor value={hours} onChange={setHours} />
+      <Button onClick={onSaveClick} disabled={saving}>{saving ? "..." : "Сохранить график"}</Button>
+
+      <AlertDialog open={pendingSave} onOpenChange={(o) => { if (!o) { setPendingSave(false); setConflicts(null); } }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>На новый выходной уже есть записи</AlertDialogTitle>
+            <AlertDialogDescription>
+              В ближайшие 8 недель на этот день недели назначено {conflicts?.length ?? 0} записей. Они не отменятся
+              автоматически — при необходимости перенесите или отмените их вручную в Календаре.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="max-h-48 overflow-y-auto text-sm space-y-1 border rounded-md p-2">
+            {conflicts?.map((a) => (
+              <div key={a.id} className="flex justify-between gap-2">
+                <span>{a.client_name}</span>
+                <span className="text-muted-foreground">{new Date(a.starts_at).toLocaleString("ru-RU")}</span>
+              </div>
+            ))}
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction onClick={doSave}>Сохранить всё равно</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }

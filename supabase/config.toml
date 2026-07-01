@@ -1,3 +1,5 @@
 project_id = "khykprcdojksqvuqyajd"
 [functions.send-push]
 verify_jwt = false
+[functions.cleanup-wa-media]
+verify_jwt = false

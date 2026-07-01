@@ -62,6 +62,11 @@ export type WaAgentState =
   | "awaiting_master_choice"
   | "awaiting_name"
   | "awaiting_final_confirm"
+  | "awaiting_manage_choice"    // V3: client has 2+ upcoming appointments, pick which one
+  | "awaiting_manage_action"    // V3: cancel / reschedule / leave alone
+  | "awaiting_reschedule_date"  // V3
+  | "awaiting_reschedule_slot"  // V3
+  | "awaiting_manage_confirm"   // V3: final yes/no before applying cancel or reschedule
   | "done";
 
 export type WaAgentStateData = {
@@ -122,6 +127,9 @@ export type WaAgentResult = {
     errors: string[];
   };
   interactiveMessage?: WaInteractiveMessage; // V3: send as WhatsApp button/list instead of plain text
+  // V3: relay the client's photo to the salon admin (owner_notify_phone) — set when photo
+  // pricing confidence stayed low after a retry. The webhook performs the actual send.
+  notifyAdmin?: { mediaUrl: string; caption: string };
 };
 
 export type GreenApiCreds = { instance: string; token: string };
@@ -145,6 +153,38 @@ export async function greenApiSendMessage(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ chatId, message }),
+    });
+    const txt = await r.text();
+    let json: any = null;
+    try {
+      json = JSON.parse(txt);
+    } catch {}
+    if (!r.ok) {
+      return { ok: false, error: `green-api ${r.status}: ${txt.slice(0, 200)}` };
+    }
+    return { ok: true, idMessage: json?.idMessage };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? String(e) };
+  }
+}
+
+// Relays a file (e.g. a client's photo) to an arbitrary chat — used to forward a client's
+// photo to the salon admin's WhatsApp when the AI can't confidently price it from the photo
+// alone. Takes any fetchable URL (we pass our own Supabase signed URL, not Green-API's,
+// so it isn't subject to Green-API's own media TTL). No storage bucket of our own involved.
+export async function greenApiSendFileByUrl(
+  creds: GreenApiCreds,
+  chatId: string,
+  urlFile: string,
+  fileName: string,
+  caption?: string,
+): Promise<{ ok: boolean; idMessage?: string; error?: string }> {
+  try {
+    const url = `https://api.green-api.com/waInstance${creds.instance}/sendFileByUrl/${creds.token}`;
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chatId, urlFile, fileName, caption }),
     });
     const txt = await r.text();
     let json: any = null;
@@ -299,6 +339,10 @@ async function callGemini(opts: {
   temperature?: number;
   maxOutputTokens?: number;
   thinkingBudget?: number;
+  // Caps tokens spent per image (MEDIA_RESOLUTION_LOW/MEDIUM/HIGH) — controls Gemini's
+  // per-image billing without us having to resize anything ourselves (we can't: Cloudflare
+  // Workers has no native image codecs, so a library like sharp isn't an option here).
+  mediaResolution?: "MEDIA_RESOLUTION_LOW" | "MEDIA_RESOLUTION_MEDIUM" | "MEDIA_RESOLUTION_HIGH";
 }): Promise<{ ok: boolean; text?: string; error?: string }> {
   const body: any = {
     contents: opts.contents ?? [{ role: "user", parts: opts.parts }],
@@ -313,6 +357,7 @@ async function callGemini(opts: {
   };
   if (opts.responseMimeType) body.generationConfig.responseMimeType = opts.responseMimeType;
   if (opts.responseSchema) body.generationConfig.responseSchema = opts.responseSchema;
+  if (opts.mediaResolution) body.generationConfig.mediaResolution = opts.mediaResolution;
   if (opts.systemInstruction) {
     body.systemInstruction = { parts: [{ text: opts.systemInstruction }] };
   }
@@ -1321,6 +1366,53 @@ async function loadServicesForSalon(db: AdminClient, salonId: string) {
   return data ?? [];
 }
 
+// The service list the AI assistant actually shows/matches against in WhatsApp — layered
+// on top of loadServicesForSalon() with the admin's per-assistant category order/visibility
+// (salon_ai_assistant.ai_category_order / ai_hidden_categories) and per-service overrides
+// (ai_service_overrides). Absence of any override = identical to the regular services list.
+// Used everywhere V3 builds or searches the service menu so a service hidden from the AI
+// can't be booked by typing its name either — hiding stays consistent either way.
+async function loadAiVisibleServicesForSalon(db: AdminClient, salonId: string) {
+  const [services, assistantRes, overridesRes] = await Promise.all([
+    loadServicesForSalon(db, salonId),
+    db.from("salon_ai_assistant").select("ai_category_order, ai_hidden_categories").eq("salon_id", salonId).maybeSingle(),
+    db.from("ai_service_overrides").select("service_id, is_enabled, sort_order").eq("salon_id", salonId),
+  ]);
+  const hiddenCategories = new Set(((assistantRes.data as any)?.ai_hidden_categories as string[]) ?? []);
+  const categoryOrder = (((assistantRes.data as any)?.ai_category_order as string[]) ?? []);
+  const overrides = new Map(((overridesRes.data as any[]) ?? []).map((o) => [o.service_id as string, o]));
+
+  const visible = (services as any[]).filter((s) => {
+    if (hiddenCategories.has((s.category ?? "").trim())) return false;
+    const ov = overrides.get(s.id);
+    return ov ? ov.is_enabled !== false : true;
+  });
+
+  const catRank = new Map<string, number>();
+  let nextRank = categoryOrder.length;
+  for (const s of visible) {
+    const cat = (s.category ?? "").trim();
+    if (!catRank.has(cat)) {
+      const idx = categoryOrder.indexOf(cat);
+      catRank.set(cat, idx >= 0 ? idx : nextRank++);
+    }
+  }
+  return visible
+    .map((s, i) => ({ s, i }))
+    .sort((a, b) => {
+      const catA = catRank.get((a.s.category ?? "").trim()) ?? 0;
+      const catB = catRank.get((b.s.category ?? "").trim()) ?? 0;
+      if (catA !== catB) return catA - catB;
+      const ovA = overrides.get(a.s.id)?.sort_order;
+      const ovB = overrides.get(b.s.id)?.sort_order;
+      if (ovA != null && ovB != null) return ovA - ovB;
+      if (ovA != null) return -1;
+      if (ovB != null) return 1;
+      return a.i - b.i;
+    })
+    .map((x) => x.s);
+}
+
 async function loadMastersForService(
   db: AdminClient,
   salonId: string,
@@ -1429,11 +1521,16 @@ async function priceFromPhoto(opts: {
   priceMax: number;
   pricingRules: string | null;
   language: "ru" | "ky" | "en";
-}): Promise<{ price: number; explanation: string } | { error: string }> {
+}): Promise<{ price: number; explanation: string; confidence: "high" | "medium" | "low" } | { error: string }> {
   const sys = `Ты оцениваешь стоимость услуги «${opts.serviceName}» по фото клиента.
 Цена ОБЯЗАНА быть числом в диапазоне [${opts.priceMin}, ${opts.priceMax}] сом, не выходи за границы.
 ${opts.pricingRules ? `Правила оценки от салона: ${opts.pricingRules}` : ""}
-Верни строго JSON: {"price": число, "explanation": "1 короткое предложение"}.`;
+Честно оцени свою уверенность в поле confidence: "low", если фото нечёткое, снято не с того
+ракурса, не показывает объём/сложность работы, или на фото вообще не то, о чём просит клиент —
+в этих случаях НЕ придумывай цену наугад, ставь low и объясни в explanation, что именно не видно.
+"medium" — видно достаточно для примерной оценки, но есть сомнения. "high" — фото ясно показывает
+всё нужное для оценки.
+Верни строго JSON: {"price": число, "explanation": "1 короткое предложение", "confidence": "high"|"medium"|"low"}.`;
   const res = await callGemini({
     model: MODEL_VISION,
     apiKey: opts.apiKey,
@@ -1445,20 +1542,30 @@ ${opts.pricingRules ? `Правила оценки от салона: ${opts.pri
     responseMimeType: "application/json",
     responseSchema: {
       type: "object",
-      properties: { price: { type: "number" }, explanation: { type: "string" } },
-      required: ["price", "explanation"],
+      properties: {
+        price: { type: "number" },
+        explanation: { type: "string" },
+        confidence: { type: "string", enum: ["high", "medium", "low"] },
+      },
+      required: ["price", "explanation", "confidence"],
     },
     temperature: 0.2,
     maxOutputTokens: 1024,
     // Vision call returns a tiny JSON — don't waste budget on hidden "thinking",
     // it leaves nothing for the actual output and we get finishReason=MAX_TOKENS.
     thinkingBudget: 0,
+    // MEDIUM balances cost against the visual detail price estimation actually needs
+    // (nail art complexity, hair length) — LOW is available as a cheaper fallback if
+    // Gemini spend on this call still needs trimming later.
+    mediaResolution: "MEDIA_RESOLUTION_MEDIUM",
   });
   if (!res.ok || !res.text) return { error: res.error ?? "vision failed" };
   try {
     const j = JSON.parse(res.text);
     const p = Math.max(opts.priceMin, Math.min(opts.priceMax, Number(j.price)));
-    return { price: Math.round(p), explanation: String(j.explanation ?? "") };
+    const confidence: "high" | "medium" | "low" =
+      j.confidence === "low" || j.confidence === "medium" ? j.confidence : "high";
+    return { price: Math.round(p), explanation: String(j.explanation ?? ""), confidence };
   } catch (e: any) {
     return { error: e?.message ?? "parse failed" };
   }
@@ -1485,7 +1592,10 @@ async function downloadImageAsBase64(url: string): Promise<{ base64: string; mim
     if (!r.ok) return { error: `download ${r.status}` };
     const mime = r.headers.get("content-type") ?? "image/jpeg";
     const ab = await r.arrayBuffer();
-    if (ab.byteLength > 4 * 1024 * 1024) return { error: "image too large" };
+    // We don't resize before sending to Gemini either way (no image codecs available on
+    // Cloudflare Workers) — mediaResolution already caps Gemini's per-image cost, so the
+    // only reason for a cap here is bounding our own fetch/memory use, not Gemini spend.
+    if (ab.byteLength > 8 * 1024 * 1024) return { error: "image too large" };
     // Buffer is available in the Nitro/Node server runtime and is far faster than a
     // char-by-char btoa loop on large images.
     const base64 =
@@ -2719,6 +2829,7 @@ type V3BookingState = {
   price_max?: number;
   price_override?: number;
   price_skipped?: boolean;
+  photo_attempts?: number; // low-confidence photo pricing retries, before escalating to admin
   date?: string;
   slot_start?: string;
   slot_end?: string;
@@ -2726,6 +2837,18 @@ type V3BookingState = {
   master_name?: string;
   client_name?: string;
   slots_cache?: Array<{ start: string; end: string; masterIds: string[] }>;
+  // Cancel/reschedule of an EXISTING confirmed appointment — a side-quest that doesn't try
+  // to preserve whatever new-booking flow was interrupted; it resolves back to "done" so a
+  // client can just start a fresh booking afterwards if they were also mid-flow on one.
+  managing_candidates?: Array<{ id: string; label: string }>;
+  managing_appointment_id?: string;
+  managing_appointment_label?: string;
+  managing_service_id?: string;
+  managing_master_id?: string;
+  managing_action?: "cancel" | "reschedule";
+  managing_new_slot_start?: string;
+  managing_new_slot_end?: string;
+  managing_slots_cache?: Array<{ start: string; end: string }>;
 };
 
 function buildBranchListMsg(branches: WaBranchInfo[]): WaInteractiveMessage {
@@ -2834,6 +2957,28 @@ function buildConfirmMsg(details: string, language: "ru" | "ky" | "en"): WaInter
     buttons: [
       { id: "confirm_yes", text: language === "ky" ? "✅ Ооба, жазылам" : "✅ Да, записать" },
       { id: "confirm_no", text: language === "ky" ? "❌ Жок, өзгөртөм" : "❌ Нет, изменить" },
+    ],
+  };
+}
+
+function buildManageChoiceMsg(candidates: Array<{ id: string; label: string }>, language: "ru" | "ky" | "en"): WaInteractiveMessage {
+  const question = language === "ky" ? "Кайсы жазылууну тандайсыз?" : "Какую запись выбираем?";
+  const rows = candidates.map((c) => ({
+    rowId: `mgappt_${c.id}`,
+    title: c.label.slice(0, 24),
+    description: c.label.slice(0, 72),
+  }));
+  return { kind: "list", text: question, buttonText: language === "ky" ? "Тандоо" : "Выбрать", sections: [{ rows }] };
+}
+
+function buildManageActionMsg(language: "ru" | "ky" | "en"): WaInteractiveMessage {
+  return {
+    kind: "buttons",
+    text: language === "ky" ? "Эмне кылабыз?" : "Что делаем с записью?",
+    buttons: [
+      { id: "manage_cancel", text: language === "ky" ? "❌ Жокко чыгаруу" : "❌ Отменить" },
+      { id: "manage_reschedule", text: language === "ky" ? "📅 Которуу" : "📅 Перенести" },
+      { id: "manage_leave", text: language === "ky" ? "Тийбе" : "Не трогать" },
     ],
   };
 }
@@ -2960,6 +3105,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     nextV3: V3BookingState = v3,
     interactiveMessage?: WaInteractiveMessage,
     appointmentId: string | null = null,
+    notifyAdmin?: { mediaUrl: string; caption: string },
   ): WaAgentResult {
     return {
       reply,
@@ -2969,10 +3115,61 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       selectedBranchId: nextV3.branch_id ?? input.selectedBranchId,
       debug,
       interactiveMessage,
+      notifyAdmin,
     };
   }
 
   const state = input.state;
+
+  // ===== Manage an existing appointment (cancel/reschedule) — checked in ANY state except
+  // while already inside this sub-flow, since a client might interrupt a new booking to deal
+  // with an old appointment first ("на самом деле, отмените мою запись на завтра"). Resolves
+  // back to "done" instead of trying to resume whatever new-booking flow was interrupted —
+  // the client just re-starts a booking afterwards (which always shows the full menu again).
+  const manageFlowStates: WaAgentState[] = [
+    "awaiting_manage_choice", "awaiting_manage_action",
+    "awaiting_reschedule_date", "awaiting_reschedule_slot", "awaiting_manage_confirm",
+  ];
+  const manageIntent = !manageFlowStates.includes(state) && !selectedId && !!combinedText && (
+    /отмен|перенест|перенос|не смогу прийти|не могу прийти/i.test(combinedText) ||
+    /жокко чыгар|которуп ко|кийинкиге калтыр/i.test(combinedText)
+  );
+  if (manageIntent) {
+    const { data: apptRows } = await db
+      .from("appointments")
+      .select("id, starts_at, service_id, master_id, services(name)")
+      .eq("salon_id", input.salon.salonId)
+      .eq("client_phone", input.client.phone)
+      .eq("status", "confirmed")
+      .gte("starts_at", new Date().toISOString())
+      .order("starts_at");
+    const upcoming = (apptRows ?? []) as any[];
+
+    if (upcoming.length > 0) {
+      const candidates = upcoming.map((a) => ({
+        id: a.id as string,
+        label: `${a.services?.name ?? "?"} — ${formatDateInTz(a.starts_at, tz)}, ${formatTimeInTz(a.starts_at, tz)}`,
+      }));
+      if (upcoming.length === 1) {
+        const a = upcoming[0];
+        debug.actions.push("manage_intent:1_found");
+        const newV3: V3BookingState = {
+          managing_appointment_id: a.id,
+          managing_appointment_label: candidates[0].label,
+          managing_service_id: a.service_id,
+          managing_master_id: a.master_id,
+        };
+        const q = language === "ky"
+          ? `Сиздин жазылууңуз: ${candidates[0].label}. Эмне кылабыз?`
+          : `Ваша запись: ${candidates[0].label}. Что делаем?`;
+        return finish(q, "awaiting_manage_action", newV3, buildManageActionMsg(language));
+      }
+      debug.actions.push(`manage_intent:${upcoming.length}_found`);
+      const q = language === "ky" ? "Кайсы жазылууну тандайсыз?" : "Какую запись выбираем?";
+      return finish(q, "awaiting_manage_choice", { managing_candidates: candidates }, buildManageChoiceMsg(candidates, language));
+    }
+    debug.actions.push("manage_intent:none_found");
+  }
 
   // ===== idle / done → greet + first menu =====
   if (state === "idle" || state === "done") {
@@ -2996,7 +3193,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       return finish(greet, "awaiting_branch", { ...v3 }, buildBranchListMsg(input.branches));
     }
 
-    const services = await loadServicesForSalon(db, input.salon.salonId);
+    const services = await loadAiVisibleServicesForSalon(db, input.salon.salonId);
     if (services.length === 0) {
       const msg = language === "ky"
         ? `${greet}\n\nКызматтар азырынча жок. Салонго түз кайрылыңыз.`
@@ -3004,44 +3201,10 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       return finish(msg, "done", v3);
     }
 
-    // If the client's first message already names a service or asks a capability question,
-    // auto-select it instead of showing the full menu.
-    const mentionedSvc = combinedText ? findServiceByText(combinedText, services) as any : null;
-    if (mentionedSvc) {
-      debug.actions.push(`first_msg_svc_match:${mentionedSvc.id}`);
-      const isCapabilityQ = /\?|делаете|умеете|есть ли|жасайсыз|барбы|барм[ы|ы]?/i.test(combinedText);
-      const newV3 = { ...v3, service_id: mentionedSvc.id, service_name: mentionedSvc.name, price_type: mentionedSvc.price_type, price_min: mentionedSvc.price, price_max: mentionedSvc.price_max };
-      const confirm = isCapabilityQ
-        ? (language === "ky"
-            ? `${greet}\n\nИя, «${mentionedSvc.name}» кызматы бар!`
-            : `${greet}\n\nДа, у нас есть «${mentionedSvc.name}»!`)
-        : greet;
-      if (mentionedSvc.price_type === "range") {
-        const ask = language === "ky"
-          ? `Баасы ${mentionedSvc.price}–${mentionedSvc.price_max} сом. Так баасын аныктоо үчүн фото жиберсеңиз болот же "жоксуз фото" деп жазыңыз.`
-          : `Цена от ${mentionedSvc.price} до ${mentionedSvc.price_max} сом. Пришлите фото для точной оценки или напишите "без фото".`;
-        return finish(`${confirm}\n\n${ask}`, "awaiting_photo", newV3);
-      }
-      const dateMap = buildDateMap(tz, 7);
-      const q = language === "ky" ? "Кайсы күнгө жазыласыз?" : "На какую дату?";
-      return finish(`${confirm}\n\n${q}`, "awaiting_date_choice", newV3, buildDateListMsg(dateMap, language));
-    }
-
-    if (services.length === 1) {
-      const svc = services[0] as any;
-      const newV3 = { ...v3, service_id: svc.id, service_name: svc.name, price_type: svc.price_type, price_min: svc.price, price_max: svc.price_max };
-      debug.actions.push(`auto_service:${svc.id}`);
-      if (svc.price_type === "range") {
-        const ask = language === "ky"
-          ? `«${svc.name}» — баасы ${svc.price}–${svc.price_max} сом. Так баасын билүү үчүн фото жиберсеңиз болот же "жоксуз фото" деп жазыңыз.`
-          : `Услуга «${svc.name}» — цена от ${svc.price} до ${svc.price_max} сом. Пришлите фото для точной оценки или напишите "без фото".`;
-        return finish(`${greet}\n\n${ask}`, "awaiting_photo", newV3);
-      }
-      const dateMap = buildDateMap(tz, 7);
-      const q = language === "ky" ? `Кызмат: *${svc.name}*\n\nКайсы күнгө жазыласыз?` : `Услуга: *${svc.name}*\n\nНа какую дату?`;
-      return finish(`${greet}\n\n${q}`, "awaiting_date_choice", newV3, buildDateListMsg(dateMap, language));
-    }
-
+    // Always show the full assistant menu on the first reply, regardless of what the
+    // client's first message said (even if it already names a service) — the salon wants
+    // every new conversation to see the greeting + service list + booking prompt up front,
+    // not a shortcut straight into pricing/date for whatever the client happened to type.
     debug.actions.push("greet+service_list");
     return finish(greet, "awaiting_service", v3, buildServiceListMsg(services, language));
   }
@@ -3071,7 +3234,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     }
 
     const newV3 = { ...v3, branch_id: branchId };
-    const services = await loadServicesForSalon(db, input.salon.salonId);
+    const services = await loadAiVisibleServicesForSalon(db, input.salon.salonId);
     if (services.length === 0) {
       const msg = language === "ky" ? "Бул филиалда кызматтар жок." : "В этом филиале услуги не настроены.";
       return finish(msg, "done", newV3);
@@ -3082,7 +3245,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
 
   // ===== awaiting_service =====
   if (state === "awaiting_service") {
-    const services = await loadServicesForSalon(db, input.salon.salonId);
+    const services = await loadAiVisibleServicesForSalon(db, input.salon.salonId);
     let serviceId: string | null = null;
 
     if (selectedId?.startsWith("svc_")) {
@@ -3156,6 +3319,35 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         const dateQ = language === "ky" ? "\n\nКайсы күнгө жазыласыз?" : "\n\nНа какую дату?";
         return finish(msg + dateQ, "awaiting_date_choice", { ...v3, price_skipped: true }, buildDateListMsg(dateMap, language));
       }
+
+      if (priced.confidence === "low") {
+        const attempts = (v3.photo_attempts ?? 0) + 1;
+        if (attempts < 2) {
+          debug.actions.push("photo_low_confidence_retry");
+          const msg = language === "ky"
+            ? "Сүрөттөн так айырмалоо кыйын болду 🙏 Жарыгы жакшы жерде, жакыныраак дагы бир сүрөт жиберип көрүңүзчү."
+            : "По этому фото сложно точно оценить 🙏 Пришлите, пожалуйста, ещё одно фото — при хорошем освещении и поближе.";
+          return finish(msg, "awaiting_photo", { ...v3, photo_attempts: attempts });
+        }
+        // Second low-confidence attempt in a row — hand off to a human instead of guessing.
+        debug.actions.push("photo_low_confidence_escalate");
+        const clientLabel = input.client.name ? `${input.client.name} (${input.client.phone})` : input.client.phone;
+        const caption = language === "ky"
+          ? `Кардар (${clientLabel}) «${v3.service_name}» кызматы боюнча фото жиберди, бирок ИИ баасын так аныктай алган жок.`
+          : `Клиент (${clientLabel}) прислал фото для услуги «${v3.service_name}», но ИИ не смог уверенно оценить стоимость.`;
+        const msg = language === "ky"
+          ? "Кечиресиз, фото боюнча так баа бере албадым. Администраторго жибердим — ал сиз менен 5 мүнөттүн ичинде байланышат."
+          : "Извините, не смог точно оценить по фото. Передал администратору — он свяжется с вами в течение 5 минут.";
+        return finish(
+          msg,
+          "done",
+          { ...v3, photo_attempts: attempts },
+          undefined,
+          null,
+          { mediaUrl: lastImage.media_signed_url, caption },
+        );
+      }
+
       const msg = language === "ky"
         ? `Болжолдуу баа: ${priced.price} сом (${priced.explanation}). Так баасын мастер айтат.`
         : `Ориентировочная стоимость: ${priced.price} сом (${priced.explanation}). Точную сумму мастер уточнит на месте.`;
@@ -3429,9 +3621,184 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     }
   }
 
+  // ===== awaiting_manage_choice =====
+  if (state === "awaiting_manage_choice") {
+    const candidates = v3.managing_candidates ?? [];
+    const chosenId = selectedId?.startsWith("mgappt_") ? selectedId.slice(7) : null;
+    if (!chosenId) {
+      const msg = language === "ky" ? "Кайсы жазылууну тандайсыз?" : "Выберите запись из списка:";
+      return finish(msg, "awaiting_manage_choice", v3, buildManageChoiceMsg(candidates, language));
+    }
+    const { data: a } = await db
+      .from("appointments")
+      .select("id, starts_at, service_id, master_id, services(name)")
+      .eq("id", chosenId)
+      .maybeSingle();
+    if (!a) {
+      const msg = language === "ky" ? "Жазылуу табылган жок." : "Запись не найдена.";
+      return finish(msg, "done", {});
+    }
+    const label = `${(a as any).services?.name ?? "?"} — ${formatDateInTz((a as any).starts_at, tz)}, ${formatTimeInTz((a as any).starts_at, tz)}`;
+    const newV3: V3BookingState = {
+      managing_appointment_id: a.id,
+      managing_appointment_label: label,
+      managing_service_id: (a as any).service_id,
+      managing_master_id: (a as any).master_id,
+    };
+    const q = language === "ky" ? `Тандалды: ${label}. Эмне кылабыз?` : `Выбрано: ${label}. Что делаем?`;
+    return finish(q, "awaiting_manage_action", newV3, buildManageActionMsg(language));
+  }
+
+  // ===== awaiting_manage_action =====
+  if (state === "awaiting_manage_action") {
+    const wantsCancel = selectedId === "manage_cancel" || /отмен/i.test(combinedText) || /жокко/i.test(combinedText);
+    const wantsReschedule = selectedId === "manage_reschedule" || /перенес|перенос/i.test(combinedText) || /которуп/i.test(combinedText);
+    const wantsLeave = selectedId === "manage_leave" || /не трогай|оставь|не надо/i.test(combinedText) || /тийбе/i.test(combinedText);
+
+    if (wantsLeave) {
+      const msg = language === "ky" ? "Жакшы, эч нерсе өзгөртүлгөн жок." : "Хорошо, ничего не меняю.";
+      return finish(msg, "done", {});
+    }
+    if (wantsCancel) {
+      const details = language === "ky"
+        ? `Чын эле бул жазылууну жокко чыгарабызбы?\n${v3.managing_appointment_label}`
+        : `Точно отменяем эту запись?\n${v3.managing_appointment_label}`;
+      return finish(details, "awaiting_manage_confirm", { ...v3, managing_action: "cancel" }, buildConfirmMsg(details, language));
+    }
+    if (wantsReschedule) {
+      const dateMap = buildDateMap(tz, 7);
+      const q = language === "ky" ? "Кайсы күнгө которобуз?" : "На какую дату переносим?";
+      return finish(q, "awaiting_reschedule_date", { ...v3, managing_action: "reschedule" }, buildDateListMsg(dateMap, language));
+    }
+    const q = language === "ky" ? "Эмне кылабыз?" : "Что делаем с записью?";
+    return finish(q, "awaiting_manage_action", v3, buildManageActionMsg(language));
+  }
+
+  // ===== awaiting_reschedule_date =====
+  if (state === "awaiting_reschedule_date") {
+    let dateIso: string | null = null;
+    if (selectedId?.startsWith("date_")) {
+      dateIso = selectedId.slice(5);
+    } else if (combinedText) {
+      dateIso = parseDateFromTextV3(combinedText, tz);
+    }
+    const dateMap = buildDateMap(tz, 7);
+    if (!dateIso) {
+      const q = language === "ky" ? "Датаны тандаңыз:" : "Выберите дату:";
+      return finish(q, "awaiting_reschedule_date", v3, buildDateListMsg(dateMap, language));
+    }
+    // Reschedule keeps the SAME master the appointment already has — loadMastersForService
+    // gives us the real master row (name, branch) to check that master still offers the
+    // service and is active, then get_available_slots computes their real openings.
+    const masters = await loadMastersForService(db, input.salon.salonId, v3.managing_service_id ?? "", null);
+    const eligibleMaster = masters.find((m) => m.id === v3.managing_master_id);
+    if (!eligibleMaster) {
+      const msg = language === "ky" ? "Мастер табылган жок. Салонго кайрылыңыз." : "Не удалось найти мастера. Свяжитесь с салоном напрямую.";
+      return finish(msg, "done", {});
+    }
+    const { isoLocalDate } = nowInTz(tz);
+    const minStart = dateIso === isoLocalDate ? new Date() : undefined;
+    const slots = await fetchMergedSlots({ db, masters: [eligibleMaster], serviceId: v3.managing_service_id!, day: dateIso, tz, minStartTime: minStart, limit: 8 });
+    if (slots.length === 0) {
+      const msg = language === "ky" ? "Бул күнгө бош убакыт жок. Башка күн тандаңыз:" : "На эту дату нет свободных слотов. Выберите другую дату:";
+      return finish(msg, "awaiting_reschedule_date", v3, buildDateListMsg(dateMap, language));
+    }
+    const newV3: V3BookingState = { ...v3, managing_slots_cache: slots.map((s) => ({ start: s.start, end: s.end })) };
+    const dateLabel = formatDateInTz(`${dateIso}T12:00:00Z`, tz);
+    const q = language === "ky" ? `${dateLabel} — убакытты тандаңыз:` : `${dateLabel} — выберите время:`;
+    return finish(q, "awaiting_reschedule_slot", newV3, buildSlotListMsg(slots, tz, language));
+  }
+
+  // ===== awaiting_reschedule_slot =====
+  if (state === "awaiting_reschedule_slot") {
+    const slotsCache = v3.managing_slots_cache ?? [];
+    let slot: { start: string; end: string } | null = null;
+    if (selectedId?.startsWith("slot_")) {
+      const idx = parseInt(selectedId.slice(5), 10);
+      if (!isNaN(idx) && idx >= 0 && idx < slotsCache.length) slot = slotsCache[idx];
+    } else if (combinedText) {
+      const timeMatch = combinedText.match(/\b(\d{1,2}):(\d{2})\b/);
+      if (timeMatch) {
+        const h = parseInt(timeMatch[1], 10);
+        const m = parseInt(timeMatch[2], 10);
+        slot = slotsCache.find((s) => {
+          const t = formatTimeInTz(s.start, tz);
+          const [sh, sm] = t.split(":").map(Number);
+          return sh === h && sm === m;
+        }) ?? null;
+      }
+    }
+    if (!slot) {
+      const msg = language === "ky" ? "Убакытты тандаңыз:" : "Выберите время:";
+      const mockSlots: MergedSlot[] = slotsCache.map((s) => ({ start: s.start, end: s.end, master_ids: [] }));
+      return finish(msg, "awaiting_reschedule_slot", v3, buildSlotListMsg(mockSlots, tz, language));
+    }
+    const dateLabel = formatDateInTz(slot.start, tz);
+    const timeLabel = formatTimeInTz(slot.start, tz);
+    const details = language === "ky"
+      ? `Жаңы убакыт: ${dateLabel}, ${timeLabel}. Ырастайсызбы?`
+      : `Новое время: ${dateLabel}, ${timeLabel}. Подтверждаете?`;
+    const newV3 = { ...v3, managing_new_slot_start: slot.start, managing_new_slot_end: slot.end };
+    return finish(details, "awaiting_manage_confirm", newV3, buildConfirmMsg(details, language));
+  }
+
+  // ===== awaiting_manage_confirm =====
+  if (state === "awaiting_manage_confirm") {
+    const ct = combinedText.trim().toLowerCase();
+    const confirmed = selectedId === "confirm_yes" || /^(да|ок|ладно|согласен|согласна|подтвер|давай)/.test(ct) || /^(ооба|макул)/.test(ct);
+    const denied = selectedId === "confirm_no" || /^(нет|не надо|отмен|стоп)/.test(ct) || /^(жок)/.test(ct);
+
+    if (denied) {
+      const msg = language === "ky" ? "Жакшы, эч нерсе өзгөртүлгөн жок." : "Хорошо, ничего не меняю.";
+      return finish(msg, "done", {});
+    }
+    if (!confirmed) {
+      const details = v3.managing_action === "cancel"
+        ? (language === "ky" ? `Жокко чыгарабызбы?\n${v3.managing_appointment_label}` : `Отменяем?\n${v3.managing_appointment_label}`)
+        : (language === "ky" ? "Ырастайсызбы?" : "Подтверждаете?");
+      return finish(details, "awaiting_manage_confirm", v3, buildConfirmMsg(details, language));
+    }
+
+    if (v3.managing_action === "cancel") {
+      const { error } = await db
+        .from("appointments")
+        .update({ status: "cancelled" })
+        .eq("id", v3.managing_appointment_id!)
+        .eq("client_phone", input.client.phone);
+      if (error) {
+        debug.errors.push(`cancel_appointment:${error.message}`);
+        const msg = language === "ky" ? "Жокко чыгаруу мүмкүн болгон жок. Салонго кайрылыңыз." : "Не удалось отменить. Свяжитесь с салоном напрямую.";
+        return finish(msg, "done", {});
+      }
+      const msg = language === "ky" ? "✅ Жазылуу жокко чыгарылды." : "✅ Запись отменена.";
+      return finish(msg, "done", {});
+    }
+
+    // reschedule
+    try {
+      const { error } = await db.rpc("reschedule_appointment" as any, {
+        _appointment_id: v3.managing_appointment_id,
+        _new_starts_at: v3.managing_new_slot_start,
+      } as any);
+      if (error) throw error;
+      const dateLabel = v3.managing_new_slot_start ? formatDateInTz(v3.managing_new_slot_start, tz) : "";
+      const timeLabel = v3.managing_new_slot_start ? formatTimeInTz(v3.managing_new_slot_start, tz) : "";
+      const msg = language === "ky"
+        ? `✅ Жазылуу которулду: ${dateLabel}, ${timeLabel}.`
+        : `✅ Запись перенесена: ${dateLabel}, ${timeLabel}.`;
+      return finish(msg, "done", {});
+    } catch (e: any) {
+      debug.errors.push(`reschedule_appointment:${e?.message ?? e}`);
+      const msg = language === "ky"
+        ? "Которуу мүмкүн болгон жок. Башка убакытты тандап көрүңүз."
+        : "Не удалось перенести. Попробуйте выбрать другое время.";
+      return finish(msg, "awaiting_reschedule_date", { ...v3, managing_slots_cache: undefined });
+    }
+  }
+
   // Fallback: reset to service selection
   debug.errors.push(`unhandled_state:${state}`);
-  const services = await loadServicesForSalon(db, input.salon.salonId);
+  const services = await loadAiVisibleServicesForSalon(db, input.salon.salonId);
   const fallback = language === "ky" ? "Кайра баштайлы. Кайсы кызматка жазыласыз?" : "Начнём сначала. На какую услугу вас записать?";
   return finish(fallback, "awaiting_service", {}, buildServiceListMsg(services, language));
 }

@@ -14,6 +14,51 @@ export type Database = {
   }
   public: {
     Tables: {
+      ai_service_overrides: {
+        Row: {
+          created_at: string
+          id: string
+          is_enabled: boolean
+          salon_id: string
+          service_id: string
+          sort_order: number | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_enabled?: boolean
+          salon_id: string
+          service_id: string
+          sort_order?: number | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_enabled?: boolean
+          salon_id?: string
+          service_id?: string
+          sort_order?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_service_overrides_salon_id_fkey"
+            columns: ["salon_id"]
+            isOneToOne: false
+            referencedRelation: "salons"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_service_overrides_service_id_fkey"
+            columns: ["service_id"]
+            isOneToOne: false
+            referencedRelation: "services"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       appointment_addons: {
         Row: {
           addon_id: string | null
@@ -578,6 +623,8 @@ export type Database = {
       }
       salon_ai_assistant: {
         Row: {
+          ai_category_order: string[]
+          ai_hidden_categories: string[]
           created_at: string
           enabled: boolean
           greeting: string | null
@@ -589,6 +636,8 @@ export type Database = {
           whatsapp_phone: string | null
         }
         Insert: {
+          ai_category_order?: string[]
+          ai_hidden_categories?: string[]
           created_at?: string
           enabled?: boolean
           greeting?: string | null
@@ -600,6 +649,8 @@ export type Database = {
           whatsapp_phone?: string | null
         }
         Update: {
+          ai_category_order?: string[]
+          ai_hidden_categories?: string[]
           created_at?: string
           enabled?: boolean
           greeting?: string | null
@@ -1006,6 +1057,8 @@ export type Database = {
       }
       wa_conversations: {
         Row: {
+          ai_paused: boolean
+          ai_paused_at: string | null
           appointment_id: string | null
           client_name: string | null
           client_phone: string
@@ -1025,6 +1078,8 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          ai_paused?: boolean
+          ai_paused_at?: string | null
           appointment_id?: string | null
           client_name?: string | null
           client_phone: string
@@ -1044,6 +1099,8 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          ai_paused?: boolean
+          ai_paused_at?: string | null
           appointment_id?: string | null
           client_name?: string | null
           client_phone?: string

@@ -6,6 +6,7 @@ import {
   greenApiSendMessage,
   greenApiSendButtons,
   greenApiSendListMessage,
+  greenApiSendFileByUrl,
   normalizeChatIdToPhone,
   runWaAgentV3,
   type GreenApiCreds,
@@ -63,7 +64,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         const [{ data: secrets }, { data: salon }, { data: assistant }] = await Promise.all([
           supabaseAdmin
             .from("salon_secrets")
-            .select("greenapi_instance, greenapi_token, greenapi_webhook_token")
+            .select("greenapi_instance, greenapi_token, greenapi_webhook_token, owner_notify_phone")
             .eq("salon_id", salonId)
             .maybeSingle(),
           supabaseAdmin
@@ -83,7 +84,10 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         }
         if (!salon) return ack();
 
-        if (payload?.typeWebhook !== "incomingMessageReceived") return ack();
+        const webhookType = payload?.typeWebhook;
+        if (webhookType !== "incomingMessageReceived" && webhookType !== "outgoingMessageReceived") {
+          return ack();
+        }
 
         const md = payload?.messageData ?? {};
         const sd = payload?.senderData ?? {};
@@ -122,12 +126,51 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
 
         const nowIso = new Date().toISOString();
 
+        // ---- Human admin took over: a message sent manually from the phone connected
+        // to this WhatsApp number. Green-API reports this as outgoingMessageReceived,
+        // distinct from outgoingAPIMessageReceived (messages sent via the API — i.e. our
+        // own bot replies, a type we never subscribe to). So every event reaching this
+        // branch is a genuine manual message from salon staff — pause the AI for this
+        // conversation instead of letting it keep replying alongside a human.
+        if (webhookType === "outgoingMessageReceived") {
+          const { data: convForPause } = await supabaseAdmin
+            .from("wa_conversations")
+            .select("id")
+            .eq("salon_id", salonId)
+            .eq("client_phone", phone)
+            .maybeSingle();
+          if (convForPause) {
+            if (greenIdMessage) {
+              const { data: dup } = await supabaseAdmin
+                .from("wa_messages")
+                .select("id")
+                .eq("salon_id", salonId)
+                .eq("green_api_message_id", greenIdMessage)
+                .maybeSingle();
+              if (dup) return ack();
+            }
+            await supabaseAdmin
+              .from("wa_conversations")
+              .update({ ai_paused: true, ai_paused_at: nowIso })
+              .eq("id", convForPause.id);
+            await supabaseAdmin.from("wa_messages").insert({
+              conversation_id: convForPause.id,
+              salon_id: salonId,
+              direction: "out",
+              kind: "system",
+              text_body: textBody,
+              green_api_message_id: greenIdMessage ?? null,
+            });
+          }
+          return ack();
+        }
+
         // ---- Load previous conversation before upsert.
         // We need the pre-message timestamps to decide whether this WhatsApp turn
         // belongs to the same short booking session or starts a new clean one.
         const { data: existingConv } = await supabaseAdmin
           .from("wa_conversations")
-          .select("id, status, session_started_at, last_appointment_at, last_message_at, state")
+          .select("id, status, session_started_at, last_appointment_at, last_message_at, state, ai_paused, ai_paused_at")
           .eq("salon_id", salonId)
           .eq("client_phone", phone)
           .maybeSingle();
@@ -241,6 +284,23 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
           .select("id")
           .single();
 
+        // ---- Human admin is actively handling this conversation: skip the AI. The
+        // inbound message above is already stored (processed_at IS NULL) so whenever the
+        // AI resumes it picks the message up normally (subject to the 12h staleness filter).
+        const AI_PAUSE_MS = 60 * 60 * 1000;
+        const pausedAtMs = existingConv?.ai_paused_at ? new Date(existingConv.ai_paused_at as string).getTime() : 0;
+        const stillPaused = Boolean(existingConv?.ai_paused) && pausedAtMs > 0 && Date.now() - pausedAtMs < AI_PAUSE_MS;
+        if (stillPaused) {
+          return ack();
+        }
+        if (existingConv?.ai_paused) {
+          // Pause window elapsed with no further manual messages — hand control back to the AI.
+          await supabaseAdmin
+            .from("wa_conversations")
+            .update({ ai_paused: false, ai_paused_at: null })
+            .eq("id", convId);
+        }
+
         // Bail out only when the assistant cannot be used at all. Missing assistant row
         // should not prevent the bot from working; we default to enabled and use empty
         // instructions instead of silently dropping the webhook.
@@ -320,9 +380,26 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
 
             if (!pending || pending.length === 0) break;
 
+            // 1b) Ignore inbound messages older than 12h — e.g. the assistant was disabled
+            // for days and a backlog of stale, never-processed messages piled up. Replying to
+            // those now would look like the bot randomly resurrecting a days-old conversation.
+            // Stale messages are marked processed immediately (silently) without any reply;
+            // if nothing fresh remains this pass, skip straight to the next drain iteration.
+            const STALE_MESSAGE_MS = 12 * 60 * 60 * 1000;
+            const staleCutoff = Date.now() - STALE_MESSAGE_MS;
+            const stalePending = pending.filter((m: any) => new Date(m.created_at).getTime() < staleCutoff);
+            const freshPending = pending.filter((m: any) => new Date(m.created_at).getTime() >= staleCutoff);
+            if (stalePending.length > 0) {
+              await supabaseAdmin
+                .from("wa_messages")
+                .update({ processed_at: new Date().toISOString() })
+                .in("id", stalePending.map((m: any) => m.id));
+            }
+            if (freshPending.length === 0) continue;
+
             // 2) Sign media URLs for any image messages
             const lastMessages: WaIncomingMessage[] = [];
-            for (const m of pending) {
+            for (const m of freshPending) {
               let signed: string | null = null;
               if (m.kind === "image" && m.media_path) {
                 const { data: s } = await supabaseAdmin.storage
@@ -403,7 +480,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
               await supabaseAdmin
                 .from("wa_messages")
                 .update({ processed_at: new Date().toISOString() })
-                .in("id", pending.map((m: any) => m.id));
+                .in("id", freshPending.map((m: any) => m.id));
               // Reset state so the client's NEXT message gets a clean run.
               await supabaseAdmin
                 .from("wa_conversations")
@@ -458,11 +535,31 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
               } as any,
             });
 
+            // 5b) Relay the client's photo to the salon admin when the agent flagged low-
+            // confidence pricing twice in a row. Reuses the same ai_paused mechanism as a
+            // human takeover: the admin is now expected to handle this client directly.
+            if (result.notifyAdmin && secrets.owner_notify_phone) {
+              const ownerPhone = normalizeChatIdToPhone(secrets.owner_notify_phone);
+              if (ownerPhone) {
+                await greenApiSendFileByUrl(
+                  creds,
+                  `${ownerPhone}@c.us`,
+                  result.notifyAdmin.mediaUrl,
+                  "photo.jpg",
+                  result.notifyAdmin.caption,
+                );
+                await supabaseAdmin
+                  .from("wa_conversations")
+                  .update({ ai_paused: true, ai_paused_at: new Date().toISOString() })
+                  .eq("id", convId);
+              }
+            }
+
             // 6) Mark these inbound messages as processed
             await supabaseAdmin
               .from("wa_messages")
               .update({ processed_at: new Date().toISOString() })
-              .in("id", pending.map((m: any) => m.id));
+              .in("id", freshPending.map((m: any) => m.id));
 
             // 7) Persist conversation state
             const updates: Record<string, any> = {
