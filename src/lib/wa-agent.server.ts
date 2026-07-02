@@ -2795,6 +2795,40 @@ export async function greenApiSendButtons(
   }
 }
 
+// Clickable reply buttons that DO work on regular (non-WABA) accounts — unlike the old
+// sendButtons/sendListMessage. Beta, max 3 buttons, button text ≤ 25 chars. The tap comes
+// back as typeMessage "interactiveButtonsReply" with templateButtonReplyMessage.selectedId.
+export async function greenApiSendInteractiveButtons(
+  creds: GreenApiCreds,
+  chatId: string,
+  body: string,
+  buttons: Array<{ id: string; text: string }>,
+): Promise<{ ok: boolean; idMessage?: string; error?: string }> {
+  try {
+    const url = `https://api.green-api.com/waInstance${creds.instance}/sendInteractiveButtons/${creds.token}`;
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chatId,
+        body,
+        buttons: buttons.slice(0, 3).map((b) => ({
+          type: "reply",
+          buttonId: b.id,
+          buttonText: b.text.slice(0, 25),
+        })),
+      }),
+    });
+    const txt = await r.text();
+    let json: any = null;
+    try { json = JSON.parse(txt); } catch {}
+    if (!r.ok) return { ok: false, error: `green-api ${r.status}: ${txt.slice(0, 200)}` };
+    return { ok: true, idMessage: json?.idMessage };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? String(e) };
+  }
+}
+
 export async function greenApiSendListMessage(
   creds: GreenApiCreds,
   chatId: string,
