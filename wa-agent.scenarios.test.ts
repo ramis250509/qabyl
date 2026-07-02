@@ -899,6 +899,12 @@ test("59c. 'Саламатсыбы' (typo for саламатсызбы) → dete
   expect(c.data.language).toBe("ky");
 });
 
+test("59d. 'Салматсызбы' (dropped-vowel typo) → detected as Kyrgyz", async () => {
+  const c = convo(singleSalon(), { languages: ["ru", "ky"] });
+  await c.say("Салматсызбы");
+  expect(c.data.language).toBe("ky");
+});
+
 test("60. 'какие у вас услуги?' after service prompt → lists services, no day jump", async () => {
   const c = convo(multiSalon());
   await c.say("хочу записаться");         // bot asks: which service?
