@@ -33,6 +33,7 @@ export function resolveAssistantRuntimeConfig(salon: any, assistant: any, secret
       tone_instructions: assistant?.tone_instructions ?? null,
       pricing_rules: assistant?.pricing_rules ?? null,
       languages: assistant?.languages?.length ? assistant.languages : ["ru"],
+      manage_cutoff_hours: assistant?.manage_cutoff_hours ?? 0,
     },
   };
 }
@@ -74,7 +75,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             .maybeSingle(),
           supabaseAdmin
             .from("salon_ai_assistant")
-            .select("enabled, greeting, tone_instructions, pricing_rules, languages")
+            .select("enabled, greeting, tone_instructions, pricing_rules, languages, manage_cutoff_hours")
             .eq("salon_id", salonId)
             .maybeSingle(),
         ]);

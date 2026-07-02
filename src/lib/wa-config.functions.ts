@@ -70,7 +70,7 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
 
     const [salonResult, assistantResult, branchResult] = await Promise.all([
       supabaseAdmin.from("salons").select("id, name, timezone, working_hours, address").eq("id", data.salonId).maybeSingle(),
-      supabaseAdmin.from("salon_ai_assistant").select("greeting, tone_instructions, pricing_rules, languages").eq("salon_id", data.salonId).maybeSingle(),
+      supabaseAdmin.from("salon_ai_assistant").select("greeting, tone_instructions, pricing_rules, languages, manage_cutoff_hours").eq("salon_id", data.salonId).maybeSingle(),
       supabaseAdmin.from("branches").select("id, name, address").eq("salon_id", data.salonId).eq("is_active", true).order("sort_order"),
     ]);
 
@@ -108,6 +108,7 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
         tone_instructions: (assistant as any)?.tone_instructions ?? null,
         pricing_rules: (assistant as any)?.pricing_rules ?? null,
         languages: (assistant as any)?.languages?.length ? (assistant as any).languages : ["ru"],
+        manage_cutoff_hours: (assistant as any)?.manage_cutoff_hours ?? 0,
       },
       client: { phone: "simulator_test", name: "Тест" },
       history: data.history as WaIncomingMessage[],

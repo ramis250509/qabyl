@@ -629,6 +629,7 @@ export type Database = {
           enabled: boolean
           greeting: string | null
           languages: string[]
+          manage_cutoff_hours: number
           pricing_rules: string | null
           salon_id: string
           tone_instructions: string | null
@@ -642,6 +643,7 @@ export type Database = {
           enabled?: boolean
           greeting?: string | null
           languages?: string[]
+          manage_cutoff_hours?: number
           pricing_rules?: string | null
           salon_id: string
           tone_instructions?: string | null
@@ -655,6 +657,7 @@ export type Database = {
           enabled?: boolean
           greeting?: string | null
           languages?: string[]
+          manage_cutoff_hours?: number
           pricing_rules?: string | null
           salon_id?: string
           tone_instructions?: string | null

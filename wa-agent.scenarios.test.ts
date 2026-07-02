@@ -18,7 +18,7 @@ mock.module("@/integrations/supabase/client.server", () => ({ supabaseAdmin: dbP
 
 process.env.GEMINI_API_KEY = "test-key";
 
-const { runWaAgent } = await import("@/lib/wa-agent.server");
+const { runWaAgent, runWaAgentV3 } = await import("@/lib/wa-agent.server");
 
 // ---- Time helpers (salon tz = Asia/Bishkek, fixed UTC+6) ----
 const TZ = "Asia/Bishkek";
@@ -52,18 +52,44 @@ type SalonCfg = {
 };
 function makeDb(cfg: SalonCfg) {
   const appointments: any[] = [];
+  // Appointment rows as the V3 manage flow reads them (query columns + joined service name).
+  const apptView = (a: any) => ({
+    id: a.id,
+    starts_at: a._starts_at ?? a.starts_at,
+    service_id: a._service_id ?? a.service_id,
+    master_id: a._master_id ?? a.master_id,
+    status: a.status ?? "confirmed",
+    client_phone: a._client_phone ?? "996700000000",
+    services: { name: cfg.services.find((s) => s.id === (a._service_id ?? a.service_id))?.name ?? "?" },
+  });
   const builder = (table: string) => {
     const q: any = {};
+    const filters: Record<string, any> = {};
+    let update: any = null;
     q.select = () => q;
-    q.eq = () => q;
+    q.update = (patch: any) => { update = patch; return q; };
+    q.eq = (col: string, val: any) => { filters[col] = val; return q; };
+    q.gte = () => q;
     q.order = () => q;
-    q.then = (resolve: (v: any) => void) => {
-      let data: any[] = [];
-      if (table === "services") data = cfg.services;
-      else if (table === "masters")
-        data = cfg.masters.map((m) => ({ ...m, master_services: m.service_ids.map((id: string) => ({ service_id: id })) }));
-      resolve({ data });
+    const resolveData = (): any[] => {
+      if (table === "services") return cfg.services;
+      if (table === "masters")
+        return cfg.masters.map((m) => ({ ...m, master_services: m.service_ids.map((id: string) => ({ service_id: id })) }));
+      if (table === "appointments") {
+        return appointments
+          .map(apptView)
+          .filter((r: any) => Object.entries(filters).every(([col, val]) => (r as any)[col] === undefined || (r as any)[col] === val));
+      }
+      return [];
     };
+    q.then = (resolve: (v: any) => void) => {
+      if (update && table === "appointments") {
+        for (const a of appointments) if (a.id === filters.id) Object.assign(a, update);
+        return resolve({ data: null, error: null });
+      }
+      resolve({ data: resolveData() });
+    };
+    q.maybeSingle = async () => ({ data: resolveData()[0] ?? null, error: null });
     return q;
   };
   return {
@@ -78,6 +104,13 @@ function makeDb(cfg: SalonCfg) {
         const id = `appt-${appointments.length + 1}`;
         appointments.push({ id, ...args });
         return { data: id, error: null };
+      }
+      if (name === "reschedule_appointment" || name === "reschedule_appointment_v2") {
+        const appt = appointments.find((a) => a.id === args._appointment_id);
+        if (!appt) return { data: null, error: { message: "Appointment not found" } };
+        appt._starts_at = args._new_starts_at;
+        if (args._new_master_id) appt._master_id = args._new_master_id;
+        return { data: args._appointment_id, error: null };
       }
       return { data: null, error: null };
     },
@@ -1264,4 +1297,146 @@ test("93. 'вы работаете по пятницам?' + working_hours → s
   const r = await c.say("вы работаете по пятницам?");
   expect(r.appointmentId).toBeNull();
   expect(r.reply).toMatch(/10:00|20:00|Пт|режим|расписание/i);
+});
+
+// =========================================================================
+// V3 manage flow (cancel / reschedule) — runs the REAL runWaAgentV3, which is
+// what production (webhook + admin simulator) uses.
+// =========================================================================
+
+function convoV3(
+  cfg: SalonCfg,
+  opts: { assistantConfig?: any; state?: string } = {},
+) {
+  (globalThis as any).__WA_DB__ = makeDb(cfg);
+  const db = (globalThis as any).__WA_DB__;
+  let state: any = opts.state ?? "idle";
+  let stateData: any = {};
+  let selectedBranchId: any = null;
+  const history: any[] = [];
+  const config = { ...CONFIG, manage_cutoff_hours: 0, ...opts.assistantConfig };
+  return {
+    db,
+    get state() { return state; },
+    get data() { return stateData; },
+    seedAppointment(a: { id?: string; startsAt: string; serviceId: string; masterId: string }) {
+      db.appointments.push({
+        id: a.id ?? `appt-${db.appointments.length + 1}`,
+        _starts_at: a.startsAt,
+        _service_id: a.serviceId,
+        _master_id: a.masterId,
+        status: "confirmed",
+      });
+      state = "done";
+    },
+    async say(text: string, turnOpts: { gemini?: any; selectedId?: string } = {}) {
+      if (turnOpts.gemini) geminiClassifyQueue.push(turnOpts.gemini);
+      const input: any = {
+        salon: SALON, config,
+        client: { phone: "996700000000", name: "Рамис" },
+        history: [...history],
+        lastMessages: [{
+          id: `in-${history.length}`, direction: "in", kind: "text",
+          text_body: text || null, created_at: new Date().toISOString(),
+          selected_id: turnOpts.selectedId ?? null,
+        }],
+        branches: [], selectedBranchId, state, stateData, salonInfo: null,
+      };
+      const res = await runWaAgentV3(input);
+      history.push({ id: `in-${history.length}`, direction: "in", kind: "text", text_body: text, created_at: new Date().toISOString() });
+      history.push({ id: `out-${history.length}`, direction: "out", kind: "text", text_body: res.reply, created_at: new Date().toISOString() });
+      state = res.nextState; stateData = res.nextStateData; selectedBranchId = res.selectedBranchId;
+      return res;
+    },
+  };
+}
+
+function v3SalonWithEveningSlots(): SalonCfg {
+  const cfg = singleSalon();
+  cfg.slots[`m_ulur|${TOMORROW}`] = [slotRow(TOMORROW, "12:00"), slotRow(TOMORROW, "18:00"), slotRow(TOMORROW, "19:00"), slotRow(TOMORROW, "20:30")];
+  return cfg;
+}
+
+test("V3-1. 'пенеренести эту запись на 19:00' (typo) → straight to confirm, then moves the appointment", async () => {
+  const c = convoV3(v3SalonWithEveningSlots());
+  c.seedAppointment({ startsAt: slotISO(TOMORROW, "12:00"), serviceId: "svc_hair", masterId: "m_ulur" });
+  const r1 = await c.say("Вы не могли бы пенеренести эту запись на 19:00");
+  expect(r1.nextState).toBe("awaiting_manage_confirm");
+  expect(r1.reply).toContain("19:00");
+  const r2 = await c.say("да");
+  expect(r2.nextState).toBe("done");
+  expect(c.db.appointments[0]._starts_at).toBe(slotISO(TOMORROW, "19:00"));
+});
+
+test("V3-2. requested time busy → nearest free slots of the SAME master offered", async () => {
+  const cfg = singleSalon();
+  cfg.slots[`m_ulur|${TOMORROW}`] = [slotRow(TOMORROW, "18:00"), slotRow(TOMORROW, "20:30")];
+  const c = convoV3(cfg);
+  c.seedAppointment({ startsAt: slotISO(TOMORROW, "12:00"), serviceId: "svc_hair", masterId: "m_ulur" });
+  const r = await c.say("перенесите на 19:00");
+  expect(r.nextState).toBe("awaiting_reschedule_slot");
+  expect(r.reply).toMatch(/занято/i);
+  const times = (r.interactiveMessage as any)?.sections?.[0]?.rows?.map((x: any) => x.title) ?? [];
+  expect(times).toContain("18:00");
+});
+
+test("V3-3. own master fully booked that day → other master's slots offered, reschedule switches master", async () => {
+  const cfg = multiSalon();
+  cfg.slots[`m_ulur|${TOMORROW}`] = [];
+  cfg.slots[`m_aigul|${TOMORROW}`] = [slotRow(TOMORROW, "19:00")];
+  const c = convoV3(cfg);
+  c.seedAppointment({ startsAt: slotISO(TOMORROW, "13:00"), serviceId: "svc_hair", masterId: "m_ulur" });
+  const r1 = await c.say("перенесите запись на завтра в 19:00");
+  expect(r1.nextState).toBe("awaiting_reschedule_slot");
+  expect(r1.reply).toMatch(/друг/i); // "…есть время у других мастеров"
+  const r2 = await c.say("", { selectedId: "slot_0" });
+  expect(r2.nextState).toBe("awaiting_manage_confirm");
+  expect(r2.reply).toContain("Айгуль");
+  const r3 = await c.say("да");
+  expect(r3.nextState).toBe("done");
+  expect(c.db.appointments[0]._starts_at).toBe(slotISO(TOMORROW, "19:00"));
+  expect(c.db.appointments[0]._master_id).toBe("m_aigul");
+});
+
+test("V3-4. free-phrase cancel via Gemini fallback → confirm → appointment cancelled", async () => {
+  const c = convoV3(singleSalon());
+  c.seedAppointment({ startsAt: slotISO(TOMORROW, "12:00"), serviceId: "svc_hair", masterId: "m_ulur" });
+  const r1 = await c.say("я отказываюсь от визита", { gemini: { action: "cancel" } });
+  expect(r1.nextState).toBe("awaiting_manage_confirm");
+  const r2 = await c.say("да");
+  expect(r2.nextState).toBe("done");
+  expect(r2.reply).toMatch(/отменена/i);
+  expect(c.db.appointments[0].status).toBe("cancelled");
+});
+
+test("V3-5. 'не смогу прийти' (ambiguous) → cancel/reschedule buttons, not a greeting", async () => {
+  const c = convoV3(singleSalon());
+  c.seedAppointment({ startsAt: slotISO(TOMORROW, "12:00"), serviceId: "svc_hair", masterId: "m_ulur" });
+  const r = await c.say("я не смогу прийти");
+  expect(r.nextState).toBe("awaiting_manage_action");
+  expect((r.interactiveMessage as any)?.buttons?.map((b: any) => b.id)).toContain("manage_cancel");
+});
+
+test("V3-6. cutoff: visit in 1h, limit 2h → polite refusal, appointment untouched", async () => {
+  const c = convoV3(singleSalon(), { assistantConfig: { manage_cutoff_hours: 2 } });
+  c.seedAppointment({ startsAt: new Date(Date.now() + 3600_000).toISOString(), serviceId: "svc_hair", masterId: "m_ulur" });
+  const r = await c.say("отмените мою запись");
+  expect(r.nextState).toBe("done");
+  expect(r.reply).toMatch(/напрямую|салон/i);
+  expect(c.db.appointments[0].status).toBe("confirmed");
+});
+
+test("V3-7. reschedule without date/time ('пенеренести' typo only) → asks for a date, not a greeting", async () => {
+  const c = convoV3(singleSalon());
+  c.seedAppointment({ startsAt: slotISO(TOMORROW, "12:00"), serviceId: "svc_hair", masterId: "m_ulur" });
+  const r = await c.say("можно пенеренести запись?");
+  expect(r.nextState).toBe("awaiting_reschedule_date");
+  expect(r.reply).toMatch(/дату|переносим/i);
+});
+
+test("V3-8. Gemini says 'none' → normal greeting, manage flow not entered", async () => {
+  const c = convoV3(singleSalon());
+  c.seedAppointment({ startsAt: slotISO(TOMORROW, "12:00"), serviceId: "svc_hair", masterId: "m_ulur" });
+  const r = await c.say("здравствуйте", { gemini: { action: "none" } });
+  expect(r.nextState).toBe("awaiting_service");
 });

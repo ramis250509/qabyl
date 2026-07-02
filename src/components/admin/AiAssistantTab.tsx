@@ -22,6 +22,7 @@ type Assistant = {
   tone_instructions: string | null;
   pricing_rules: string | null;
   languages: string[];
+  manage_cutoff_hours: number;
 };
 
 const DEFAULT_GREETING =
@@ -46,6 +47,7 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
     tone_instructions: DEFAULT_TONE,
     pricing_rules: DEFAULT_PRICING,
     languages: ["ru", "ky"],
+    manage_cutoff_hours: 0,
   });
 
   useEffect(() => {
@@ -67,6 +69,7 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
           tone_instructions: row.tone_instructions ?? DEFAULT_TONE,
           pricing_rules: row.pricing_rules ?? DEFAULT_PRICING,
           languages: row.languages?.length ? row.languages : ["ru", "ky"],
+          manage_cutoff_hours: (row as any).manage_cutoff_hours ?? 0,
         });
       }
       setLoading(false);
@@ -134,6 +137,7 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
         tone_instructions: data.tone_instructions || null,
         pricing_rules: data.pricing_rules || null,
         languages: data.languages,
+        manage_cutoff_hours: data.manage_cutoff_hours,
       },
       { onConflict: "salon_id" },
     );
@@ -299,6 +303,30 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
             Например: «Если волосы ниже плеч — это длинные, цена выше. Если на фото
             сложный маникюр с дизайном — добавь +500 сом к базовой стоимости. Точную
             цену всегда подтверждает мастер.»
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <Label>Ограничение на отмену и перенос</Label>
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              min={0}
+              max={168}
+              className="w-24"
+              value={data.manage_cutoff_hours}
+              onChange={(e) =>
+                setData({
+                  ...data,
+                  manage_cutoff_hours: Math.max(0, Math.min(168, Math.floor(Number(e.target.value) || 0))),
+                })
+              }
+            />
+            <span className="text-sm text-muted-foreground">часов до визита</span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Если до визита осталось меньше указанного времени, ассистент не будет отменять
+            или переносить запись сам, а попросит клиента позвонить в салон. 0 — без ограничений.
           </p>
         </div>
 

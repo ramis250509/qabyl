@@ -35,6 +35,9 @@ export type WaAssistantConfig = {
   tone_instructions: string | null;
   pricing_rules: string | null;
   languages: string[];
+  // Salon-configured deadline: cancel/reschedule via the bot is refused when the visit
+  // starts in less than this many hours (0 / null = no limit, client asked to call the salon).
+  manage_cutoff_hours?: number | null;
 };
 
 export type WaSalonContext = {
@@ -2846,9 +2849,12 @@ type V3BookingState = {
   managing_service_id?: string;
   managing_master_id?: string;
   managing_action?: "cancel" | "reschedule";
+  managing_request_text?: string; // original free-text ("перенесите на 19:00") carried past the choice step
   managing_new_slot_start?: string;
   managing_new_slot_end?: string;
-  managing_slots_cache?: Array<{ start: string; end: string }>;
+  managing_new_master_id?: string;   // set when the client agreed to move to ANOTHER master's slot
+  managing_new_master_name?: string;
+  managing_slots_cache?: Array<{ start: string; end: string; master_id?: string; master_name?: string }>;
 };
 
 function buildBranchListMsg(branches: WaBranchInfo[]): WaInteractiveMessage {
@@ -2935,11 +2941,17 @@ function buildDateListMsg(
   return { kind: "list", text: question, buttonText: "Выбрать дату", sections: [{ rows }] };
 }
 
-function buildSlotListMsg(slots: MergedSlot[], tz: string, language: "ru" | "ky" | "en"): WaInteractiveMessage {
+function buildSlotListMsg(
+  slots: MergedSlot[],
+  tz: string,
+  language: "ru" | "ky" | "en",
+  masterNames?: Map<string, string>, // when slots belong to different masters, show whose slot it is
+): WaInteractiveMessage {
   const question = language === "ky" ? "Убакытты тандаңыз:" : "Выберите время:";
   const rows = slots.map((s, i) => ({
     rowId: `slot_${i}`,
     title: formatTimeInTz(s.start, tz),
+    description: masterNames ? masterNames.get(s.master_ids[0] ?? "")?.slice(0, 72) : undefined,
   }));
   return { kind: "list", text: question, buttonText: "Выбрать время", sections: [{ rows }] };
 }
@@ -3036,6 +3048,96 @@ async function callGeminiV3Faq(
   }
 }
 
+// Regex-based manage detection missed, but the client has an upcoming appointment — ask
+// Gemini whether the message is about cancelling/rescheduling it (tolerates typos like
+// "пенеренести" and free phrasing like "можно в другой день?").
+async function classifyManageIntentV3(
+  apiKey: string,
+  text: string,
+): Promise<"cancel" | "reschedule" | null> {
+  if (!apiKey || !text.trim()) return null;
+  const res = await callGemini({
+    model: MODEL_TEXT,
+    apiKey,
+    systemInstruction:
+      "У клиента салона красоты уже есть предстоящая запись. Определи по его сообщению (учитывай опечатки и разговорные формулировки, русский и кыргызский), что клиент хочет сделать с ЭТОЙ записью:\n" +
+      '"cancel" — отменить запись;\n' +
+      '"reschedule" — перенести её на другое время или день;\n' +
+      '"none" — сообщение не об изменении существующей записи (приветствие, вопрос, желание записаться ещё раз).\n' +
+      "Верни строго JSON.",
+    parts: [{ text }],
+    responseMimeType: "application/json",
+    responseSchema: {
+      type: "object",
+      properties: { action: { type: "string", enum: ["cancel", "reschedule", "none"] } },
+      required: ["action"],
+    },
+    temperature: 0,
+    maxOutputTokens: 60,
+    thinkingBudget: 0,
+  });
+  if (!res.ok || !res.text) return null;
+  try {
+    const parsed = JSON.parse(res.text);
+    return parsed?.action === "cancel" || parsed?.action === "reschedule" ? parsed.action : null;
+  } catch {
+    return null;
+  }
+}
+
+// Pulls an explicit clock time out of a manage message ("перенесите на 19:00", "в 7 вечера",
+// "на 19.30"). Dot/dash separators are accepted only with a "в/на/к" prefix and 5-minute
+// minutes, so numeric dates ("на 5.07") keep parsing as dates. Returns the time plus the
+// text with the match removed (so date parsing doesn't misread "19.00" as день.месяц).
+function extractManageTime(text: string): { time: string; rest: string } | null {
+  const colon = text.match(/(?:^|[\s,])(?:в|на|к)?\s*(\d{1,2}):(\d{2})(?!\d)/i);
+  const dotted = colon ? null : text.match(/(?:^|[\s,])(?:в|на|к)\s*(\d{1,2})[.\-](\d{2})(?!\d)/i);
+  const m = colon ?? dotted;
+  if (m) {
+    const h = Number(m[1]);
+    const min = Number(m[2]);
+    if (h <= 23 && min <= 59 && (colon != null || min % 5 === 0)) {
+      return {
+        time: `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`,
+        rest: text.replace(m[0], " "),
+      };
+    }
+  }
+  const worded = text.match(/(?:^|[\s,])(?:в|на|к)\s*(\d{1,2})\s*(час(?:а|ов)?|утра|дня|вечера)/i);
+  if (worded) {
+    let h = Number(worded[1]);
+    const suf = worded[2].toLowerCase();
+    if (suf === "вечера" && h < 12) h += 12;
+    if (suf === "дня" && h <= 6) h += 12;
+    if (h <= 23) return { time: `${String(h).padStart(2, "0")}:00`, rest: text.replace(worded[0], " ") };
+  }
+  return null;
+}
+
+function isoDateInTz(iso: string, tz: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(iso));
+}
+
+function slotMinutesInTz(iso: string, tz: string): number {
+  const [h, m] = formatTimeInTz(iso, tz).split(":").map(Number);
+  return h * 60 + m;
+}
+
+// The requested time is taken — offer the n slots closest to it, in chronological order.
+function nearestSlots(slots: MergedSlot[], reqTime: string, n: number, tz: string): MergedSlot[] {
+  const [rh, rm] = reqTime.split(":").map(Number);
+  const req = rh * 60 + rm;
+  return [...slots]
+    .sort((a, b) => Math.abs(slotMinutesInTz(a.start, tz) - req) - Math.abs(slotMinutesInTz(b.start, tz) - req))
+    .slice(0, n)
+    .sort((a, b) => (a.start < b.start ? -1 : 1));
+}
+
 const NATIVE_FALLBACK_GREETING: Record<"ky" | "en", string> = {
   ky: "Саламатсызбы! Жардам бере аламбы?",
   en: "Hello! How can I help you?",
@@ -3121,6 +3223,102 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
 
   const state = input.state;
 
+  // ----- Cancel/reschedule cutoff (salon setting): visits starting sooner than this many
+  // hours can only be changed by calling the salon directly.
+  const manageCutoffHours = Math.max(0, Number(input.config.manage_cutoff_hours ?? 0) || 0);
+  function isWithinManageCutoff(startsAt: string): boolean {
+    if (!manageCutoffHours) return false;
+    return new Date(startsAt).getTime() - Date.now() < manageCutoffHours * 3_600_000;
+  }
+  function manageCutoffMsg(): string {
+    return language === "ky"
+      ? `Жолугушууга ${manageCutoffHours} сааттан аз калды — жазылууну өзгөртүү үчүн салонго түз кайрылыңыз, сураныч. 🙏`
+      : `До визита осталось меньше ${manageCutoffHours} ч. — чтобы отменить или перенести запись, пожалуйста, свяжитесь с салоном напрямую. 🙏`;
+  }
+
+  // Reschedule flow entry: try to honour a date/time the client already named
+  // ("перенесите на завтра на 19:00") instead of walking them through date+slot lists.
+  async function startRescheduleV3(baseV3: V3BookingState, requestText: string, apptStartsAt: string): Promise<WaAgentResult> {
+    const v3r: V3BookingState = { ...baseV3, managing_action: "reschedule" };
+    const timeHit = requestText ? extractManageTime(requestText) : null;
+    const reqDate =
+      parseDateFromTextV3(timeHit ? timeHit.rest : requestText, tz) ??
+      // A bare time ("на 19:00") means the same day the appointment is currently on.
+      (timeHit ? isoDateInTz(apptStartsAt, tz) : null);
+    if (!reqDate) {
+      const q = language === "ky" ? "Кайсы күнгө которобуз?" : "На какую дату переносим?";
+      return finish(q, "awaiting_reschedule_date", v3r, buildDateListMsg(buildDateMap(tz, 7), language));
+    }
+    return offerRescheduleSlots(v3r, reqDate, timeHit?.time ?? null);
+  }
+
+  // Shows reschedule options for a chosen date: exact requested time → straight to confirm;
+  // busy → nearest slots of the same master; master fully booked → other masters who do the
+  // service that day; nobody free → pick another date.
+  async function offerRescheduleSlots(v3r: V3BookingState, dateIso: string, reqTime: string | null): Promise<WaAgentResult> {
+    const masters = await loadMastersForService(db, input.salon.salonId, v3r.managing_service_id ?? "", null);
+    const own = masters.find((m) => m.id === v3r.managing_master_id);
+    if (!own) {
+      const msg = language === "ky" ? "Мастер табылган жок. Салонго кайрылыңыз." : "Не удалось найти мастера. Свяжитесь с салоном напрямую.";
+      return finish(msg, "done", {});
+    }
+    const { isoLocalDate } = nowInTz(tz);
+    const minStart = dateIso === isoLocalDate ? new Date() : undefined;
+    const ownSlots = await fetchMergedSlots({ db, masters: [own], serviceId: v3r.managing_service_id!, day: dateIso, tz, minStartTime: minStart, limit: 8 });
+    const dateLabel = formatDateInTz(`${dateIso}T12:00:00Z`, tz);
+
+    if (reqTime) {
+      const exact = ownSlots.find((s) => formatTimeInTz(s.start, tz) === reqTime);
+      if (exact) {
+        debug.actions.push(`reschedule_fast_path:${dateIso}T${reqTime}`);
+        const details = language === "ky"
+          ? `Жаңы убакыт: ${dateLabel}, ${reqTime}. Ырастайсызбы?`
+          : `Новое время: ${dateLabel}, ${reqTime}. Подтверждаете?`;
+        const newV3 = { ...v3r, managing_new_slot_start: exact.start, managing_new_slot_end: exact.end };
+        return finish(details, "awaiting_manage_confirm", newV3, buildConfirmMsg(details, language));
+      }
+    }
+
+    if (ownSlots.length > 0) {
+      const chosen = reqTime ? nearestSlots(ownSlots, reqTime, 3, tz) : ownSlots;
+      debug.actions.push(reqTime ? "reschedule_nearest_own" : "reschedule_slot_list");
+      const cache = chosen.map((s) => ({ start: s.start, end: s.end }));
+      const head = reqTime
+        ? (language === "ky"
+            ? `Тилекке каршы, ${reqTime} бош эмес. Ошол күнү мастерде жакынкы бош убакыт:`
+            : `К сожалению, на ${reqTime} занято. Ближайшее свободное время у мастера в этот день:`)
+        : (language === "ky" ? `${dateLabel} — убакытты тандаңыз:` : `${dateLabel} — выберите время:`);
+      return finish(head, "awaiting_reschedule_slot", { ...v3r, managing_slots_cache: cache }, buildSlotListMsg(chosen, tz, language));
+    }
+
+    // Own master fully booked that day → other masters offering the same service.
+    const others = masters.filter((m) => m.id !== v3r.managing_master_id);
+    const otherSlots = others.length > 0
+      ? await fetchMergedSlots({ db, masters: others, serviceId: v3r.managing_service_id!, day: dateIso, tz, minStartTime: minStart, limit: 8 })
+      : [];
+    if (otherSlots.length > 0) {
+      debug.actions.push("reschedule_other_masters");
+      const byId = new Map(masters.map((m) => [m.id, m.name]));
+      const chosen = reqTime ? nearestSlots(otherSlots, reqTime, 3, tz) : otherSlots;
+      const cache = chosen.map((s) => ({
+        start: s.start,
+        end: s.end,
+        master_id: s.master_ids[0],
+        master_name: byId.get(s.master_ids[0] ?? "") ?? "",
+      }));
+      const head = language === "ky"
+        ? `${own.name} ошол күнү бош эмес, бирок башка мастерлерде убакыт бар:`
+        : `У мастера ${own.name} на этот день всё занято, но есть время у других мастеров:`;
+      return finish(head, "awaiting_reschedule_slot", { ...v3r, managing_slots_cache: cache }, buildSlotListMsg(chosen, tz, language, byId));
+    }
+
+    debug.actions.push("reschedule_no_slots_that_day");
+    const msg = language === "ky"
+      ? "Бул күнгө бош убакыт жок. Башка күн тандаңыз:"
+      : "На эту дату нет свободного времени ни у одного мастера. Выберите другую дату:";
+    return finish(msg, "awaiting_reschedule_date", { ...v3r, managing_slots_cache: undefined }, buildDateListMsg(buildDateMap(tz, 7), language));
+  }
+
   // ===== Manage an existing appointment (cancel/reschedule) — checked in ANY state except
   // while already inside this sub-flow, since a client might interrupt a new booking to deal
   // with an old appointment first ("на самом деле, отмените мою запись на завтра"). Resolves
@@ -3130,11 +3328,30 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     "awaiting_manage_choice", "awaiting_manage_action",
     "awaiting_reschedule_date", "awaiting_reschedule_slot", "awaiting_manage_confirm",
   ];
-  const manageIntent = !manageFlowStates.includes(state) && !selectedId && !!combinedText && (
-    /отмен|перенест|перенос|не смогу прийти|не могу прийти/i.test(combinedText) ||
-    /жокко чыгар|которуп ко|кийинкиге калтыр/i.test(combinedText)
-  );
-  if (manageIntent) {
+  const manageEligible = !manageFlowStates.includes(state) && !selectedId && !!combinedText;
+  // "cancel"/"reschedule" when the wording is explicit (incl. fuzzy match for typos like
+  // "пенеренести"), "ambiguous" for phrases like "не смогу прийти" that could mean either —
+  // those still get the Отменить/Перенести buttons.
+  let manageAction: "cancel" | "reschedule" | "ambiguous" | null = null;
+  if (manageEligible) {
+    const toks = normalizeForMatch(combinedText).split(/\s+/).filter(Boolean);
+    const wantsCancel =
+      /отмен/i.test(combinedText) || /жокко чыгар/i.test(combinedText) ||
+      fuzzyHit(toks, ["отмените", "отменить", "отмена", "отменяю", "отменим"], 2);
+    const wantsReschedule =
+      /перенес|перенос|перезапис/i.test(combinedText) ||
+      /другое время|другой день|поменять время|поменять день|поменять запись/i.test(combinedText) ||
+      /которуп ко|кийинкиге калтыр|башка убак/i.test(combinedText) ||
+      fuzzyHit(toks, ["перенести", "перенесите", "перенос", "переносим", "перенесем"], 2);
+    const ambiguous =
+      /не смогу прийти|не могу прийти|не приду|не получится прийти|не успеваю/i.test(combinedText) ||
+      /келе албайм|жетишпейм/i.test(combinedText);
+    if (wantsCancel) manageAction = "cancel";
+    else if (wantsReschedule) manageAction = "reschedule";
+    else if (ambiguous) manageAction = "ambiguous";
+  }
+
+  const loadUpcomingAppointments = async (): Promise<any[]> => {
     const { data: apptRows } = await db
       .from("appointments")
       .select("id, starts_at, service_id, master_id, services(name)")
@@ -3143,7 +3360,26 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       .eq("status", "confirmed")
       .gte("starts_at", new Date().toISOString())
       .order("starts_at");
-    const upcoming = (apptRows ?? []) as any[];
+    return (apptRows ?? []) as any[];
+  };
+
+  let upcoming: any[] | null = null;
+  // Wording didn't match, but the client may still be talking about an existing appointment
+  // (typos, free phrasing). Ask Gemini — only from idle/done and only when there actually IS
+  // an upcoming appointment, so we don't pay for a classification on every message.
+  if (manageEligible && !manageAction && (state === "idle" || state === "done") && apiKey) {
+    upcoming = await loadUpcomingAppointments();
+    if (upcoming.length > 0) {
+      const g = await classifyManageIntentV3(apiKey, combinedText);
+      if (g) {
+        manageAction = g;
+        debug.actions.push(`manage_intent_gemini:${g}`);
+      }
+    }
+  }
+
+  if (manageAction) {
+    upcoming ??= await loadUpcomingAppointments();
 
     if (upcoming.length > 0) {
       const candidates = upcoming.map((a) => ({
@@ -3152,21 +3388,39 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       }));
       if (upcoming.length === 1) {
         const a = upcoming[0];
-        debug.actions.push("manage_intent:1_found");
+        debug.actions.push(`manage_intent:1_found:${manageAction}`);
+        if (isWithinManageCutoff(a.starts_at)) return finish(manageCutoffMsg(), "done", {});
         const newV3: V3BookingState = {
           managing_appointment_id: a.id,
           managing_appointment_label: candidates[0].label,
           managing_service_id: a.service_id,
           managing_master_id: a.master_id,
         };
+        if (manageAction === "cancel") {
+          // The client already said "отменить" — skip the action menu, go straight to confirm.
+          const details = language === "ky"
+            ? `Чын эле бул жазылууну жокко чыгарабызбы?\n${candidates[0].label}`
+            : `Точно отменяем эту запись?\n${candidates[0].label}`;
+          return finish(details, "awaiting_manage_confirm", { ...newV3, managing_action: "cancel" }, buildConfirmMsg(details, language));
+        }
+        if (manageAction === "reschedule") {
+          return startRescheduleV3(newV3, combinedText, a.starts_at);
+        }
+        // Ambiguous ("не смогу прийти") → let the client pick cancel/reschedule/leave.
         const q = language === "ky"
           ? `Сиздин жазылууңуз: ${candidates[0].label}. Эмне кылабыз?`
           : `Ваша запись: ${candidates[0].label}. Что делаем?`;
         return finish(q, "awaiting_manage_action", newV3, buildManageActionMsg(language));
       }
-      debug.actions.push(`manage_intent:${upcoming.length}_found`);
+      debug.actions.push(`manage_intent:${upcoming.length}_found:${manageAction}`);
       const q = language === "ky" ? "Кайсы жазылууну тандайсыз?" : "Какую запись выбираем?";
-      return finish(q, "awaiting_manage_choice", { managing_candidates: candidates }, buildManageChoiceMsg(candidates, language));
+      // Remember the action (and the original text with its date/time) so after the client
+      // picks WHICH appointment we don't re-ask what to do with it.
+      return finish(q, "awaiting_manage_choice", {
+        managing_candidates: candidates,
+        managing_action: manageAction === "ambiguous" ? undefined : manageAction,
+        managing_request_text: manageAction === "reschedule" ? combinedText : undefined,
+      }, buildManageChoiceMsg(candidates, language));
     }
     debug.actions.push("manage_intent:none_found");
   }
@@ -3639,12 +3893,23 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       return finish(msg, "done", {});
     }
     const label = `${(a as any).services?.name ?? "?"} — ${formatDateInTz((a as any).starts_at, tz)}, ${formatTimeInTz((a as any).starts_at, tz)}`;
+    if (isWithinManageCutoff((a as any).starts_at)) return finish(manageCutoffMsg(), "done", {});
     const newV3: V3BookingState = {
       managing_appointment_id: a.id,
       managing_appointment_label: label,
       managing_service_id: (a as any).service_id,
       managing_master_id: (a as any).master_id,
     };
+    // The client already said what to do before picking the appointment — don't re-ask.
+    if (v3.managing_action === "cancel") {
+      const details = language === "ky"
+        ? `Чын эле бул жазылууну жокко чыгарабызбы?\n${label}`
+        : `Точно отменяем эту запись?\n${label}`;
+      return finish(details, "awaiting_manage_confirm", { ...newV3, managing_action: "cancel" }, buildConfirmMsg(details, language));
+    }
+    if (v3.managing_action === "reschedule") {
+      return startRescheduleV3(newV3, v3.managing_request_text ?? "", (a as any).starts_at);
+    }
     const q = language === "ky" ? `Тандалды: ${label}. Эмне кылабыз?` : `Выбрано: ${label}. Что делаем?`;
     return finish(q, "awaiting_manage_action", newV3, buildManageActionMsg(language));
   }
@@ -3666,9 +3931,14 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       return finish(details, "awaiting_manage_confirm", { ...v3, managing_action: "cancel" }, buildConfirmMsg(details, language));
     }
     if (wantsReschedule) {
-      const dateMap = buildDateMap(tz, 7);
-      const q = language === "ky" ? "Кайсы күнгө которобуз?" : "На какую дату переносим?";
-      return finish(q, "awaiting_reschedule_date", { ...v3, managing_action: "reschedule" }, buildDateListMsg(dateMap, language));
+      // The client may have typed the target right here ("перенесите на завтра в 19:00") —
+      // startRescheduleV3 honours it and only falls back to the date list when nothing parsed.
+      const { data: apptRow } = await db
+        .from("appointments")
+        .select("starts_at")
+        .eq("id", v3.managing_appointment_id!)
+        .maybeSingle();
+      return startRescheduleV3(v3, combinedText, (apptRow as any)?.starts_at ?? new Date().toISOString());
     }
     const q = language === "ky" ? "Эмне кылабыз?" : "Что делаем с записью?";
     return finish(q, "awaiting_manage_action", v3, buildManageActionMsg(language));
@@ -3676,48 +3946,32 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
 
   // ===== awaiting_reschedule_date =====
   if (state === "awaiting_reschedule_date") {
+    const timeHit = combinedText ? extractManageTime(combinedText) : null;
     let dateIso: string | null = null;
     if (selectedId?.startsWith("date_")) {
       dateIso = selectedId.slice(5);
     } else if (combinedText) {
-      dateIso = parseDateFromTextV3(combinedText, tz);
+      dateIso = parseDateFromTextV3(timeHit ? timeHit.rest : combinedText, tz);
     }
-    const dateMap = buildDateMap(tz, 7);
     if (!dateIso) {
       const q = language === "ky" ? "Датаны тандаңыз:" : "Выберите дату:";
-      return finish(q, "awaiting_reschedule_date", v3, buildDateListMsg(dateMap, language));
+      return finish(q, "awaiting_reschedule_date", v3, buildDateListMsg(buildDateMap(tz, 7), language));
     }
-    // Reschedule keeps the SAME master the appointment already has — loadMastersForService
-    // gives us the real master row (name, branch) to check that master still offers the
-    // service and is active, then get_available_slots computes their real openings.
-    const masters = await loadMastersForService(db, input.salon.salonId, v3.managing_service_id ?? "", null);
-    const eligibleMaster = masters.find((m) => m.id === v3.managing_master_id);
-    if (!eligibleMaster) {
-      const msg = language === "ky" ? "Мастер табылган жок. Салонго кайрылыңыз." : "Не удалось найти мастера. Свяжитесь с салоном напрямую.";
-      return finish(msg, "done", {});
-    }
-    const { isoLocalDate } = nowInTz(tz);
-    const minStart = dateIso === isoLocalDate ? new Date() : undefined;
-    const slots = await fetchMergedSlots({ db, masters: [eligibleMaster], serviceId: v3.managing_service_id!, day: dateIso, tz, minStartTime: minStart, limit: 8 });
-    if (slots.length === 0) {
-      const msg = language === "ky" ? "Бул күнгө бош убакыт жок. Башка күн тандаңыз:" : "На эту дату нет свободных слотов. Выберите другую дату:";
-      return finish(msg, "awaiting_reschedule_date", v3, buildDateListMsg(dateMap, language));
-    }
-    const newV3: V3BookingState = { ...v3, managing_slots_cache: slots.map((s) => ({ start: s.start, end: s.end })) };
-    const dateLabel = formatDateInTz(`${dateIso}T12:00:00Z`, tz);
-    const q = language === "ky" ? `${dateLabel} — убакытты тандаңыз:` : `${dateLabel} — выберите время:`;
-    return finish(q, "awaiting_reschedule_slot", newV3, buildSlotListMsg(slots, tz, language));
+    // offerRescheduleSlots keeps the SAME master when possible, offers other masters when
+    // that master's day is full, and jumps straight to confirm when the client also named
+    // an available time ("завтра в 19:00").
+    return offerRescheduleSlots(v3, dateIso, timeHit?.time ?? null);
   }
 
   // ===== awaiting_reschedule_slot =====
   if (state === "awaiting_reschedule_slot") {
     const slotsCache = v3.managing_slots_cache ?? [];
-    let slot: { start: string; end: string } | null = null;
+    let slot: { start: string; end: string; master_id?: string; master_name?: string } | null = null;
     if (selectedId?.startsWith("slot_")) {
       const idx = parseInt(selectedId.slice(5), 10);
       if (!isNaN(idx) && idx >= 0 && idx < slotsCache.length) slot = slotsCache[idx];
     } else if (combinedText) {
-      const timeMatch = combinedText.match(/\b(\d{1,2}):(\d{2})\b/);
+      const timeMatch = combinedText.match(/\b(\d{1,2})[:.](\d{2})\b/);
       if (timeMatch) {
         const h = parseInt(timeMatch[1], 10);
         const m = parseInt(timeMatch[2], 10);
@@ -3730,15 +3984,26 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     }
     if (!slot) {
       const msg = language === "ky" ? "Убакытты тандаңыз:" : "Выберите время:";
-      const mockSlots: MergedSlot[] = slotsCache.map((s) => ({ start: s.start, end: s.end, master_ids: [] }));
-      return finish(msg, "awaiting_reschedule_slot", v3, buildSlotListMsg(mockSlots, tz, language));
+      const mockSlots: MergedSlot[] = slotsCache.map((s) => ({ start: s.start, end: s.end, master_ids: s.master_id ? [s.master_id] : [] }));
+      const byId = slotsCache.some((s) => s.master_name)
+        ? new Map(slotsCache.filter((s) => s.master_id).map((s) => [s.master_id!, s.master_name ?? ""]))
+        : undefined;
+      return finish(msg, "awaiting_reschedule_slot", v3, buildSlotListMsg(mockSlots, tz, language, byId));
     }
     const dateLabel = formatDateInTz(slot.start, tz);
     const timeLabel = formatTimeInTz(slot.start, tz);
+    // Slot from ANOTHER master (own master's day was full) → say so in the confirmation.
+    const masterSuffix = slot.master_name ? `, мастер ${slot.master_name}` : "";
     const details = language === "ky"
-      ? `Жаңы убакыт: ${dateLabel}, ${timeLabel}. Ырастайсызбы?`
-      : `Новое время: ${dateLabel}, ${timeLabel}. Подтверждаете?`;
-    const newV3 = { ...v3, managing_new_slot_start: slot.start, managing_new_slot_end: slot.end };
+      ? `Жаңы убакыт: ${dateLabel}, ${timeLabel}${masterSuffix}. Ырастайсызбы?`
+      : `Новое время: ${dateLabel}, ${timeLabel}${masterSuffix}. Подтверждаете?`;
+    const newV3 = {
+      ...v3,
+      managing_new_slot_start: slot.start,
+      managing_new_slot_end: slot.end,
+      managing_new_master_id: slot.master_id,
+      managing_new_master_name: slot.master_name,
+    };
     return finish(details, "awaiting_manage_confirm", newV3, buildConfirmMsg(details, language));
   }
 
@@ -3759,6 +4024,16 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       return finish(details, "awaiting_manage_confirm", v3, buildConfirmMsg(details, language));
     }
 
+    // Deadline may have passed while the client was mid-dialog — re-check before applying.
+    if (manageCutoffHours > 0 && v3.managing_appointment_id) {
+      const { data: cur } = await db
+        .from("appointments")
+        .select("starts_at")
+        .eq("id", v3.managing_appointment_id)
+        .maybeSingle();
+      if (cur && isWithinManageCutoff((cur as any).starts_at)) return finish(manageCutoffMsg(), "done", {});
+    }
+
     if (v3.managing_action === "cancel") {
       const { error } = await db
         .from("appointments")
@@ -3770,22 +4045,33 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         const msg = language === "ky" ? "Жокко чыгаруу мүмкүн болгон жок. Салонго кайрылыңыз." : "Не удалось отменить. Свяжитесь с салоном напрямую.";
         return finish(msg, "done", {});
       }
-      const msg = language === "ky" ? "✅ Жазылуу жокко чыгарылды." : "✅ Запись отменена.";
+      const msg = language === "ky"
+        ? "✅ Жазылуу жокко чыгарылды. Кайра жазылгыңыз келсе — жөн гана жазыңыз 😊"
+        : "✅ Запись отменена. Если захотите записаться снова — просто напишите 😊";
       return finish(msg, "done", {});
     }
 
-    // reschedule
+    // reschedule (v2 RPC when the client agreed to move to another master's slot)
     try {
-      const { error } = await db.rpc("reschedule_appointment" as any, {
-        _appointment_id: v3.managing_appointment_id,
-        _new_starts_at: v3.managing_new_slot_start,
-      } as any);
+      const { error } = v3.managing_new_master_id && v3.managing_new_master_id !== v3.managing_master_id
+        ? await db.rpc("reschedule_appointment_v2" as any, {
+            _appointment_id: v3.managing_appointment_id,
+            _new_starts_at: v3.managing_new_slot_start,
+            _new_master_id: v3.managing_new_master_id,
+          } as any)
+        : await db.rpc("reschedule_appointment" as any, {
+            _appointment_id: v3.managing_appointment_id,
+            _new_starts_at: v3.managing_new_slot_start,
+          } as any);
       if (error) throw error;
       const dateLabel = v3.managing_new_slot_start ? formatDateInTz(v3.managing_new_slot_start, tz) : "";
       const timeLabel = v3.managing_new_slot_start ? formatTimeInTz(v3.managing_new_slot_start, tz) : "";
+      const masterSuffix = v3.managing_new_master_name && v3.managing_new_master_id !== v3.managing_master_id
+        ? `, мастер ${v3.managing_new_master_name}`
+        : "";
       const msg = language === "ky"
-        ? `✅ Жазылуу которулду: ${dateLabel}, ${timeLabel}.`
-        : `✅ Запись перенесена: ${dateLabel}, ${timeLabel}.`;
+        ? `✅ Жазылуу которулду: ${dateLabel}, ${timeLabel}${masterSuffix}.`
+        : `✅ Запись перенесена: ${dateLabel}, ${timeLabel}${masterSuffix}.`;
       return finish(msg, "done", {});
     } catch (e: any) {
       debug.errors.push(`reschedule_appointment:${e?.message ?? e}`);
