@@ -4,17 +4,15 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
   greenApiSendMessage,
-  greenApiSendButtons,
-  greenApiSendListMessage,
   greenApiSendFileByUrl,
   normalizeChatIdToPhone,
+  renderInteractiveAsText,
   runWaAgentV3,
   type GreenApiCreds,
   type WaAgentInput,
   type WaAgentState,
   type WaBranchInfo,
   type WaIncomingMessage,
-  type WaInteractiveMessage,
 } from "@/lib/wa-agent.server";
 
 const LOCK_TTL_SECONDS = 25;
@@ -491,40 +489,29 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             }
 
             // 5) Send reply — skip network if byte-for-byte identical to previous in this pass.
-            // If result has an interactiveMessage (V3), send it instead of plain text.
-            const isDuplicateReply = result.reply.trim() === (lastSentReply ?? "").trim();
+            // Interactive lists/buttons don't render on regular WhatsApp accounts (Green-API
+            // marks those methods as non-working), so an interactiveMessage is delivered as a
+            // plain-text numbered menu; the agent maps a numeric reply back to the row.
+            const sentText = result.interactiveMessage
+              ? renderInteractiveAsText(
+                  result.reply,
+                  result.interactiveMessage,
+                  ((result.nextStateData as any)?.language as "ru" | "ky" | "en") ?? "ru",
+                )
+              : result.reply;
+            const isDuplicateReply = sentText.trim() === (lastSentReply ?? "").trim();
             let sentIdMessage: string | undefined;
             if (!isDuplicateReply) {
-              const im: WaInteractiveMessage | undefined = result.interactiveMessage;
-              if (im) {
-                let res;
-                if (im.kind === "buttons") {
-                  res = await greenApiSendButtons(creds, chatId, im.text, im.buttons);
-                } else {
-                  const wireSections = im.sections.map((sec) => ({
-                    title: sec.title,
-                    rows: sec.rows.map(({ rowId, title, description }) => ({ rowId, title, description })),
-                  }));
-                  res = await greenApiSendListMessage(creds, chatId, im.text, im.buttonText, wireSections);
-                }
-                sentIdMessage = res.ok ? res.idMessage : undefined;
-                if (!res.ok) {
-                  // Interactive failed — fall back to plain text
-                  const fallback = await greenApiSendMessage(creds, chatId, result.reply);
-                  sentIdMessage = fallback.ok ? fallback.idMessage : undefined;
-                }
-              } else {
-                const res = await greenApiSendMessage(creds, chatId, result.reply);
-                sentIdMessage = res.ok ? res.idMessage : undefined;
-              }
-              lastSentReply = result.reply;
+              const res = await greenApiSendMessage(creds, chatId, sentText);
+              sentIdMessage = res.ok ? res.idMessage : undefined;
+              lastSentReply = sentText;
             }
             await supabaseAdmin.from("wa_messages").insert({
               conversation_id: convId,
               salon_id: salonId,
               direction: "out",
               kind: "text",
-              text_body: result.reply,
+              text_body: sentText,
               green_api_message_id: sentIdMessage ?? null,
               meta: {
                 intent: result.debug.intent ?? null,

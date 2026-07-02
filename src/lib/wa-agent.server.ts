@@ -2696,7 +2696,7 @@ export async function runWaAgentV2(input: WaAgentInput): Promise<WaAgentResult> 
   // Multi-branch: only get_branches, so Gemini can list branches but not proactively dump services.
   const isFirstMessage = v2History.length === 0;
   const firstTurnAllowed = isFirstMessage
-    ? (branches.length > 1 ? ["get_branches"] : [])
+    ? (input.branches.length > 1 ? ["get_branches"] : [])
     : undefined;
 
   for (let iter = 0; iter < MAX_TOOL_ITERS; iter++) {
@@ -2817,6 +2817,50 @@ export async function greenApiSendListMessage(
   } catch (e: any) {
     return { ok: false, error: e?.message ?? String(e) };
   }
+}
+
+// WhatsApp no longer renders interactive lists/buttons for non-WABA connections, and
+// Green-API marks sendListMessage/sendButtons as non-working ("метод временно не
+// работает") — clients received only the bare header text without the rows. Interactive
+// messages are therefore delivered as a plain-text numbered menu. Row order in
+// renderInteractiveAsText MUST match menuRowIds() so a numeric reply maps back to the
+// right row.
+export function menuRowIds(im: WaInteractiveMessage): string[] {
+  return im.kind === "buttons"
+    ? im.buttons.map((b) => b.id)
+    : im.sections.flatMap((s) => s.rows.map((r) => r.rowId));
+}
+
+export function renderInteractiveAsText(
+  reply: string,
+  im: WaInteractiveMessage,
+  language: "ru" | "ky" | "en",
+): string {
+  const lines: string[] = [];
+  if (reply.trim()) lines.push(reply.trim());
+  let n = 1;
+  if (im.kind === "buttons") {
+    lines.push("");
+    for (const b of im.buttons) lines.push(`${n++}. ${b.text}`);
+  } else {
+    for (const sec of im.sections) {
+      lines.push("");
+      if (sec.title) lines.push(`*${sec.title}*`);
+      for (const row of sec.rows) {
+        const name = row.fullName ?? row.title;
+        lines.push(`${n++}. ${name}${row.description ? ` — ${row.description}` : ""}`);
+      }
+    }
+  }
+  lines.push("");
+  lines.push(
+    language === "ky"
+      ? "Номерин жазып жибериңиз (мисалы: 1)."
+      : language === "en"
+        ? "Reply with a number (e.g. 1)."
+        : "Ответьте цифрой (например: 1).",
+  );
+  return lines.join("\n");
 }
 
 // ============================================================
@@ -3183,14 +3227,29 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
   const language = clampLanguage(detectedLang ?? persistedLang ?? "ru", input.config.languages);
 
   // Extract selected_id (button/list tap) and combined text
-  const selectedId: string | null =
-    [...input.lastMessages].reverse().find((m) => m.selected_id)?.selected_id ?? null;
   const lastImage = input.lastMessages.find((m) => m.kind === "image");
   const combinedText = input.lastMessages
     .filter((m) => m.kind !== "image")
     .map((m) => m.text_body ?? "")
     .join(" ")
     .trim();
+  let selectedId: string | null =
+    [...input.lastMessages].reverse().find((m) => m.selected_id)?.selected_id ?? null;
+  // Real WhatsApp (Green-API) cannot render interactive lists/buttons, so the webhook
+  // delivers them as a numbered text menu. A bare-number reply ("2") therefore means
+  // "row #2 of the menu we showed last turn" — translate it into the same selected_id
+  // a real list tap would produce. Row order is persisted in state_data.menu by finish().
+  if (!selectedId) {
+    const menu = (input.stateData as any).menu as string[] | undefined;
+    const num = combinedText.match(/^\s*(\d{1,2})\s*[).]?$/);
+    if (menu?.length && num) {
+      const idx = parseInt(num[1], 10) - 1;
+      if (idx >= 0 && idx < menu.length) {
+        selectedId = menu[idx];
+        debug.actions.push(`menu_pick:${idx + 1}`);
+      }
+    }
+  }
 
   // V3 booking sub-state (persisted between turns in state_data.v3)
   const v3: V3BookingState = { ...((input.stateData as any).v3 ?? {}) };
@@ -3212,7 +3271,13 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     return {
       reply,
       nextState,
-      nextStateData: { language, v3: nextV3 } as any,
+      nextStateData: {
+        language,
+        v3: nextV3,
+        // Remember the rows of the menu we are showing so a numeric reply next turn
+        // can be mapped back to a rowId (see selectedId extraction above).
+        ...(interactiveMessage ? { menu: menuRowIds(interactiveMessage) } : {}),
+      } as any,
       appointmentId,
       selectedBranchId: nextV3.branch_id ?? input.selectedBranchId,
       debug,

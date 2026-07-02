@@ -18,7 +18,7 @@ mock.module("@/integrations/supabase/client.server", () => ({ supabaseAdmin: dbP
 
 process.env.GEMINI_API_KEY = "test-key";
 
-const { runWaAgent, runWaAgentV3 } = await import("@/lib/wa-agent.server");
+const { runWaAgent, runWaAgentV3, renderInteractiveAsText } = await import("@/lib/wa-agent.server");
 
 // ---- Time helpers (salon tz = Asia/Bishkek, fixed UTC+6) ----
 const TZ = "Asia/Bishkek";
@@ -1415,6 +1415,45 @@ test("V3-5. 'не смогу прийти' (ambiguous) → cancel/reschedule but
   const r = await c.say("я не смогу прийти");
   expect(r.nextState).toBe("awaiting_manage_action");
   expect((r.interactiveMessage as any)?.buttons?.map((b: any) => b.id)).toContain("manage_cancel");
+});
+
+// =========================================================================
+// Numbered text menu — Green-API can't deliver interactive lists/buttons to
+// regular WhatsApp accounts, so menus go out as numbered text and the client
+// answers with a number. The rowId order is persisted in state_data.menu.
+// =========================================================================
+
+test("V3-6. greeting stores menu rowIds; reply '2' picks the 2nd service", async () => {
+  const c = convoV3(multiSalon());
+  const r1 = await c.say("Здравствуйте");
+  expect(r1.nextState).toBe("awaiting_service");
+  expect((r1.nextStateData as any).menu).toEqual(["svc_svc_hair", "svc_svc_nail", "svc_svc_color"]);
+  const r2 = await c.say("2");
+  expect((r2.nextStateData as any).v3?.service_id).toBe("svc_nail");
+  expect(r2.nextState).not.toBe("awaiting_service");
+});
+
+test("V3-7. manage buttons picked by number: '1' = отменить", async () => {
+  const c = convoV3(singleSalon());
+  c.seedAppointment({ startsAt: slotISO(TOMORROW, "12:00"), serviceId: "svc_hair", masterId: "m_ulur" });
+  const r1 = await c.say("я не смогу прийти");
+  expect(r1.nextState).toBe("awaiting_manage_action");
+  const r2 = await c.say("1");
+  expect(r2.nextState).toBe("awaiting_manage_confirm");
+  const r3 = await c.say("да");
+  expect(r3.nextState).toBe("done");
+  expect(c.db.appointments[0].status).toBe("cancelled");
+});
+
+test("V3-8. renderInteractiveAsText: приветствие + нумерованное меню + подсказка", async () => {
+  const c = convoV3(multiSalon());
+  const r = await c.say("Здравствуйте");
+  const txt = renderInteractiveAsText(r.reply, r.interactiveMessage!, "ru");
+  expect(txt).toContain(r.reply.trim());
+  expect(txt).toMatch(/1\. Стрижка/);
+  expect(txt).toMatch(/2\. Маникюр/);
+  expect(txt).toMatch(/3\. Окрашивание/);
+  expect(txt).toMatch(/цифрой/i);
 });
 
 test("V3-6. cutoff: visit in 1h, limit 2h → polite refusal, appointment untouched", async () => {
