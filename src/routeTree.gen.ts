@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
@@ -22,6 +23,11 @@ import { Route as PreviewSalonSalonIdRouteImport } from './routes/preview.salon.
 import { Route as AdminSalonsSalonIdRouteImport } from './routes/admin/salons/$salonId'
 import { Route as ApiPublicWaSalonIdRouteImport } from './routes/api/public/wa.$salonId'
 
+const PrivacyRoute = PrivacyRouteImport.update({
+  id: '/privacy',
+  path: '/privacy',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthRoute = AuthRouteImport.update({
   id: '/auth',
   path: '/auth',
@@ -87,6 +93,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteWithChildren
   '/auth': typeof AuthRoute
+  '/privacy': typeof PrivacyRoute
   '/admin/calendar': typeof AdminCalendarRoute
   '/admin/notifications': typeof AdminNotificationsRoute
   '/admin/stats': typeof AdminStatsRoute
@@ -100,6 +107,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/privacy': typeof PrivacyRoute
   '/admin/calendar': typeof AdminCalendarRoute
   '/admin/notifications': typeof AdminNotificationsRoute
   '/admin/stats': typeof AdminStatsRoute
@@ -115,6 +123,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteWithChildren
   '/auth': typeof AuthRoute
+  '/privacy': typeof PrivacyRoute
   '/admin/calendar': typeof AdminCalendarRoute
   '/admin/notifications': typeof AdminNotificationsRoute
   '/admin/stats': typeof AdminStatsRoute
@@ -131,6 +140,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/auth'
+    | '/privacy'
     | '/admin/calendar'
     | '/admin/notifications'
     | '/admin/stats'
@@ -144,6 +154,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/auth'
+    | '/privacy'
     | '/admin/calendar'
     | '/admin/notifications'
     | '/admin/stats'
@@ -158,6 +169,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/auth'
+    | '/privacy'
     | '/admin/calendar'
     | '/admin/notifications'
     | '/admin/stats'
@@ -173,6 +185,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRouteWithChildren
   AuthRoute: typeof AuthRoute
+  PrivacyRoute: typeof PrivacyRoute
   BookSlugRoute: typeof BookSlugRoute
   PreviewSalonSalonIdRoute: typeof PreviewSalonSalonIdRoute
   ApiPublicWaSalonIdRoute: typeof ApiPublicWaSalonIdRoute
@@ -180,6 +193,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/privacy': {
+      id: '/privacy'
+      path: '/privacy'
+      fullPath: '/privacy'
+      preLoaderRoute: typeof PrivacyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/auth': {
       id: '/auth'
       path: '/auth'
@@ -291,6 +311,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRouteWithChildren,
   AuthRoute: AuthRoute,
+  PrivacyRoute: PrivacyRoute,
   BookSlugRoute: BookSlugRoute,
   PreviewSalonSalonIdRoute: PreviewSalonSalonIdRoute,
   ApiPublicWaSalonIdRoute: ApiPublicWaSalonIdRoute,
