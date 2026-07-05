@@ -124,9 +124,13 @@ function Landing() {
           <div className="text-sm text-muted-foreground">
             <div className="font-semibold text-foreground">Реквизиты</div>
             <address className="mt-2 space-y-1 not-italic">
-              <div>ИП Акбаров Рамис Нургазыбекович</div>
+              <div>Индивидуальный предприниматель Акбаров Рамис Нургазыбекович</div>
               <div>ИНН: 22505200950633</div>
-              <div>Кыргызская Республика, г. Бишкек, ул. Исакеева Б, дом 18/5, кв. 40</div>
+              <div>Регистрационный номер: 001-2026-169-2385</div>
+              <div>
+                Кыргызская Республика, г. Бишкек, Октябрьский р-н, Кара-Жыгач ж/м, улица
+                Исакеева Б, дом 18/5, кв. 40
+              </div>
               <div>
                 Телефон:{" "}
                 <a href="tel:+996707111726" className="hover:text-foreground">
@@ -145,7 +149,7 @@ function Landing() {
 
         <div className="border-t">
           <div className="container mx-auto px-4 py-4 text-xs text-muted-foreground">
-            © {new Date().getFullYear()} Qabyl · ИП Акбаров Рамис Нургазыбекович
+            © {new Date().getFullYear()} Qabyl · Индивидуальный предприниматель Акбаров Рамис Нургазыбекович
           </div>
         </div>
       </footer>
