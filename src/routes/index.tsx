@@ -106,6 +106,49 @@ function Landing() {
           ))}
         </div>
       </main>
+
+      <footer className="border-t bg-muted/30">
+        <div className="container mx-auto grid gap-8 px-4 py-12 md:grid-cols-2">
+          <div>
+            <div className="text-lg font-semibold">Qabyl</div>
+            <p className="mt-2 max-w-sm text-sm text-muted-foreground">
+              Платформа онлайн-записи для салонов красоты с WhatsApp-уведомлениями.
+            </p>
+            <p className="mt-4 text-sm">
+              <Link to="/privacy" className="text-muted-foreground underline hover:text-foreground">
+                Политика конфиденциальности
+              </Link>
+            </p>
+          </div>
+
+          <div className="text-sm text-muted-foreground">
+            <div className="font-semibold text-foreground">Реквизиты</div>
+            <address className="mt-2 space-y-1 not-italic">
+              <div>ИП Акбаров Рамис Нургазыбекович</div>
+              <div>ИНН: 22505200950633</div>
+              <div>Кыргызская Республика, г. Бишкек, ул. Исакеева Б, дом 18/5, кв. 40</div>
+              <div>
+                Телефон:{" "}
+                <a href="tel:+996707111726" className="hover:text-foreground">
+                  +996 707 111 726
+                </a>
+              </div>
+              <div>
+                Email:{" "}
+                <a href="mailto:ramisakbarovvv@gmail.com" className="hover:text-foreground">
+                  ramisakbarovvv@gmail.com
+                </a>
+              </div>
+            </address>
+          </div>
+        </div>
+
+        <div className="border-t">
+          <div className="container mx-auto px-4 py-4 text-xs text-muted-foreground">
+            © {new Date().getFullYear()} Qabyl · ИП Акбаров Рамис Нургазыбекович
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }
