@@ -2854,12 +2854,106 @@ export async function greenApiSendListMessage(
   }
 }
 
-// WhatsApp no longer renders interactive lists/buttons for non-WABA connections, and
-// Green-API marks sendListMessage/sendButtons as non-working ("метод временно не
-// работает") — clients received only the bare header text without the rows. Interactive
-// messages are therefore delivered as a plain-text numbered menu. Row order in
-// renderInteractiveAsText MUST match menuRowIds() so a numeric reply maps back to the
-// right row.
+// ============================================================
+// Official WhatsApp Cloud API transport (used via the Dualhook coexistence gateway).
+// Unlike Green-API, interactive lists/buttons render natively here, so we send the
+// WaInteractiveMessage as a real interactive payload (with a numbered-text fallback if
+// the interactive call fails). Sending goes straight to graph.facebook.com — Dualhook
+// only overrides the inbound webhook, it does not proxy outbound messages.
+// ============================================================
+
+export type CloudApiCreds = { phoneNumberId: string; accessToken: string; graphVersion?: string };
+
+async function cloudApiSend(
+  creds: CloudApiCreds,
+  payload: Record<string, any>,
+): Promise<{ ok: boolean; idMessage?: string; error?: string }> {
+  try {
+    const ver = creds.graphVersion || "v21.0";
+    const url = `https://graph.facebook.com/${ver}/${creds.phoneNumberId}/messages`;
+    const r = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${creds.accessToken}`,
+      },
+      body: JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", ...payload }),
+    });
+    const txt = await r.text();
+    let json: any = null;
+    try { json = JSON.parse(txt); } catch {}
+    if (!r.ok) return { ok: false, error: `cloud-api ${r.status}: ${txt.slice(0, 300)}` };
+    return { ok: true, idMessage: json?.messages?.[0]?.id };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? String(e) };
+  }
+}
+
+export async function cloudApiSendText(creds: CloudApiCreds, toPhone: string, body: string) {
+  return cloudApiSend(creds, { to: toPhone, type: "text", text: { preview_url: false, body: body.slice(0, 4096) } });
+}
+
+// Map our provider-agnostic WaInteractiveMessage to a Cloud API interactive payload.
+// WhatsApp caps: reply-button title ≤20, list button ≤20, row title ≤24, description ≤72,
+// ≤3 buttons, ≤10 rows total. Our category-first gating keeps lists within these limits.
+export async function cloudApiSendInteractive(creds: CloudApiCreds, toPhone: string, im: WaInteractiveMessage) {
+  if (im.kind === "buttons") {
+    return cloudApiSend(creds, {
+      to: toPhone,
+      type: "interactive",
+      interactive: {
+        type: "button",
+        body: { text: (im.text || " ").slice(0, 1024) },
+        action: {
+          buttons: im.buttons.slice(0, 3).map((b) => ({
+            type: "reply",
+            reply: { id: b.id.slice(0, 256), title: b.text.slice(0, 20) },
+          })),
+        },
+      },
+    });
+  }
+  const sections = im.sections.map((sec) => ({
+    ...(sec.title ? { title: sec.title.slice(0, 24) } : {}),
+    rows: sec.rows.slice(0, 10).map((row) => ({
+      id: row.rowId.slice(0, 200),
+      title: row.title.slice(0, 24),
+      ...(row.description ? { description: row.description.slice(0, 72) } : {}),
+    })),
+  }));
+  return cloudApiSend(creds, {
+    to: toPhone,
+    type: "interactive",
+    interactive: {
+      type: "list",
+      body: { text: (im.text || " ").slice(0, 4096) },
+      action: { button: im.buttonText.slice(0, 20), sections },
+    },
+  });
+}
+
+// Business-initiated template message (e.g. a booking confirmation for a website booking,
+// sent outside the 24h service window). Components carry the template's variable values.
+export async function cloudApiSendTemplate(
+  creds: CloudApiCreds,
+  toPhone: string,
+  templateName: string,
+  languageCode: string,
+  bodyParams: string[],
+) {
+  return cloudApiSend(creds, {
+    to: toPhone,
+    type: "template",
+    template: {
+      name: templateName,
+      language: { code: languageCode },
+      ...(bodyParams.length
+        ? { components: [{ type: "body", parameters: bodyParams.map((t) => ({ type: "text", text: t })) }] }
+        : {}),
+    },
+  });
+}
+
 export function menuRowIds(im: WaInteractiveMessage): string[] {
   return im.kind === "buttons"
     ? im.buttons.map((b) => b.id)
