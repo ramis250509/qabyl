@@ -38,6 +38,8 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
   const [saving, setSaving] = useState(false);
   const [premiumEnabled, setPremiumEnabled] = useState(false);
   const [webhookUrl, setWebhookUrl] = useState<string | null>(null);
+  const [cloudWebhookUrl, setCloudWebhookUrl] = useState<string | null>(null);
+  const [verifyToken, setVerifyToken] = useState<string | null>(null);
   const [webhookBusy, setWebhookBusy] = useState(false);
   const [data, setData] = useState<Assistant>({
     salon_id: salonId,
@@ -77,7 +79,11 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
       if (isSuperAdmin) {
         try {
           const res = await getWaWebhookConfig({ data: { salonId } });
-          if (!cancelled) setWebhookUrl(res.webhook_url);
+          if (!cancelled) {
+            setWebhookUrl(res.webhook_url);
+            setCloudWebhookUrl(res.cloud_webhook_url ?? null);
+            setVerifyToken(res.verify_token ?? null);
+          }
         } catch (e) {
           console.warn("webhook config load failed", e);
         }
@@ -93,6 +99,8 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
     try {
       const res = await regenerateWaWebhookToken({ data: { salonId } });
       setWebhookUrl(res.webhook_url);
+      setCloudWebhookUrl(res.cloud_webhook_url ?? null);
+      setVerifyToken(res.verify_token ?? null);
       toast.success("Новый Webhook URL сгенерирован");
     } catch (e: any) {
       toast.error("Не удалось сгенерировать: " + (e?.message ?? e));
@@ -101,10 +109,10 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
     }
   }
 
-  async function copyWebhook() {
-    if (!webhookUrl) return;
+  async function copyText(value: string | null) {
+    if (!value) return;
     try {
-      await navigator.clipboard.writeText(webhookUrl);
+      await navigator.clipboard.writeText(value);
       toast.success("Скопировано");
     } catch {
       toast.error("Не удалось скопировать");
@@ -220,7 +228,7 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
           {webhookUrl ? (
             <div className="flex gap-2">
               <Input value={webhookUrl} readOnly className="font-mono text-xs" />
-              <Button type="button" variant="outline" size="icon" onClick={copyWebhook}>
+              <Button type="button" variant="outline" size="icon" onClick={() => copyText(webhookUrl)}>
                 <Copy className="h-4 w-4" />
               </Button>
               <Button type="button" variant="outline" size="icon" onClick={refreshWebhook} disabled={webhookBusy} title="Сгенерировать новый">
@@ -231,6 +239,50 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
             <Button type="button" onClick={refreshWebhook} disabled={webhookBusy}>
               {webhookBusy ? "Генерация..." : "Сгенерировать Webhook URL"}
             </Button>
+          )}
+        </Card>
+      )}
+
+      {isSuperAdmin && (
+        <Card className={`p-5 space-y-3 ${!premiumEnabled ? "opacity-60 pointer-events-none select-none" : ""}`}>
+          <div className="flex items-start gap-3">
+            <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+              <Webhook className="h-5 w-5 text-primary" />
+            </div>
+            <div className="flex-1">
+              <h3 className="font-semibold">Webhook для Cloud API (Dualhook) <Badge variant="outline" className="ml-2">Только супер-админ</Badge></h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                Для официального WhatsApp Cloud API через Dualhook. Вставьте <b>Webhook URL</b> и
+                <b> Verify Token</b> в форму подключения Dualhook. Кликабельные списки услуг
+                работают на этом провайдере нативно.
+              </p>
+            </div>
+          </div>
+          {cloudWebhookUrl ? (
+            <div className="space-y-2">
+              <div>
+                <Label className="text-xs text-muted-foreground">Webhook URL</Label>
+                <div className="flex gap-2 mt-1">
+                  <Input value={cloudWebhookUrl} readOnly className="font-mono text-xs" />
+                  <Button type="button" variant="outline" size="icon" onClick={() => copyText(cloudWebhookUrl)}>
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">Verify Token</Label>
+                <div className="flex gap-2 mt-1">
+                  <Input value={verifyToken ?? ""} readOnly className="font-mono text-xs" />
+                  <Button type="button" variant="outline" size="icon" onClick={() => copyText(verifyToken)}>
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Сначала сгенерируйте Webhook URL в блоке выше — токен общий для обоих провайдеров.
+            </p>
           )}
         </Card>
       )}

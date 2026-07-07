@@ -15,10 +15,22 @@ async function assertSalonAccess(supabase: any, userId: string, salonId: string)
 
 function publicBaseUrl(): string {
   // Stable production URL pattern. Override with PUBLIC_APP_URL if needed.
+  // Cloudflare production domain (Dualhook / Meta must reach this host).
   return (
     process.env.PUBLIC_APP_URL?.replace(/\/$/, "") ||
-    "https://qabyl.lovable.app"
+    "https://qabyl.com"
   );
+}
+
+// Build both provider webhook URLs + the raw token (used as the Cloud API "verify token")
+// from a salon's stored webhook token, so the admin UI can show ready-to-copy values.
+function buildWebhookUrls(salonId: string, token: string | null) {
+  return {
+    has_token: !!token,
+    webhook_url: token ? `${publicBaseUrl()}/api/public/wa/${salonId}?token=${token}` : null,
+    cloud_webhook_url: token ? `${publicBaseUrl()}/api/public/wa-cloud/${salonId}?token=${token}` : null,
+    verify_token: token,
+  };
 }
 
 function genToken(): string {
@@ -40,12 +52,7 @@ export const getWaWebhookConfig = createServerFn({ method: "POST" })
       .eq("salon_id", data.salonId)
       .maybeSingle();
     const token = row?.greenapi_webhook_token ?? null;
-    return {
-      has_token: !!token,
-      webhook_url: token
-        ? `${publicBaseUrl()}/api/public/wa/${data.salonId}?token=${token}`
-        : null,
-    };
+    return buildWebhookUrls(data.salonId, token);
   });
 
 export const simulateWaMessage = createServerFn({ method: "POST" })
@@ -153,8 +160,5 @@ export const regenerateWaWebhookToken = createServerFn({ method: "POST" })
       { onConflict: "salon_id" },
     );
     if (error) throw new Error(error.message);
-    return {
-      has_token: true,
-      webhook_url: `${publicBaseUrl()}/api/public/wa/${data.salonId}?token=${token}`,
-    };
+    return buildWebhookUrls(data.salonId, token);
   });
