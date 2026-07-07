@@ -56,6 +56,7 @@ export type WaAgentState =
   | "idle"
   | "awaiting_branch"
   | "collecting"
+  | "awaiting_category"      // V3: shown when a salon has more services than fit one 10-row list
   | "awaiting_service"       // V3
   | "awaiting_photo"
   | "awaiting_price_confirm"
@@ -3006,6 +3007,57 @@ function buildServiceListMsg(services: any[], language: "ru" | "ky" | "en"): WaI
   return { kind: "list", text: question, buttonText: btnText, sections };
 }
 
+// WhatsApp interactive lists allow at most 10 rows total. When a salon has more visible
+// services than this, we can't show them all in one list, so the assistant first asks the
+// client to pick a category, then shows only that category's services.
+const SERVICE_LIST_ROW_LIMIT = 10;
+
+function serviceCategory(s: any, language: "ru" | "ky" | "en"): string {
+  return (s.category ?? (language === "ky" ? "Кызматтар" : "Услуги")) as string;
+}
+
+// Distinct categories in first-seen order (loadAiVisibleServicesForSalon already applies the
+// salon's ai_category_order, so iteration order here is the admin-configured order).
+function categoriesOf(services: any[], language: "ru" | "ky" | "en"): string[] {
+  const seen = new Set<string>();
+  const order: string[] = [];
+  for (const s of services) {
+    const cat = serviceCategory(s, language);
+    if (!seen.has(cat)) { seen.add(cat); order.push(cat); }
+  }
+  return order;
+}
+
+function buildCategoryListMsg(services: any[], language: "ru" | "ky" | "en"): WaInteractiveMessage {
+  const question = language === "ky" ? "Кайсы багытты тандайсыз?" : "Выберите категорию услуг:";
+  const btnText = language === "ky" ? "Багытты тандоо" : "Выбрать категорию";
+  const counts = new Map<string, number>();
+  for (const s of services) {
+    const cat = serviceCategory(s, language);
+    counts.set(cat, (counts.get(cat) ?? 0) + 1);
+  }
+  const rows = categoriesOf(services, language)
+    .slice(0, SERVICE_LIST_ROW_LIMIT)
+    .map((cat) => ({
+      rowId: `cat_${cat}`,
+      title: truncateRowTitle(cat),
+      description: (language === "ky" ? `${counts.get(cat)} кызмат` : `${counts.get(cat)} услуг`).slice(0, 72),
+      fullName: cat,
+    }));
+  return { kind: "list", text: question, buttonText: btnText, sections: [{ rows }] };
+}
+
+// Choose the first booking menu: a flat service list for small salons, or a category list
+// (→ awaiting_category) when the services don't fit one 10-row list.
+function initialServiceMenu(
+  services: any[],
+  language: "ru" | "ky" | "en",
+): { state: WaAgentState; msg: WaInteractiveMessage } {
+  return services.length > SERVICE_LIST_ROW_LIMIT
+    ? { state: "awaiting_category", msg: buildCategoryListMsg(services, language) }
+    : { state: "awaiting_service", msg: buildServiceListMsg(services, language) };
+}
+
 function buildDateListMsg(
   dateMap: Array<{ iso: string; label: string; relative: string }>,
   language: "ru" | "ky" | "en",
@@ -3320,6 +3372,36 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     };
   }
 
+  // A service row was chosen (via list tap, number, or text match) — advance to pricing
+  // (range → ask for a photo) or straight to date selection. Shared by awaiting_service and
+  // the awaiting_category text shortcut so the logic lives in one place.
+  function advanceAfterService(svcRow: any, baseV3: V3BookingState): WaAgentResult {
+    const newV3: V3BookingState = {
+      ...baseV3,
+      service_id: svcRow.id,
+      service_name: svcRow.name,
+      price_type: svcRow.price_type,
+      price_min: svcRow.price,
+      price_max: svcRow.price_max,
+    };
+    if (svcRow.price_type === "range" && !newV3.price_override && !newV3.price_skipped) {
+      const ask = language === "ky"
+        ? `«${svcRow.name}» — баасы ${svcRow.price}–${svcRow.price_max} сом. Так баасын аныктоо үчүн фото жиберсеңиз болот же "жоксуз фото" деп жазыңыз.`
+        : `Услуга «${svcRow.name}» — цена от ${svcRow.price} до ${svcRow.price_max} сом. Пришлите фото для точной оценки стоимости или напишите "без фото".`;
+      return finish(ask, "awaiting_photo", newV3);
+    }
+    const dateMap = buildDateMap(tz, 7);
+    const q = language === "ky" ? `*${svcRow.name}* — кайсы күнгө жазыласыз?` : `*${svcRow.name}* — выберите дату:`;
+    return finish(q, "awaiting_date_choice", newV3, buildDateListMsg(dateMap, language));
+  }
+
+  // Re-show the service menu after an unrecognized reply, honoring the category-first gating
+  // (a >10-service salon must not be sent an invalid flat list — it goes back to categories).
+  function reaskServiceMenu(reply: string, baseV3: V3BookingState, services: any[]): WaAgentResult {
+    const menu = initialServiceMenu(services, language);
+    return finish(reply, menu.state, baseV3, menu.msg);
+  }
+
   const state = input.state;
 
   // ----- Cancel/reschedule cutoff (salon setting): visits starting sooner than this many
@@ -3559,7 +3641,8 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     // every new conversation to see the greeting + service list + booking prompt up front,
     // not a shortcut straight into pricing/date for whatever the client happened to type.
     debug.actions.push("greet+service_list");
-    return finish(greet, "awaiting_service", v3, buildServiceListMsg(services, language));
+    const menu = initialServiceMenu(services, language);
+    return finish(greet, menu.state, v3, menu.msg);
   }
 
   // ===== awaiting_branch =====
@@ -3592,8 +3675,58 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       const msg = language === "ky" ? "Бул филиалда кызматтар жок." : "В этом филиале услуги не настроены.";
       return finish(msg, "done", newV3);
     }
-    const q = language === "ky" ? "Кайсы кызматка жазыласыз?" : "На какую услугу вас записать?";
-    return finish(q, "awaiting_service", newV3, buildServiceListMsg(services, language));
+    const menu = initialServiceMenu(services, language);
+    const q = menu.state === "awaiting_category"
+      ? (language === "ky" ? "Кайсы багытты тандайсыз?" : "Выберите категорию услуг:")
+      : (language === "ky" ? "Кайсы кызматка жазыласыз?" : "На какую услугу вас записать?");
+    return finish(q, menu.state, newV3, menu.msg);
+  }
+
+  // ===== awaiting_category (V3: only when a salon has more services than fit one list) =====
+  if (state === "awaiting_category") {
+    const services = await loadAiVisibleServicesForSalon(db, input.salon.salonId);
+
+    // Client typed a service name directly ("хочу стрижку") → skip the category step.
+    if (!selectedId?.startsWith("cat_") && combinedText) {
+      const found = findServiceByText(combinedText, services);
+      if (found) {
+        debug.actions.push(`svc_text_match:${(found as any).id}`);
+        return advanceAfterService(found as any, v3);
+      }
+    }
+
+    // Resolve the chosen category (list tap / number → cat_<name>, or a typed category name).
+    let category: string | null = null;
+    if (selectedId?.startsWith("cat_")) {
+      category = selectedId.slice(4);
+      debug.actions.push(`cat_selected:${category}`);
+    } else if (combinedText) {
+      const t = normalizeForMatch(combinedText);
+      category = categoriesOf(services, language).find((c) => {
+        const n = normalizeForMatch(c);
+        return !!n && (n.includes(t) || t.includes(n));
+      }) ?? null;
+      if (category) debug.actions.push(`cat_text_match:${category}`);
+    }
+
+    if (!category) {
+      const faqCue = /\?|расписани|часы|работаете|адрес|где вы|умеете|делаете|ведёте|принимаете|жасайсыз|иштейсиз|убакт|дарек|канча|барбы/i.test(combinedText);
+      const faqReply = (faqCue && combinedText)
+        ? await callGeminiV3Faq(apiKey, input.salon.salonName, input.salonInfo, input.config, combinedText, language)
+        : "";
+      const reask = language === "ky" ? "Багытты тандаңыз:" : "Выберите, пожалуйста, категорию:";
+      return finish(faqReply ? `${faqReply}\n\n${reask}` : reask, "awaiting_category", v3, buildCategoryListMsg(services, language));
+    }
+
+    const inCat = services
+      .filter((s: any) => serviceCategory(s, language) === category)
+      .slice(0, SERVICE_LIST_ROW_LIMIT);
+    if (inCat.length === 0) {
+      const reask = language === "ky" ? "Бул багытта кызмат жок. Башка багытты тандаңыз:" : "В этой категории нет услуг. Выберите другую:";
+      return finish(reask, "awaiting_category", v3, buildCategoryListMsg(services, language));
+    }
+    const q = language === "ky" ? `*${category}* — кызматты тандаңыз:` : `*${category}* — выберите услугу:`;
+    return finish(q, "awaiting_service", v3, buildServiceListMsg(inCat, language));
   }
 
   // ===== awaiting_service =====
@@ -3615,34 +3748,16 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         ? await callGeminiV3Faq(apiKey, input.salon.salonName, input.salonInfo, input.config, combinedText, language)
         : "";
       const reask = language === "ky" ? "Кызматты тандаңыз:" : "Выберите, пожалуйста, услугу:";
-      return finish(faqReply ? `${faqReply}\n\n${reask}` : reask, "awaiting_service", v3, buildServiceListMsg(services, language));
+      return reaskServiceMenu(faqReply ? `${faqReply}\n\n${reask}` : reask, v3, services);
     }
 
     const svcRow = services.find((s: any) => s.id === serviceId) as any;
     if (!svcRow) {
       const reask = language === "ky" ? "Кызмат табылган жок. Кайра тандаңыз:" : "Услуга не найдена. Выберите ещё раз:";
-      return finish(reask, "awaiting_service", v3, buildServiceListMsg(services, language));
+      return reaskServiceMenu(reask, v3, services);
     }
 
-    const newV3: V3BookingState = {
-      ...v3,
-      service_id: svcRow.id,
-      service_name: svcRow.name,
-      price_type: svcRow.price_type,
-      price_min: svcRow.price,
-      price_max: svcRow.price_max,
-    };
-
-    if (svcRow.price_type === "range" && !newV3.price_override && !newV3.price_skipped) {
-      const ask = language === "ky"
-        ? `«${svcRow.name}» — баасы ${svcRow.price}–${svcRow.price_max} сом. Так баасын аныктоо үчүн фото жиберсеңиз болот же "жоксуз фото" деп жазыңыз.`
-        : `Услуга «${svcRow.name}» — цена от ${svcRow.price} до ${svcRow.price_max} сом. Пришлите фото для точной оценки стоимости или напишите "без фото".`;
-      return finish(ask, "awaiting_photo", newV3);
-    }
-
-    const dateMap = buildDateMap(tz, 7);
-    const q = language === "ky" ? `*${svcRow.name}* — кайсы күнгө жазыласыз?` : `*${svcRow.name}* — выберите дату:`;
-    return finish(q, "awaiting_date_choice", newV3, buildDateListMsg(dateMap, language));
+    return advanceAfterService(svcRow, v3);
   }
 
   // ===== awaiting_photo =====
@@ -4185,5 +4300,5 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
   debug.errors.push(`unhandled_state:${state}`);
   const services = await loadAiVisibleServicesForSalon(db, input.salon.salonId);
   const fallback = language === "ky" ? "Кайра баштайлы. Кайсы кызматка жазыласыз?" : "Начнём сначала. На какую услугу вас записать?";
-  return finish(fallback, "awaiting_service", {}, buildServiceListMsg(services, language));
+  return reaskServiceMenu(fallback, {}, services);
 }

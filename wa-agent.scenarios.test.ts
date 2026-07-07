@@ -1479,3 +1479,82 @@ test("V3-8. Gemini says 'none' → normal greeting, manage flow not entered", as
   const r = await c.say("здравствуйте", { gemini: { action: "none" } });
   expect(r.nextState).toBe("awaiting_service");
 });
+
+// =========================================================================
+// Multi-step category → service menu. WhatsApp lists cap at 10 rows, so a
+// salon with >10 services shows categories first, then that category's
+// services. Small salons keep the single flat list.
+// =========================================================================
+
+function bigMenuSalon(): SalonCfg {
+  const mk = (id: string, name: string, category: string) => ({
+    id, name, category, price: 500, price_max: null, price_type: "fixed", duration_min: 30, is_active: true,
+  });
+  const services = [
+    mk("s_hair1", "Стрижка женская", "Волосы"),
+    mk("s_hair2", "Стрижка мужская", "Волосы"),
+    mk("s_hair3", "Окрашивание", "Волосы"),
+    mk("s_hair4", "Укладка", "Волосы"),
+    mk("s_nail1", "Маникюр", "Ногти"),
+    mk("s_nail2", "Педикюр", "Ногти"),
+    mk("s_nail3", "Наращивание ногтей", "Ногти"),
+    mk("s_nail4", "Дизайн ногтей", "Ногти"),
+    mk("s_brow1", "Коррекция бровей", "Брови"),
+    mk("s_brow2", "Окраска бровей", "Брови"),
+    mk("s_brow3", "Ламинирование бровей", "Брови"),
+    mk("s_epi1", "Шугаринг", "Эпиляция"),
+    mk("s_epi2", "Лазерная эпиляция", "Эпиляция"),
+  ]; // 13 services across 4 categories
+  const masters = [{ id: "m_all", name: "Мастер", branch_id: null, sort_order: 0, service_ids: services.map((s) => s.id) }];
+  const slots: SalonCfg["slots"] = {};
+  for (const d of [TOMORROW, DAY_AFTER]) slots[`m_all|${d}`] = [slotRow(d, "12:00"), slotRow(d, "12:30")];
+  return { services, masters, slots };
+}
+
+const catRowIds = (r: any): string[] => (r.interactiveMessage?.sections ?? []).flatMap((s: any) => s.rows.map((x: any) => x.rowId));
+
+test("V3-cat-1. >10 services → categories first, then that category's services (by tap)", async () => {
+  const c = convoV3(bigMenuSalon());
+  const r1 = await c.say("Здравствуйте");
+  expect(r1.nextState).toBe("awaiting_category");
+  const cats = catRowIds(r1);
+  expect(cats).toContain("cat_Волосы");
+  expect(cats).toContain("cat_Ногти");
+  expect(cats.length).toBeLessThanOrEqual(10);
+
+  const r2 = await c.say("", { selectedId: "cat_Ногти" });
+  expect(r2.nextState).toBe("awaiting_service");
+  const svcs = catRowIds(r2);
+  expect(svcs).toContain("svc_s_nail1");
+  expect(svcs).not.toContain("svc_s_hair1"); // only the chosen category
+
+  const r3 = await c.say("", { selectedId: "svc_s_nail1" });
+  expect(r3.nextState).toBe("awaiting_date_choice");
+  expect((r3.nextStateData as any).v3?.service_id).toBe("s_nail1");
+});
+
+test("V3-cat-2. category and service pickable by number (Green-API numbered menu)", async () => {
+  const c = convoV3(bigMenuSalon());
+  await c.say("Здравствуйте");
+  const r2 = await c.say("2"); // 2nd category = Ногти
+  expect(r2.nextState).toBe("awaiting_service");
+  expect(catRowIds(r2)).toContain("svc_s_nail1");
+  const r3 = await c.say("1"); // 1st service in Ногти = Маникюр
+  expect(r3.nextState).toBe("awaiting_date_choice");
+  expect((r3.nextStateData as any).v3?.service_id).toBe("s_nail1");
+});
+
+test("V3-cat-3. typing a service name skips the category step", async () => {
+  const c = convoV3(bigMenuSalon());
+  await c.say("Здравствуйте"); // awaiting_category
+  const r = await c.say("хочу маникюр");
+  expect(r.nextState).toBe("awaiting_date_choice");
+  expect((r.nextStateData as any).v3?.service_id).toBe("s_nail1");
+});
+
+test("V3-cat-4. small salon (<=10 services) still shows a flat service list", async () => {
+  const c = convoV3(singleSalon()); // 1 service
+  const r = await c.say("Здравствуйте");
+  expect(r.nextState).toBe("awaiting_service");
+  expect(catRowIds(r)).toContain("svc_svc_hair");
+});
