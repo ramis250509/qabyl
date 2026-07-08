@@ -56,21 +56,21 @@ export type WaAgentState =
   | "idle"
   | "awaiting_branch"
   | "collecting"
-  | "awaiting_category"      // V3: shown when a salon has more services than fit one 10-row list
-  | "awaiting_service"       // V3
+  | "awaiting_category" // V3: shown when a salon has more services than fit one 10-row list
+  | "awaiting_service" // V3
   | "awaiting_photo"
   | "awaiting_price_confirm"
-  | "awaiting_date_choice"   // V3
+  | "awaiting_date_choice" // V3
   | "awaiting_part_of_day"
   | "awaiting_slot_choice"
   | "awaiting_master_choice"
   | "awaiting_name"
   | "awaiting_final_confirm"
-  | "awaiting_manage_choice"    // V3: client has 2+ upcoming appointments, pick which one
-  | "awaiting_manage_action"    // V3: cancel / reschedule / leave alone
-  | "awaiting_reschedule_date"  // V3
-  | "awaiting_reschedule_slot"  // V3
-  | "awaiting_manage_confirm"   // V3: final yes/no before applying cancel or reschedule
+  | "awaiting_manage_choice" // V3: client has 2+ upcoming appointments, pick which one
+  | "awaiting_manage_action" // V3: cancel / reschedule / leave alone
+  | "awaiting_reschedule_date" // V3
+  | "awaiting_reschedule_slot" // V3
+  | "awaiting_manage_confirm" // V3: final yes/no before applying cancel or reschedule
   | "done";
 
 export type WaAgentStateData = {
@@ -116,7 +116,15 @@ export type WaAgentInput = {
 
 export type WaInteractiveMessage =
   | { kind: "buttons"; text: string; buttons: Array<{ id: string; text: string }> }
-  | { kind: "list"; text: string; buttonText: string; sections: Array<{ title?: string; rows: Array<{ rowId: string; title: string; description?: string; fullName?: string }> }> };
+  | {
+      kind: "list";
+      text: string;
+      buttonText: string;
+      sections: Array<{
+        title?: string;
+        rows: Array<{ rowId: string; title: string; description?: string; fullName?: string }>;
+      }>;
+    };
 
 export type WaAgentResult = {
   reply: string;
@@ -208,7 +216,13 @@ export async function greenApiSendFileByUrl(
 // Time / language helpers
 // ============================================================
 
-function nowInTz(tz: string): { isoLocalDate: string; humanDate: string; hour: number; minute: number; dow: number } {
+function nowInTz(tz: string): {
+  isoLocalDate: string;
+  humanDate: string;
+  hour: number;
+  minute: number;
+  dow: number;
+} {
   const now = new Date();
   const isoLocalDate = new Intl.DateTimeFormat("en-CA", {
     timeZone: tz,
@@ -248,7 +262,10 @@ function addDaysISO(isoDate: string, days: number): string {
   return dt.toISOString().slice(0, 10);
 }
 
-function buildDateMap(tz: string, days = 14): Array<{ iso: string; label: string; relative: string }> {
+function buildDateMap(
+  tz: string,
+  days = 14,
+): Array<{ iso: string; label: string; relative: string }> {
   const { isoLocalDate } = nowInTz(tz);
   const out: Array<{ iso: string; label: string; relative: string }> = [];
   const labels = ["сегодня", "завтра", "послезавтра"];
@@ -293,10 +310,14 @@ function detectLanguage(text: string): "ru" | "ky" | "en" {
   if (!text) return "ru";
   const lower = text.toLowerCase();
   const hasKyrgyzLetters = /[ңүөҢҮӨ]/.test(text);
-  const hasLatinKyrgyzSignals = /\b(salam|salamat|bugun|bugin|erten|kec|kyrgyz|kizmat|chach|kyzmat|kyrgyzstan|sizin|biz|jany|ja?an|manikur|pedikur)\b/i.test(lower);
+  const hasLatinKyrgyzSignals =
+    /\b(salam|salamat|bugun|bugin|erten|kec|kyrgyz|kizmat|chach|kyzmat|kyrgyzstan|sizin|biz|jany|ja?an|manikur|pedikur)\b/i.test(
+      lower,
+    );
   // Islamic greeting used as standard Kyrgyz greeting in Kyrgyzstan — treat as Kyrgyz signal.
   const hasIslamicGreeting = /ассаламу?\s*а?лейку?м|ассалму\s*а?лейку?м/i.test(text);
-  if (hasKyrgyzLetters || KY_WORD_RE.test(lower) || hasLatinKyrgyzSignals || hasIslamicGreeting) return "ky";
+  if (hasKyrgyzLetters || KY_WORD_RE.test(lower) || hasLatinKyrgyzSignals || hasIslamicGreeting)
+    return "ky";
   if (/[а-яё]/i.test(lower)) return "ru";
   if (/^[\x00-\x7f\s]+$/.test(text) && /[a-z]/i.test(text)) return "en";
   return "ru";
@@ -311,7 +332,12 @@ function confidentLanguage(text: string): boolean {
   if (/[ңүөҢҮӨ]/.test(text)) return true;
   if (KY_WORD_RE.test(lower)) return true;
   if (/ассаламу?\s*а?лейку?м|ассалму/i.test(text)) return true;
-  if (/\b(salam|salamat|bugun|bugin|erten|kec|kizmat|chach|kyrgyz|jany|sizin|biz|kanday|kansha)\b/i.test(lower)) return true;
+  if (
+    /\b(salam|salamat|bugun|bugin|erten|kec|kizmat|chach|kyrgyz|jany|sizin|biz|kanday|kansha)\b/i.test(
+      lower,
+    )
+  )
+    return true;
   if (/^[\x00-\x7f\s]+$/.test(text) && /[a-z]/i.test(text)) return true;
   return false;
 }
@@ -417,7 +443,8 @@ async function callGemini(opts: {
         }
         return { ok: false, error: `gemini truncated by max tokens: ${text?.slice(0, 120) ?? ""}` };
       }
-      if (!text) return { ok: false, error: `gemini empty response: ${JSON.stringify(json).slice(0, 200)}` };
+      if (!text)
+        return { ok: false, error: `gemini empty response: ${JSON.stringify(json).slice(0, 200)}` };
       return { ok: true, text };
     } catch (e: any) {
       if (attempt < 2) {
@@ -494,7 +521,11 @@ async function callViaLovableGateway(opts: {
     const txt = await r.text();
     if (!r.ok) return { ok: false, error: `lovable gw ${r.status}: ${txt.slice(0, 300)}` };
     let json: any;
-    try { json = JSON.parse(txt); } catch { return { ok: false, error: `lovable gw bad json: ${txt.slice(0, 200)}` }; }
+    try {
+      json = JSON.parse(txt);
+    } catch {
+      return { ok: false, error: `lovable gw bad json: ${txt.slice(0, 200)}` };
+    }
     const text: string | undefined = json?.choices?.[0]?.message?.content?.trim();
     if (!text) return { ok: false, error: `lovable gw empty: ${txt.slice(0, 200)}` };
     return { ok: true, text };
@@ -582,11 +613,21 @@ function serviceAliases(name: string): string[] {
 
 function findServiceByText(
   text: string,
-  services: Array<{ id: string; name: string; category: string | null; price: number; price_max: number | null; price_type: string }>,
+  services: Array<{
+    id: string;
+    name: string;
+    category: string | null;
+    price: number;
+    price_max: number | null;
+    price_type: string;
+  }>,
 ) {
   const t = normalizeForMatch(text);
   if (!t) return null;
-  const hasServiceSignal = /(услуга|услуги|сервис|кызмат|чач|маник|педик|окраш|бров|ресниц|уклад|макияж|hair|nail|cut|color)/i.test(text);
+  const hasServiceSignal =
+    /(услуга|услуги|сервис|кызмат|чач|маник|педик|окраш|бров|ресниц|уклад|макияж|hair|nail|cut|color)/i.test(
+      text,
+    );
   let best: { service: (typeof services)[number]; score: number } | null = null;
   for (const service of services) {
     for (const alias of serviceAliases(service.name)) {
@@ -612,11 +653,12 @@ function findServiceByText(
   if (best && best.score >= 45) return best.service;
   if (hasServiceSignal && !best) {
     // Only use multi-char tokens (≥3 chars) to avoid matching prepositions like "а", "в", "на".
-    const firstToken = (t.split(" ").find((tok) => tok.length >= 3)) ?? "";
+    const firstToken = t.split(" ").find((tok) => tok.length >= 3) ?? "";
     if (firstToken) {
-      const fallback = services.find((s) =>
-        normalizeForMatch(s.name).includes(firstToken) ||
-        t.includes(normalizeForMatch(s.name).split(" ")[0] ?? ""),
+      const fallback = services.find(
+        (s) =>
+          normalizeForMatch(s.name).includes(firstToken) ||
+          t.includes(normalizeForMatch(s.name).split(" ")[0] ?? ""),
       );
       if (fallback) return fallback;
     }
@@ -626,7 +668,14 @@ function findServiceByText(
 
 function deterministicParse(opts: {
   text: string;
-  services: Array<{ id: string; name: string; category: string | null; price: number; price_max: number | null; price_type: string }>;
+  services: Array<{
+    id: string;
+    name: string;
+    category: string | null;
+    price: number;
+    price_max: number | null;
+    price_type: string;
+  }>;
   branches: WaBranchInfo[];
   dateMap: Array<{ iso: string; label: string; relative: string }>;
 }): { intent?: Intent; entities: Entities; language?: "ru" | "ky" | "en" } {
@@ -680,16 +729,34 @@ function deterministicParse(opts: {
     intent = intent ?? "choose_part_of_day";
   } else if (!entities.part_of_day) {
     // Typo-tolerant fallback for the part of day ("вечром", "утрам", elongated "днеее").
-    if (fuzzyHit(toks, ["утром", "утро", "утра"])) { entities.part_of_day = "morning"; intent = intent ?? "choose_part_of_day"; }
-    else if (fuzzyHit(toks, ["днем", "день", "дня"])) { entities.part_of_day = "afternoon"; intent = intent ?? "choose_part_of_day"; }
-    else if (fuzzyHit(toks, ["вечером", "вечер", "вечера"])) { entities.part_of_day = "evening"; intent = intent ?? "choose_part_of_day"; }
+    if (fuzzyHit(toks, ["утром", "утро", "утра"])) {
+      entities.part_of_day = "morning";
+      intent = intent ?? "choose_part_of_day";
+    } else if (fuzzyHit(toks, ["днем", "день", "дня"])) {
+      entities.part_of_day = "afternoon";
+      intent = intent ?? "choose_part_of_day";
+    } else if (fuzzyHit(toks, ["вечером", "вечер", "вечера"])) {
+      entities.part_of_day = "evening";
+      intent = intent ?? "choose_part_of_day";
+    }
   }
 
   // Exact yes / no / any-master, now incl. Kyrgyz (ооба/макул = yes, жок = no, баары бир = any).
   // Extended patterns to catch more variations including typos and abbreviations.
-  if (/(^|\s)(да|ага|ок|окей|оке|хорошо|хорош|записывайте|подтверждаю|подтверди|верно|правильно|так точно|конечно|давай|давайте|ладно|ооба|макул|макуль|туура|болот|жакшы|yes|угу|yep|yeah)(\s|$)/.test(t)) intent = intent ?? "confirm_yes";
-  if (/(^|\s)(нет|неа|ни|другое|не подходит|жок|no|неэ|нее)(\s|$)/.test(t)) intent = intent ?? "deny_no";
-  if (/(^|\s)(любой|любому|без разницы|не принципиально|все равно|всё равно|любое|неважно|не важно|баары бир|баарыбир|бары бир|равно)(\s|$)/.test(t)) intent = intent ?? "any_master";
+  if (
+    /(^|\s)(да|ага|ок|окей|оке|хорошо|хорош|записывайте|подтверждаю|подтверди|верно|правильно|так точно|конечно|давай|давайте|ладно|ооба|макул|макуль|туура|болот|жакшы|yes|угу|yep|yeah)(\s|$)/.test(
+      t,
+    )
+  )
+    intent = intent ?? "confirm_yes";
+  if (/(^|\s)(нет|неа|ни|другое|не подходит|жок|no|неэ|нее)(\s|$)/.test(t))
+    intent = intent ?? "deny_no";
+  if (
+    /(^|\s)(любой|любому|без разницы|не принципиально|все равно|всё равно|любое|неважно|не важно|баары бир|баарыбир|бары бир|равно)(\s|$)/.test(
+      t,
+    )
+  )
+    intent = intent ?? "any_master";
   // Typo-tolerant yes/no for short confirmations ("оке", "нееет", "ооаба", "макуль") — increased maxDist.
   if (!intent) {
     if (fuzzyHit(toks, ["окей", "хорошо", "ооба", "макул", "хорош"], 2)) intent = "confirm_yes";
@@ -699,12 +766,33 @@ function deterministicParse(opts: {
 
   // Numbered slot selection: "первый", "2", "четвёртое", "последнее" etc.
   const ordinals: Record<string, number> = {
-    первый: 1, первое: 1, первую: 1, первая: 1, "1": 1,
-    второй: 2, второе: 2, вторую: 2, вторая: 2, "2": 2,
-    третий: 3, третье: 3, третью: 3, третья: 3, "3": 3,
-    четвертый: 4, четвертое: 4, четвертую: 4, четвертая: 4,
-    четвёртый: 4, четвёртое: 4, четвёртую: 4, "4": 4,
-    последний: -1, последнее: -1, последнюю: -1, последняя: -1,
+    первый: 1,
+    первое: 1,
+    первую: 1,
+    первая: 1,
+    "1": 1,
+    второй: 2,
+    второе: 2,
+    вторую: 2,
+    вторая: 2,
+    "2": 2,
+    третий: 3,
+    третье: 3,
+    третью: 3,
+    третья: 3,
+    "3": 3,
+    четвертый: 4,
+    четвертое: 4,
+    четвертую: 4,
+    четвертая: 4,
+    четвёртый: 4,
+    четвёртое: 4,
+    четвёртую: 4,
+    "4": 4,
+    последний: -1,
+    последнее: -1,
+    последнюю: -1,
+    последняя: -1,
   };
   const ordWord = t.split(/\s+/).find((w) => ordinals[w] !== undefined);
   if (ordWord != null && ordinals[ordWord] !== undefined) {
@@ -715,13 +803,18 @@ function deterministicParse(opts: {
     const bareNum = t.match(/^(\d)$/);
     if (bareNum) {
       const n = Number(bareNum[1]);
-      if (n >= 1 && n <= 9) { entities.slot_number = n; intent = intent ?? "choose_specific_time"; }
+      if (n >= 1 && n <= 9) {
+        entities.slot_number = n;
+        intent = intent ?? "choose_specific_time";
+      }
     }
   }
 
   // Schedule/hours question — takes priority over day extraction so "вы работаете завтра?" stays a schedule question
   const isScheduleQ =
-    /(вы\s+работаете|вы\s+открыты|у\s+вас\s+выходной|часы\s+работы|расписани[ея]|как\s+вы\s+работаете|когда\s+(вы\s+)?открыв|во\s+сколько\s+(открыв|закрыв)|до\s+скольки|иштейсизби|иш\s+убакытыңыз|саат\s+нечеде\s+ачылас)/i.test(raw);
+    /(вы\s+работаете|вы\s+открыты|у\s+вас\s+выходной|часы\s+работы|расписани[ея]|как\s+вы\s+работаете|когда\s+(вы\s+)?открыв|во\s+сколько\s+(открыв|закрыв)|до\s+скольки|иштейсизби|иш\s+убакытыңыз|саат\s+нечеде\s+ачылас)/i.test(
+      raw,
+    );
   if (isScheduleQ) {
     intent = "ask_schedule";
     entities.day_relative = undefined; // "завтра" in schedule question is NOT a booking day
@@ -730,7 +823,9 @@ function deterministicParse(opts: {
   // Capability question: "вы делаете X?", "у вас есть X?", "можно ли X?"
   // Only set if intent not already decided by strong booking signals
   const isCapabilityQ =
-    /(вы\s+(делаете|можете|сможете|умеете)|у\s+вас\s+(есть|делают|можно|имеется)|можно\s+ли\s+у\s+вас|сизде\s+(?:бар|жасайс)|сиз\s+(?:жасайсызбы|кыласызбы|кыла\s+аласызбы))/i.test(raw);
+    /(вы\s+(делаете|можете|сможете|умеете)|у\s+вас\s+(есть|делают|можно|имеется)|можно\s+ли\s+у\s+вас|сизде\s+(?:бар|жасайс)|сиз\s+(?:жасайсызбы|кыласызбы|кыла\s+аласызбы))/i.test(
+      raw,
+    );
   if (isCapabilityQ && (!intent || ["greet", "smalltalk", "other"].includes(intent))) {
     intent = "ask_capability";
   }
@@ -752,10 +847,14 @@ function deterministicParse(opts: {
     intent = "choose_branch";
   }
 
-  if (!intent && /(какие|какая|что есть|услуги|прайс|цены|стоимость|сколько|кызмат|услуга)/.test(t)) {
+  if (
+    !intent &&
+    /(какие|какая|что есть|услуги|прайс|цены|стоимость|сколько|кызмат|услуга)/.test(t)
+  ) {
     intent = /(сколько|цена|цены|стоимость|прайс)/.test(t) ? "ask_price" : "ask_services";
   }
-  if (!intent && /(здрав|привет|салам|ассаламу|ассалму|алейкум|hello|hi|salam|salamat)/.test(t)) intent = "greet";
+  if (!intent && /(здрав|привет|салам|ассаламу|ассалму|алейкум|hello|hi|salam|salamat)/.test(t))
+    intent = "greet";
   if (!intent) intent = "other";
 
   return { intent, entities, language: lang };
@@ -786,8 +885,8 @@ type Intent =
   | "greet"
   | "smalltalk"
   | "ask_services"
-  | "ask_schedule"      // "вы работаете завтра?", "когда открываетесь?"
-  | "ask_capability"    // "вы делаете маникюр?", "можно ли у вас X?"
+  | "ask_schedule" // "вы работаете завтра?", "когда открываетесь?"
+  | "ask_capability" // "вы делаете маникюр?", "можно ли у вас X?"
   | "choose_service"
   | "choose_day"
   | "choose_part_of_day"
@@ -821,8 +920,12 @@ type Entities = {
 // service?". Priority: specific time > day > part of day > service.
 // Also promote strong intents like ask_price/ask_services if booking entities are present.
 function promoteIntentFromEntities(intent: Intent, e: Entities): Intent {
-  const weak = intent === "other" || intent === "greet" || intent === "smalltalk" ||
-               intent === "ask_price" || intent === "ask_services";
+  const weak =
+    intent === "other" ||
+    intent === "greet" ||
+    intent === "smalltalk" ||
+    intent === "ask_price" ||
+    intent === "ask_services";
   if (!weak) return intent;
   if (e.specific_time || e.slot_number != null) return "choose_specific_time";
   if (e.day_relative || e.day_iso) return "choose_day";
@@ -837,23 +940,41 @@ async function classify(opts: {
   salon: WaSalonContext;
   history: WaIncomingMessage[];
   lastText: string;
-  services: Array<{ id: string; name: string; category: string | null; price: number; price_max: number | null; price_type: string }>;
+  services: Array<{
+    id: string;
+    name: string;
+    category: string | null;
+    price: number;
+    price_max: number | null;
+    price_type: string;
+  }>;
   branches: WaBranchInfo[];
   dateMap: Array<{ iso: string; label: string; relative: string }>;
 }): Promise<{ intent: Intent; entities: Entities; language: "ru" | "ky" | "en" }> {
   const compactHistory = opts.history
     .slice(-10)
-    .map((m) => `${m.direction === "in" ? "client" : "assistant"}: ${sanitizeHistoryMessage(m).slice(0, 200)}`)
+    .map(
+      (m) =>
+        `${m.direction === "in" ? "client" : "assistant"}: ${sanitizeHistoryMessage(m).slice(0, 200)}`,
+    )
     .filter((line) => !line.endsWith(": "))
     .join("\n");
 
   const services = opts.services
     .slice(0, 80)
-    .map((s) => `${s.id} | ${s.name}${s.category ? " (" + s.category + ")" : ""} | ${s.price_type === "range" ? `${s.price}–${s.price_max}` : s.price}`)
+    .map(
+      (s) =>
+        `${s.id} | ${s.name}${s.category ? " (" + s.category + ")" : ""} | ${s.price_type === "range" ? `${s.price}–${s.price_max}` : s.price}`,
+    )
     .join("\n");
 
-  const branches = opts.branches.map((b) => `${b.id} | ${b.name}${b.address ? ", " + b.address : ""}`).join("\n");
-  const dates = opts.dateMap.slice(0, 14).map((d) => `${d.iso} = ${d.relative} (${d.label})`).join("\n");
+  const branches = opts.branches
+    .map((b) => `${b.id} | ${b.name}${b.address ? ", " + b.address : ""}`)
+    .join("\n");
+  const dates = opts.dateMap
+    .slice(0, 14)
+    .map((d) => `${d.iso} = ${d.relative} (${d.label})`)
+    .join("\n");
 
   const sys = `Ты — парсер сообщений клиента салона красоты. Получаешь последнее сообщение клиента и историю диалога. Возвращаешь СТРОГО JSON по схеме, без markdown.
 Никогда не выдумывай id — service_id и branch_id выбирай ровно из переданных таблиц или оставляй пустыми.
@@ -958,22 +1079,36 @@ ${compactHistory || "(пусто)"}
     const mergedEntities: Entities = { ...geminiEntities, ...deterministic.entities };
     const geminiIntent = (parsed.intent ?? "other") as Intent;
     const intent =
-      deterministic.intent === "choose_service" && mergedEntities.service_id &&
+      deterministic.intent === "choose_service" &&
+      mergedEntities.service_id &&
       // When deterministic confidently found a service, override Gemini's weak intents
-      ["other", "greet", "smalltalk", "ask_services", "ask_price", "confirm_yes", "deny_no"].includes(geminiIntent)
+      [
+        "other",
+        "greet",
+        "smalltalk",
+        "ask_services",
+        "ask_price",
+        "confirm_yes",
+        "deny_no",
+      ].includes(geminiIntent)
         ? deterministic.intent
-        // Trust deterministic when it explicitly found a query intent that Gemini misread as service choice
-        : (["ask_services", "ask_price"].includes(deterministic.intent as string) &&
-           geminiIntent === "choose_service" && !mergedEntities.service_id)
+        : // Trust deterministic when it explicitly found a query intent that Gemini misread as service choice
+          ["ask_services", "ask_price"].includes(deterministic.intent as string) &&
+            geminiIntent === "choose_service" &&
+            !mergedEntities.service_id
           ? deterministic.intent
-          : deterministic.intent && deterministic.intent !== "other" &&
+          : deterministic.intent &&
+              deterministic.intent !== "other" &&
               (geminiIntent === "other" || geminiIntent === "greet" || geminiIntent === "smalltalk")
             ? deterministic.intent
             : geminiIntent;
     return {
       intent: promoteIntentFromEntities(intent as Intent, mergedEntities),
       entities: mergedEntities,
-      language: (deterministic.language ?? parsed.language ?? detectLanguage(opts.lastText)) as "ru" | "ky" | "en",
+      language: (deterministic.language ?? parsed.language ?? detectLanguage(opts.lastText)) as
+        | "ru"
+        | "ky"
+        | "en",
     };
   } catch {
     return {
@@ -999,23 +1134,38 @@ async function compose(opts: {
   greet?: boolean; // true on the very first assistant message → warm greeting up front
   islamicGreeting?: boolean; // client opened with "Ассалму алейкум" — respond with "Ваалейкум Ассалам"
 }): Promise<string> {
-  const langName = opts.language === "ky" ? "кыргызском" : opts.language === "en" ? "английском" : "русском";
+  const langName =
+    opts.language === "ky" ? "кыргызском" : opts.language === "en" ? "английском" : "русском";
   // Prepend a warm greeting on first contact (unless the reply already greets).
   const greetReply = (reply: string): string => {
     if (!opts.greet) return reply;
     // If client used Islamic greeting but reply doesn't respond in kind — override it.
     if (opts.islamicGreeting && /^\s*(ваалейкум|wa.?alaikum)/iu.test(reply)) return reply;
-    if (!opts.islamicGreeting && /^\s*(здрав|привет|саламат|салам|ваалейкум|hello|hi|hey|добр)/iu.test(reply)) return reply;
+    if (
+      !opts.islamicGreeting &&
+      /^\s*(здрав|привет|саламат|салам|ваалейкум|hello|hi|hey|добр)/iu.test(reply)
+    )
+      return reply;
     // Islamic greeting overrides the salon's custom greeting for all languages.
-    const useConfigGreeting = !opts.islamicGreeting && opts.language === "ru" && opts.greeting && /\p{L}/u.test(opts.greeting);
-    const g = opts.islamicGreeting ? "Ваалейкум ас-салям!"
-      : useConfigGreeting ? opts.greeting!.trim()
-      : opts.language === "ky" ? `Саламатсызбы! Мен «${opts.salon.salonName}» салонунун жардамчысымын.`
-      : opts.language === "en" ? `Hello! I'm your assistant at "${opts.salon.salonName}".`
-      : "Здравствуйте!";
-    const shortHint = (opts.language === "ru" && /коротко|кратко|без лишних слов|по делу/i.test(`${opts.tone ?? ""} ${opts.greeting ?? ""}`))
-      ? "Коротко: "
-      : "";
+    const useConfigGreeting =
+      !opts.islamicGreeting &&
+      opts.language === "ru" &&
+      opts.greeting &&
+      /\p{L}/u.test(opts.greeting);
+    const g = opts.islamicGreeting
+      ? "Ваалейкум ас-салям!"
+      : useConfigGreeting
+        ? opts.greeting!.trim()
+        : opts.language === "ky"
+          ? `Саламатсызбы! Мен «${opts.salon.salonName}» салонунун жардамчысымын.`
+          : opts.language === "en"
+            ? `Hello! I'm your assistant at "${opts.salon.salonName}".`
+            : "Здравствуйте!";
+    const shortHint =
+      opts.language === "ru" &&
+      /коротко|кратко|без лишних слов|по делу/i.test(`${opts.tone ?? ""} ${opts.greeting ?? ""}`)
+        ? "Коротко: "
+        : "";
     return `${g} ${shortHint}${reply}`.trim();
   };
   const sys = `Ты — живой администратор салона «${opts.salon.salonName}», пишешь клиенту в WhatsApp.
@@ -1038,15 +1188,15 @@ ${opts.tone ? `ОБЯЗАТЕЛЬНЫЕ правила тона и формул�
   // to paraphrase them: the model was adding non-existent services in live chats.
   // Accept any dash-like character (—, –, -) to be robust against editor differences.
   if (/^[-–—]\s+[^\n]+/m.test(opts.factualContext)) {
-    return greetReply(instructionFallbackReply(opts.factualContext, opts.language, opts.salon.salonName));
+    return greetReply(
+      instructionFallbackReply(opts.factualContext, opts.language, opts.salon.salonName),
+    );
   }
 
   const greetInstruction = opts.greet
     ? "Это ПЕРВОЕ сообщение клиенту — начни с короткого тёплого приветствия от салона, затем выполни задачу.\n\n"
     : "";
-  const styleInstruction = opts.tone
-    ? `Соблюдай правила стиля салона: ${opts.tone}\n\n`
-    : "";
+  const styleInstruction = opts.tone ? `Соблюдай правила стиля салона: ${opts.tone}\n\n` : "";
   const res = await callGemini({
     model: MODEL_TEXT,
     apiKey: opts.apiKey,
@@ -1063,18 +1213,24 @@ ${opts.tone ? `ОБЯЗАТЕЛЬНЫЕ правила тона и формул�
     console.error("[wa-agent] compose gemini error:", res.error);
     // Safe deterministic fallback — never leak raw instruction text and never
     // lose the current booking step if Gemini quota/API is temporarily down.
-    return greetReply(instructionFallbackReply(opts.factualContext, opts.language, opts.salon.salonName));
+    return greetReply(
+      instructionFallbackReply(opts.factualContext, opts.language, opts.salon.salonName),
+    );
   }
   const cleaned = res.text.replace(/^```[a-z]*|```$/gi, "").trim();
   if (/^(спроси|скажи|поприветствуй|извинись|предложи|уточни)\b/i.test(cleaned)) {
-    return greetReply(instructionFallbackReply(opts.factualContext, opts.language, opts.salon.salonName));
+    return greetReply(
+      instructionFallbackReply(opts.factualContext, opts.language, opts.salon.salonName),
+    );
   }
   // Guard against the exact production symptom: Gemini returned a partial
   // sentence like "...на какую услугу хотели бы записа" with finishReason STOP.
   // WhatsApp must never receive half-words, so fall back to deterministic text
   // for the current factual step when the answer has no sentence terminator.
   if (!/[.!?…]$/.test(cleaned)) {
-    return greetReply(instructionFallbackReply(opts.factualContext, opts.language, opts.salon.salonName));
+    return greetReply(
+      instructionFallbackReply(opts.factualContext, opts.language, opts.salon.salonName),
+    );
   }
   // Gemini was already told to greet on first contact; greetReply is a no-op if it did.
   return greetReply(cleaned);
@@ -1084,56 +1240,56 @@ ${opts.tone ? `ОБЯЗАТЕЛЬНЫЕ правила тона и формул�
 // parse for the question we're currently on. Deterministic (not paraphrased by Gemini) so the
 // wording is GUARANTEED to differ from the previous verbatim question — kills the repeat loop.
 function stuckClarifyReply(questionKey: string | undefined, language: "ru" | "ky" | "en"): string {
-  const L = <T,>(ru: T, ky: T, en: T): T => (language === "ky" ? ky : language === "en" ? en : ru);
+  const L = <T>(ru: T, ky: T, en: T): T => (language === "ky" ? ky : language === "en" ? en : ru);
   switch (questionKey) {
-    case 'photo':
-    case 'photo_retry':
+    case "photo":
+    case "photo_retry":
       return L(
-        'Пришлите, пожалуйста, фото — нажмите на иконку изображения рядом с полем сообщения.',
-        'Сүрөттү жөнөтүңүзчү — билдирүү талаасынын жанындагы сүрөт баскычын басыңыз.',
-        'Please send a photo — tap the photo icon next to the message field.',
+        "Пришлите, пожалуйста, фото — нажмите на иконку изображения рядом с полем сообщения.",
+        "Сүрөттү жөнөтүңүзчү — билдирүү талаасынын жанындагы сүрөт баскычын басыңыз.",
+        "Please send a photo — tap the photo icon next to the message field.",
       );
-    case 'service':
+    case "service":
       return L(
-        'Извините, не совсем поняла 🙂 Напишите, пожалуйста, название услуги — например «стрижка» или «маникюр».',
-        'Кечиресиз, толук түшүнбөй калдым 🙂 Кызматтын атын жазыңызчы — мисалы «чач кыркуу» же «маникюр».',
-        'Sorry, I didn\'t quite get that 🙂 Please type the service name — e.g. “haircut” or “manicure”.',
+        "Извините, не совсем поняла 🙂 Напишите, пожалуйста, название услуги — например «стрижка» или «маникюр».",
+        "Кечиресиз, толук түшүнбөй калдым 🙂 Кызматтын атын жазыңызчы — мисалы «чач кыркуу» же «маникюр».",
+        "Sorry, I didn't quite get that 🙂 Please type the service name — e.g. “haircut” or “manicure”.",
       );
-    case 'part':
+    case "part":
       return L(
-        'Кажется, я не совсем поняла 🙂 Подскажите, когда удобнее — утром, днём или вечером?',
-        'Сизди толук түшүнбөй калдым окшойт 🙂 Качан ыңгайлуу — эртең менен, түштө же кечинде?',
-        'Sorry, I didn\'t quite catch that 🙂 When works best — morning, afternoon, or evening?',
+        "Кажется, я не совсем поняла 🙂 Подскажите, когда удобнее — утром, днём или вечером?",
+        "Сизди толук түшүнбөй калдым окшойт 🙂 Качан ыңгайлуу — эртең менен, түштө же кечинде?",
+        "Sorry, I didn't quite catch that 🙂 When works best — morning, afternoon, or evening?",
       );
-    case 'slot':
+    case "slot":
       return L(
-        'Не совсем поняла 🙂 Назовите удобное время цифрами — например 12:30 — или номер из списка.',
-        'Толук түшүнбөдүм 🙂 Ыңгайлуу убакытты сан менен жазыңыз — мисалы 12:30 — же тизмедеги номерди.',
-        'I didn\'t quite get that 🙂 Tell me a time in numbers — e.g. 12:30 — or a number from the list.',
+        "Не совсем поняла 🙂 Назовите удобное время цифрами — например 12:30 — или номер из списка.",
+        "Толук түшүнбөдүм 🙂 Ыңгайлуу убакытты сан менен жазыңыз — мисалы 12:30 — же тизмедеги номерди.",
+        "I didn't quite get that 🙂 Tell me a time in numbers — e.g. 12:30 — or a number from the list.",
       );
-    case 'master':
+    case "master":
       return L(
-        'Подскажите имя мастера из списка или напишите «не принципиально».',
-        'Тизмедеги устанын атын айтыңыз же «баары бир» деп жазыңыз.',
-        'Tell me a master\'s name from the list, or just say “any”.',
+        "Подскажите имя мастера из списка или напишите «не принципиально».",
+        "Тизмедеги устанын атын айтыңыз же «баары бир» деп жазыңыз.",
+        "Tell me a master's name from the list, or just say “any”.",
       );
-    case 'name':
+    case "name":
       return L(
-        'Подскажите, пожалуйста, ваше имя — как к вам обращаться?',
-        'Атыңызды айтыңызчы — сизге кандай кайрылсам болот?',
-        'Could you tell me your name, please?',
+        "Подскажите, пожалуйста, ваше имя — как к вам обращаться?",
+        "Атыңызды айтыңызчы — сизге кандай кайрылсам болот?",
+        "Could you tell me your name, please?",
       );
-    case 'confirm':
+    case "confirm":
       return L(
-        'Чтобы записать, напишите «да», либо назовите другое удобное время.',
-        'Жазыш үчүн «ооба» деп жазыңыз, же башка ыңгайлуу убакыт айтыңыз.',
-        'To book, reply “yes”, or tell me another time that suits you.',
+        "Чтобы записать, напишите «да», либо назовите другое удобное время.",
+        "Жазыш үчүн «ооба» деп жазыңыз, же башка ыңгайлуу убакыт айтыңыз.",
+        "To book, reply “yes”, or tell me another time that suits you.",
       );
     default:
       return L(
-        'Извините, не совсем поняла 🙂 Уточните, пожалуйста, чем могу помочь с записью?',
-        'Кечиресиз, толук түшүнбөдүм 🙂 Жазылууда эмне менен жардам берейин?',
-        'Sorry, I didn\'t quite get that 🙂 How can I help you book an appointment?',
+        "Извините, не совсем поняла 🙂 Уточните, пожалуйста, чем могу помочь с записью?",
+        "Кечиресиз, толук түшүнбөдүм 🙂 Жазылууда эмне менен жардам берейин?",
+        "Sorry, I didn't quite get that 🙂 How can I help you book an appointment?",
       );
   }
 }
@@ -1149,27 +1305,40 @@ function humanHandoffReply(language: "ru" | "ky" | "en", salonName?: string): st
   return `Кажется, мне сложно понять вас в переписке 🙏 Передаю ваш запрос администратору салона${n} — он скоро ответит и поможет с записью.`;
 }
 
-function instructionFallbackReply(factual: string, language: "ru" | "ky" | "en", salonName?: string): string {
+function instructionFallbackReply(
+  factual: string,
+  language: "ru" | "ky" | "en",
+  salonName?: string,
+): string {
   const text = factual.replace(/\s+/g, " ").trim();
-  const serviceList = [...factual.matchAll(/^[-–—]\s+(.+)$/gm)].map((m) => m[1].trim()).filter(Boolean);
+  const serviceList = [...factual.matchAll(/^[-–—]\s+(.+)$/gm)]
+    .map((m) => m[1].trim())
+    .filter(Boolean);
   if (serviceList.length) {
     const list = serviceList.map((s) => `— ${s}`).join("\n");
     const namePrefix = salonName ? `«${salonName}» — ` : "";
-    if (language === "ky") return `${namePrefix}бизде бар кызматтар:\n${list}\n\nКайсы кызматка жазыласыз?`;
+    if (language === "ky")
+      return `${namePrefix}бизде бар кызматтар:\n${list}\n\nКайсы кызматка жазыласыз?`;
     if (language === "en") return `We offer:\n${list}\n\nWhich service would you like to book?`;
     return `У нас есть:\n${list}\n\nНа какую услугу вас записать?`;
   }
-  const confirmMatch = text.match(/подтвердить запись:\s*услуга «(.+?)»,\s*(.+?)\s+в\s+([0-9:]+),\s*мастер\s+(.+?)\./i);
+  const confirmMatch = text.match(
+    /подтвердить запись:\s*услуга «(.+?)»,\s*(.+?)\s+в\s+([0-9:]+),\s*мастер\s+(.+?)\./i,
+  );
   if (confirmMatch) {
-    if (language === "ky") return `Тактап коёюн: «${confirmMatch[1]}», ${confirmMatch[2]} саат ${confirmMatch[3]}, мастер ${confirmMatch[4]}. Баары туурабы, жазайынбы?`;
-    if (language === "en") return `Let's confirm: ${confirmMatch[1]}, ${confirmMatch[2]} at ${confirmMatch[3]}, master ${confirmMatch[4]}. Shall I book it?`;
+    if (language === "ky")
+      return `Тактап коёюн: «${confirmMatch[1]}», ${confirmMatch[2]} саат ${confirmMatch[3]}, мастер ${confirmMatch[4]}. Баары туурабы, жазайынбы?`;
+    if (language === "en")
+      return `Let's confirm: ${confirmMatch[1]}, ${confirmMatch[2]} at ${confirmMatch[3]}, master ${confirmMatch[4]}. Shall I book it?`;
     return `Подтвердите, пожалуйста: «${confirmMatch[1]}», ${confirmMatch[2]} в ${confirmMatch[3]}, мастер ${confirmMatch[4]}. Всё верно, записываю?`;
   }
   // Ambiguous yes/no while confirming a specific slot.
   const ambiguousConfirm = text.match(/подтверждаете запись на\s+(.+?)\s+в\s+([0-9:]+)/i);
   if (ambiguousConfirm) {
-    if (language === "ky") return `${ambiguousConfirm[1]} саат ${ambiguousConfirm[2]} жазайынбы? «Ооба» деп жазыңыз же башка убакыт айтыңыз.`;
-    if (language === "en") return `Shall I book ${ambiguousConfirm[1]} at ${ambiguousConfirm[2]}? Reply "yes" or suggest another time.`;
+    if (language === "ky")
+      return `${ambiguousConfirm[1]} саат ${ambiguousConfirm[2]} жазайынбы? «Ооба» деп жазыңыз же башка убакыт айтыңыз.`;
+    if (language === "en")
+      return `Shall I book ${ambiguousConfirm[1]} at ${ambiguousConfirm[2]}? Reply "yes" or suggest another time.`;
     return `Записываю на ${ambiguousConfirm[1]} в ${ambiguousConfirm[2]}? Напишите «да» или назовите другое время.`;
   }
   // Several masters free for the chosen slot.
@@ -1179,26 +1348,33 @@ function instructionFallbackReply(factual: string, language: "ru" | "ky" | "en",
       const names = masterChoice[2].replace(/ и /g, " жана ");
       return `${masterChoice[1]} бош усталар: ${names}. Кимге жазайын, же «баары бир»?`;
     }
-    if (language === "en") return `Available masters at ${masterChoice[1]}: ${masterChoice[2]}. Who should I book, or "any"?`;
+    if (language === "en")
+      return `Available masters at ${masterChoice[1]}: ${masterChoice[2]}. Who should I book, or "any"?`;
     return `На ${masterChoice[1]} свободны мастера ${masterChoice[2]}. К кому записать или «не принципиально»?`;
   }
   // Requested specific time not available — offer the nearest ones.
   const nearestMatch = text.match(/в\s+([0-9:]+)\b.*свободного окна нет.*ближайшие:\s*([^.]*)/i);
   if (nearestMatch) {
-    if (language === "ky") return `${nearestMatch[1]} бош эмес. Жакынкы убакыттар: ${nearestMatch[2]}. Кайсынысы туура келет?`;
-    if (language === "en") return `${nearestMatch[1]} isn't free. Nearest times: ${nearestMatch[2]}. Which one works?`;
+    if (language === "ky")
+      return `${nearestMatch[1]} бош эмес. Жакынкы убакыттар: ${nearestMatch[2]}. Кайсынысы туура келет?`;
+    if (language === "en")
+      return `${nearestMatch[1]} isn't free. Nearest times: ${nearestMatch[2]}. Which one works?`;
     return `На ${nearestMatch[1]} свободного окна нет. Ближайшее время: ${nearestMatch[2]}. Какое подойдёт?`;
   }
   // Vision/download failed but salon's price range was voiced in the factual.
   const rangeFail = text.match(/ориентировочная стоимость «(.+?)» — (\d+)[–-](\d+) сом/i);
   if (rangeFail) {
-    if (language === "ky") return `«${rangeFail[1]}» үчүн болжолдуу баасы — ${rangeFail[2]}–${rangeFail[3]} сом (так баасын уста жеринде айтат). Кайсы күнгө жазыласыз?`;
-    if (language === "en") return `Approximate price for «${rangeFail[1]}» — ${rangeFail[2]}–${rangeFail[3]} som (master will confirm on site). What day works for you?`;
+    if (language === "ky")
+      return `«${rangeFail[1]}» үчүн болжолдуу баасы — ${rangeFail[2]}–${rangeFail[3]} сом (так баасын уста жеринде айтат). Кайсы күнгө жазыласыз?`;
+    if (language === "en")
+      return `Approximate price for «${rangeFail[1]}» — ${rangeFail[2]}–${rangeFail[3]} som (master will confirm on site). What day works for you?`;
     return `Ориентировочная стоимость «${rangeFail[1]}» — ${rangeFail[2]}–${rangeFail[3]} сом (точную мастер озвучит на месте). На какой день вас записать?`;
   }
   if (/не получилось открыть фото|не получилось оценить по фото/i.test(text)) {
-    if (language === "ky") return "Сүрөттү ача алган жокмын. Дагы бир жолу жөнөтүңүзчү, же баасын уста жеринде айтат.";
-    if (language === "en") return "I couldn't open the photo. Please send it again, or the master will price it on site.";
+    if (language === "ky")
+      return "Сүрөттү ача алган жокмын. Дагы бир жолу жөнөтүңүзчү, же баасын уста жеринде айтат.";
+    if (language === "en")
+      return "I couldn't open the photo. Please send it again, or the master will price it on site.";
     return "Не получилось открыть фото. Пришлите его ещё раз, пожалуйста, или мастер уточнит цену на месте.";
   }
   if (/прислать фото|пришлите фото|присл\w* фото/i.test(text)) {
@@ -1209,23 +1385,29 @@ function instructionFallbackReply(factual: string, language: "ru" | "ky" | "en",
   const priceConfirm = text.match(/около\s+(\d+)\s*сом/i);
   if (priceConfirm && /ориентировочная стоимость|на какой день записать/i.test(text)) {
     // New flow: show price + disclaimer + ask for day (no confirmation step)
-    if (language === "ky") return `Болжолдуу баасы — ${priceConfirm[1]} сом (так баасын уста жеринде айтат). Кайсы күнгө жазыласыз: бүгүн, эртең же башка күнгө?`;
-    if (language === "en") return `Approximate price — ${priceConfirm[1]} som (master will confirm on site). What day works for you?`;
+    if (language === "ky")
+      return `Болжолдуу баасы — ${priceConfirm[1]} сом (так баасын уста жеринде айтат). Кайсы күнгө жазыласыз: бүгүн, эртең же башка күнгө?`;
+    if (language === "en")
+      return `Approximate price — ${priceConfirm[1]} som (master will confirm on site). What day works for you?`;
     return `Примерная стоимость — около ${priceConfirm[1]} сом (точную мастер озвучит на месте). На какой день вас записать?`;
   }
   if (priceConfirm && /продолжаем|подбор времени|стоимость по фото/i.test(text)) {
-    if (language === "ky") return `Болжолдуу баасы — ${priceConfirm[1]} сом. Убакыт тандоону улантабызбы?`;
-    if (language === "en") return `Approximate price — ${priceConfirm[1]} som. Shall we continue picking a time?`;
+    if (language === "ky")
+      return `Болжолдуу баасы — ${priceConfirm[1]} сом. Убакыт тандоону улантабызбы?`;
+    if (language === "en")
+      return `Approximate price — ${priceConfirm[1]} som. Shall we continue picking a time?`;
     return `Примерная стоимость — около ${priceConfirm[1]} сом. Продолжаем подбор времени?`;
   }
   if (/только что заняли/i.test(text)) {
-    if (language === "ky") return "Тилекке каршы, бул убакытты азыр ээлеп коюшту. Башка убакыт тандайлыбы?";
+    if (language === "ky")
+      return "Тилекке каршы, бул убакытты азыр ээлеп коюшту. Башка убакыт тандайлыбы?";
     if (language === "en") return "Sorry, that time was just taken. Shall we pick another slot?";
     return "К сожалению, это время только что заняли. Давайте выберем другое окно?";
   }
   if (/нет доступных мастеров/i.test(text)) {
     if (language === "ky") return "Бул кызматка азыр бош уста жок. Башка кызматты тандаңызчы.";
-    if (language === "en") return "No masters are available for this service right now. Please choose another service.";
+    if (language === "en")
+      return "No masters are available for this service right now. Please choose another service.";
     return "На эту услугу сейчас нет свободных мастеров. Выберите, пожалуйста, другую услугу.";
   }
   if (/отменил запрос/i.test(text)) {
@@ -1240,12 +1422,15 @@ function instructionFallbackReply(factual: string, language: "ru" | "ky" | "en",
   }
   if (/проблеме с записью|извинись/i.test(text)) {
     if (language === "ky") return "Кечиресиз! Кайра жазылуу үчүн жазыңыз же салонго чалыңыз.";
-    if (language === "en") return "Sorry about that! Please write again to rebook, or call the salon directly.";
+    if (language === "en")
+      return "Sorry about that! Please write again to rebook, or call the salon directly.";
     return "Извините за это! Напишите ещё раз, чтобы переписаться, или позвоните в салон напрямую.";
   }
   if (/услуги ещё не настроены|услуги еще не настроены/i.test(text)) {
-    if (language === "ky") return "Кечиресиз, кызматтар азырынча тууралануда. Салонго түз кайрылыңызчы.";
-    if (language === "en") return "Sorry, services aren't set up yet. Please contact the salon directly.";
+    if (language === "ky")
+      return "Кечиресиз, кызматтар азырынча тууралануда. Салонго түз кайрылыңызчы.";
+    if (language === "en")
+      return "Sorry, services aren't set up yet. Please contact the salon directly.";
     return "Извините, услуги пока настраиваются. Пожалуйста, свяжитесь с салоном напрямую.";
   }
   if (/другое время или день|на какое другое время|на какое время записать/i.test(text)) {
@@ -1254,7 +1439,7 @@ function instructionFallbackReply(factual: string, language: "ru" | "ky" | "en",
     return "На какое время или день вас записать?";
   }
   if (/в\s+какой\s+филиал|филиал.*записат/i.test(text)) {
-    const lines = text.match(/^[-–—]\s+.+/mg) ?? [];
+    const lines = text.match(/^[-–—]\s+.+/gm) ?? [];
     const list = lines.length ? "\n" + lines.join("\n") : "";
     if (language === "ky") return `Кайсы филиалга жазыласыз?${list}`;
     if (language === "en") return `Which branch would you like to visit?${list}`;
@@ -1273,30 +1458,39 @@ function instructionFallbackReply(factual: string, language: "ru" | "ky" | "en",
   }
   if (/утром|дн[её]м|вечером|morning|afternoon|evening/i.test(text)) {
     if (language === "ky") return "Кайсы убакыт ыңгайлуу: эртең менен, түштө же кечинде?";
-    if (language === "en") return "What time of day is better for you: morning, afternoon, or evening?";
+    if (language === "en")
+      return "What time of day is better for you: morning, afternoon, or evening?";
     return "Когда удобнее: утром, днём или вечером?";
   }
   if (/какой день|какой день|на какой день/i.test(text)) {
     if (language === "ky") return "Кайсы күнгө жазыласыз: бүгүн, эртең же башка күнгө?";
-    if (language === "en") return "Which day would you like to book for: today, tomorrow, or another day?";
+    if (language === "en")
+      return "Which day would you like to book for: today, tomorrow, or another day?";
     return "На какой день вас записать: сегодня, завтра или на другую дату?";
   }
   const freeMatch = text.match(/на\s+(.+?)\s+свободно:\s*([^.]*)/i);
   if (freeMatch) {
-    if (language === "ky") return `${freeMatch[1]} бош убакыттар: ${freeMatch[2]}. Кайсы убакытты тандайсыз?`;
-    if (language === "en") return `Available times for ${freeMatch[1]}: ${freeMatch[2]}. Which time would you like?`;
+    if (language === "ky")
+      return `${freeMatch[1]} бош убакыттар: ${freeMatch[2]}. Кайсы убакытты тандайсыз?`;
+    if (language === "en")
+      return `Available times for ${freeMatch[1]}: ${freeMatch[2]}. Which time would you like?`;
     return `На ${freeMatch[1]} свободно: ${freeMatch[2]}. Какое время выбрать?`;
   }
   if (/свободных окон нет|свободного окна нет/i.test(text)) {
     if (language === "ky") return "Бул убакытка бош орун жок. Башка убакытты же күндү тандайсызбы?";
-    if (language === "en") return "There are no available slots for that time. Would you like another time or day?";
+    if (language === "en")
+      return "There are no available slots for that time. Would you like another time or day?";
     return "На это время свободных окон нет. Выберем другое время или день?";
   }
-  const bookedMatch = text.match(/салон «(.+?)»,\s*(.+?)\s+в\s+([0-9:]+),\s*мастер\s+(.+?),\s*услуга\s+«(.+?)»/i);
+  const bookedMatch = text.match(
+    /салон «(.+?)»,\s*(.+?)\s+в\s+([0-9:]+),\s*мастер\s+(.+?),\s*услуга\s+«(.+?)»/i,
+  );
   if (bookedMatch) {
     const [, salon, date, time, master, service] = bookedMatch;
-    if (language === "ky") return `Даяр! 🎉 Сизди «${salon}» салонуна ${date}, саат ${time} жаздык. Уста ${master}, кызмат «${service}». Күтөбүз! 😊`;
-    if (language === "en") return `All set! 🎉 You're booked at "${salon}" on ${date} at ${time}. Master ${master}, service "${service}". See you! 😊`;
+    if (language === "ky")
+      return `Даяр! 🎉 Сизди «${salon}» салонуна ${date}, саат ${time} жаздык. Уста ${master}, кызмат «${service}». Күтөбүз! 😊`;
+    if (language === "en")
+      return `All set! 🎉 You're booked at "${salon}" on ${date} at ${time}. Master ${master}, service "${service}". See you! 😊`;
     return `Готово! 🎉 Записали вас в «${salon}» на ${date} в ${time}. Мастер ${master}, услуга «${service}». Ждём вас в гости! 😊`;
   }
   if (/как обращаться|имя/i.test(text)) {
@@ -1320,14 +1514,17 @@ function instructionFallbackReply(factual: string, language: "ru" | "ky" | "en",
   // Capability question: yes, we do it
   const doCapability = text.match(/делаем ли мы «(.+?)».*стоимость\s+(.+?)(?:\.|Мягко|$)/is);
   if (doCapability) {
-    if (language === "ky") return `Ооба, «${doCapability[1]}» жасайбыз! Баасы — ${doCapability[2].trim()}.`;
-    if (language === "en") return `Yes, we do "${doCapability[1]}"! Price — ${doCapability[2].trim()}.`;
+    if (language === "ky")
+      return `Ооба, «${doCapability[1]}» жасайбыз! Баасы — ${doCapability[2].trim()}.`;
+    if (language === "en")
+      return `Yes, we do "${doCapability[1]}"! Price — ${doCapability[2].trim()}.`;
     return `Да, делаем «${doCapability[1]}»! Стоимость — ${doCapability[2].trim()}.`;
   }
   // Capability question: general (list what we offer)
   if (/спрашивает о возможностях/i.test(text)) {
     if (language === "ky") return "Биздин кызматтар жөнүндө суроо берсеңиз — жардам берем!";
-    if (language === "en") return "Happy to tell you about our services! What would you like to know?";
+    if (language === "en")
+      return "Happy to tell you about our services! What would you like to know?";
     return "Расскажу о наших услугах с удовольствием! Что именно вас интересует?";
   }
   // Smalltalk — friendly, no booking push
@@ -1379,12 +1576,23 @@ async function loadServicesForSalon(db: AdminClient, salonId: string) {
 async function loadAiVisibleServicesForSalon(db: AdminClient, salonId: string) {
   const [services, assistantRes, overridesRes] = await Promise.all([
     loadServicesForSalon(db, salonId),
-    db.from("salon_ai_assistant").select("ai_category_order, ai_hidden_categories").eq("salon_id", salonId).maybeSingle(),
-    db.from("ai_service_overrides").select("service_id, is_enabled, sort_order").eq("salon_id", salonId),
+    db
+      .from("salon_ai_assistant")
+      .select("ai_category_order, ai_hidden_categories")
+      .eq("salon_id", salonId)
+      .maybeSingle(),
+    db
+      .from("ai_service_overrides")
+      .select("service_id, is_enabled, sort_order")
+      .eq("salon_id", salonId),
   ]);
-  const hiddenCategories = new Set(((assistantRes.data as any)?.ai_hidden_categories as string[]) ?? []);
-  const categoryOrder = (((assistantRes.data as any)?.ai_category_order as string[]) ?? []);
-  const overrides = new Map(((overridesRes.data as any[]) ?? []).map((o) => [o.service_id as string, o]));
+  const hiddenCategories = new Set(
+    ((assistantRes.data as any)?.ai_hidden_categories as string[]) ?? [],
+  );
+  const categoryOrder = ((assistantRes.data as any)?.ai_category_order as string[]) ?? [];
+  const overrides = new Map(
+    ((overridesRes.data as any[]) ?? []).map((o) => [o.service_id as string, o]),
+  );
 
   const visible = (services as any[]).filter((s) => {
     if (hiddenCategories.has((s.category ?? "").trim())) return false;
@@ -1525,7 +1733,9 @@ async function priceFromPhoto(opts: {
   priceMax: number;
   pricingRules: string | null;
   language: "ru" | "ky" | "en";
-}): Promise<{ price: number; explanation: string; confidence: "high" | "medium" | "low" } | { error: string }> {
+}): Promise<
+  { price: number; explanation: string; confidence: "high" | "medium" | "low" } | { error: string }
+> {
   const sys = `Ты оцениваешь стоимость услуги «${opts.serviceName}» по фото клиента.
 Цена ОБЯЗАНА быть числом в диапазоне [${opts.priceMin}, ${opts.priceMax}] сом, не выходи за границы.
 ${opts.pricingRules ? `Правила оценки от салона: ${opts.pricingRules}` : ""}
@@ -1575,7 +1785,9 @@ ${opts.pricingRules ? `Правила оценки от салона: ${opts.pri
   }
 }
 
-async function downloadImageAsBase64(url: string): Promise<{ base64: string; mime: string } | { error: string }> {
+async function downloadImageAsBase64(
+  url: string,
+): Promise<{ base64: string; mime: string } | { error: string }> {
   // Simulator passes a data URL directly — extract base64 without any network request.
   if (url.startsWith("data:")) {
     const comma = url.indexOf(",");
@@ -1681,7 +1893,9 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
     .filter((m) => m.direction === "in")
     .map((m) => (m.text_body ?? (m.kind === "image" ? "[фото]" : "")).trim())
     .filter(Boolean);
-  const lastImage = [...input.lastMessages].reverse().find((m) => m.kind === "image" && m.media_signed_url);
+  const lastImage = [...input.lastMessages]
+    .reverse()
+    .find((m) => m.kind === "image" && m.media_signed_url);
   const combinedLastText = lastTexts.join(". ");
 
   const allowedLangs = input.config.languages?.length ? input.config.languages : ["ru"];
@@ -1696,7 +1910,8 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
 
   // Determine language up front: prefer stored stateData, else detect.
   let language: "ru" | "ky" | "en" =
-    (input.stateData.language as any) ?? clampLanguage(detectLanguage(combinedLastText), allowedLangs);
+    (input.stateData.language as any) ??
+    clampLanguage(detectLanguage(combinedLastText), allowedLangs);
 
   // Classify intent only if there is at least one inbound text or image.
   let intent: Intent = "other";
@@ -1719,7 +1934,8 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
     const detectedLang = clampLanguage(c.language, allowedLangs);
     const storedLang = input.stateData.language as "ru" | "ky" | "en" | undefined;
     if (!storedLang) language = detectedLang;
-    else if (detectedLang !== storedLang && confidentLanguage(combinedLastText)) language = detectedLang;
+    else if (detectedLang !== storedLang && confidentLanguage(combinedLastText))
+      language = detectedLang;
     else language = storedLang;
     debug.intent = intent;
     debug.entities = entities;
@@ -1741,7 +1957,9 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
   let factual = "";
 
   const tone = input.config.tone_instructions;
-  const islamicGreeting = /ассаламу?\s*а?лейку?м|ассалму|салам\s+а?ллейку?м/i.test(combinedLastText);
+  const islamicGreeting = /ассаламу?\s*а?лейку?м|ассалму|салам\s+а?ллейку?м/i.test(
+    combinedLastText,
+  );
   const compose1 = (text: string) =>
     compose({
       apiKey,
@@ -1798,7 +2016,9 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
   }
 
   if (intent === "ask_capability") {
-    const capSvc = entities.service_id ? services.find((s: any) => s.id === entities.service_id) : null;
+    const capSvc = entities.service_id
+      ? services.find((s: any) => s.id === entities.service_id)
+      : null;
     if (capSvc) {
       const priceStr =
         (capSvc as any).price_type === "range"
@@ -1824,8 +2044,12 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
   // ----- Done state: graceful post-booking handling
   if (state === "done") {
     const newBookingIntents: Intent[] = [
-      "choose_service", "ask_services", "ask_price",
-      "choose_day", "choose_part_of_day", "choose_specific_time",
+      "choose_service",
+      "ask_services",
+      "ask_price",
+      "choose_day",
+      "choose_part_of_day",
+      "choose_specific_time",
     ];
     if (newBookingIntents.includes(intent)) {
       // Client clearly wants a new booking — reset and fall through
@@ -1833,7 +2057,10 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
       state = "idle";
     } else {
       // Closing phrase, complaint or acknowledgement — respond in context
-      const isComplaint = /(неправил|не то|не туда|ошибк|не верн|неверн|не так|не на то|не 12|не на 12)/i.test(combinedLastText);
+      const isComplaint =
+        /(неправил|не то|не туда|ошибк|не верн|неверн|не так|не на то|не 12|не на 12)/i.test(
+          combinedLastText,
+        );
       if (isComplaint) {
         factual = `Клиент говорит о проблеме с записью: "${combinedLastText}". Извинись искренне и предложи написать ещё раз чтобы переписаться, либо позвонить в салон напрямую.`;
       } else {
@@ -1861,7 +2088,9 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
       }
     }
     if (!selectedBranchId) {
-      const list = input.branches.map((b) => `— ${b.name}${b.address ? ", " + b.address : ""}`).join("\n");
+      const list = input.branches
+        .map((b) => `— ${b.name}${b.address ? ", " + b.address : ""}`)
+        .join("\n");
       factual = `Поприветствуй коротко и спроси, в какой филиал клиент хочет записаться. Перечисли:\n${list}`;
       state = "awaiting_branch";
       return {
@@ -1919,7 +2148,8 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
   if (entities.day_relative === "today") sd.day = today;
   else if (entities.day_relative === "tomorrow") sd.day = addDaysISO(today, 1);
   else if (entities.day_relative === "day_after_tomorrow") sd.day = addDaysISO(today, 2);
-  else if (entities.day_iso && /^\d{4}-\d{2}-\d{2}$/.test(entities.day_iso)) sd.day = entities.day_iso;
+  else if (entities.day_iso && /^\d{4}-\d{2}-\d{2}$/.test(entities.day_iso))
+    sd.day = entities.day_iso;
 
   // Part of day / specific time. Persist the stated time into stateData so it survives across
   // turns (e.g. if we have to ask the name first, "12:45" must not be forgotten).
@@ -1938,7 +2168,12 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
   else if (!sd.client_name && input.client.name) sd.client_name = input.client.name;
 
   // ----- "Any time" shortcut: in awaiting_part_of_day, "любое" → afternoon
-  if (state === "awaiting_part_of_day" && !sd.part_of_day && !entities.specific_time && intent === "any_master") {
+  if (
+    state === "awaiting_part_of_day" &&
+    !sd.part_of_day &&
+    !entities.specific_time &&
+    intent === "any_master"
+  ) {
     sd.part_of_day = "afternoon";
   }
 
@@ -1948,9 +2183,10 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
     if (cachedSlots.length > 0) {
       let picked: MergedSlot | undefined;
       if (entities.slot_number != null) {
-        const idx = entities.slot_number < 0
-          ? cachedSlots.length + entities.slot_number
-          : entities.slot_number - 1;
+        const idx =
+          entities.slot_number < 0
+            ? cachedSlots.length + entities.slot_number
+            : entities.slot_number - 1;
         picked = cachedSlots[Math.max(0, Math.min(idx, cachedSlots.length - 1))];
       } else if (intent === "confirm_yes" || intent === "any_master") {
         picked = cachedSlots[0]; // first available
@@ -1974,7 +2210,11 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
     state === "awaiting_final_confirm" &&
     intent !== "confirm_yes" &&
     intent !== "deny_no" &&
-    (entities.specific_time || entities.day_relative || entities.day_iso || entities.service_id || entities.part_of_day)
+    (entities.specific_time ||
+      entities.day_relative ||
+      entities.day_iso ||
+      entities.service_id ||
+      entities.part_of_day)
   ) {
     sd.slot_start = undefined;
     sd.slot_end = undefined;
@@ -2002,21 +2242,33 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
       factual = `Извинись: услуги ещё не настроены в системе. Попроси связаться с салоном напрямую.`;
       return finish();
     }
-    const top = services.slice(0, 8).map((s: any) => {
-      const price = s.price_type === "range" ? `${s.price}–${s.price_max} сом` : `${s.price} сом`;
-      return `— ${s.name}: ${price}`;
-    }).join("\n");
+    const top = services
+      .slice(0, 8)
+      .map((s: any) => {
+        const price = s.price_type === "range" ? `${s.price}–${s.price_max} сом` : `${s.price} сом`;
+        return `— ${s.name}: ${price}`;
+      })
+      .join("\n");
     if (intent === "greet") {
       factual = `Поприветствуй клиента от имени салона «${input.salon.salonName}» и предложи помочь с записью. Перечисли услуги:\n${top}`;
     } else if (intent === "ask_price" || intent === "ask_services") {
-      factual = `Клиент спросил об услугах/ценах. Перечисли услуги с ценами:\n${services.slice(0, 10).map((s: any) => `— ${s.name}: ${s.price_type === "range" ? `${s.price}–${s.price_max}` : s.price} сом`).join("\n")}\nСпроси, на какую услугу записать.`;
+      factual = `Клиент спросил об услугах/ценах. Перечисли услуги с ценами:\n${services
+        .slice(0, 10)
+        .map(
+          (s: any) =>
+            `— ${s.name}: ${s.price_type === "range" ? `${s.price}–${s.price_max}` : s.price} сом`,
+        )
+        .join("\n")}\nСпроси, на какую услугу записать.`;
     } else if (intent === "smalltalk" || intent === "other") {
       // If the message has no booking signals (no service/day/time) — pure smalltalk.
       // Answer naturally WITHOUT immediately pushing to booking.
-      const hasBookingSignal = entities.service_id || entities.day_relative || entities.day_iso || entities.specific_time;
+      const hasBookingSignal =
+        entities.service_id || entities.day_relative || entities.day_iso || entities.specific_time;
       if (!hasBookingSignal) {
         factual = `Клиент написал: "${combinedLastText}". Ответь по-человечески и тепло, без навязывания записи. Если это просто светская беседа — поддержи её кратко.`;
-        sd.last_prompt = "service"; state = "collecting"; return finish();
+        sd.last_prompt = "service";
+        state = "collecting";
+        return finish();
       }
       factual = `Клиент написал: "${combinedLastText}". Ответь дружелюбно и мягко предложи помочь с записью в салон «${input.salon.salonName}».`;
     } else if (sd.last_prompt === "service") {
@@ -2099,20 +2351,31 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
 
   // 3) Need day?
   if (!sd.day) {
-    const sample = dateMap.slice(0, 3).map((d) => `${d.relative} (${d.label})`).join(", ");
+    const sample = dateMap
+      .slice(0, 3)
+      .map((d) => `${d.relative} (${d.label})`)
+      .join(", ");
     factual = `Спроси, на какой день записать. Подскажи примеры: ${sample}.`;
     state = "collecting";
     return finish();
   }
 
   // Drop a part-of-day that has already passed for today (e.g. "утром" chosen at 17:00).
-  if (sd.day === today && sd.part_of_day && !sd.specific_time && !availablePartsToday(nowHour).includes(sd.part_of_day)) {
+  if (
+    sd.day === today &&
+    sd.part_of_day &&
+    !sd.specific_time &&
+    !availablePartsToday(nowHour).includes(sd.part_of_day)
+  ) {
     sd.part_of_day = undefined;
   }
 
   // 4) Need part of day or specific time?
   if (!sd.part_of_day && !sd.specific_time) {
-    const parts = sd.day === today ? availablePartsToday(nowHour) : (["morning", "afternoon", "evening"] as const);
+    const parts =
+      sd.day === today
+        ? availablePartsToday(nowHour)
+        : (["morning", "afternoon", "evening"] as const);
     if (parts.length === 0) {
       // The whole working day is already over for "today".
       sd.day = undefined;
@@ -2129,7 +2392,12 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
   }
 
   // 5) Load masters and fetch slots
-  const masters = await loadMastersForService(db, input.salon.salonId, sd.service_id, selectedBranchId);
+  const masters = await loadMastersForService(
+    db,
+    input.salon.salonId,
+    sd.service_id,
+    selectedBranchId,
+  );
   if (masters.length === 0) {
     factual = `Скажи: на услугу «${sd.service_name}» сейчас нет доступных мастеров. Предложи выбрать другую услугу.`;
     sd.service_id = undefined;
@@ -2194,7 +2462,11 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
     if (slots.length === 0) {
       const dateHuman = formatDateInTz(sd.day + "T12:00:00Z", input.salon.timezone);
       const partLabel =
-        sd.part_of_day === "morning" ? "утром" : sd.part_of_day === "afternoon" ? "днём" : "вечером";
+        sd.part_of_day === "morning"
+          ? "утром"
+          : sd.part_of_day === "afternoon"
+            ? "днём"
+            : "вечером";
       factual = `Скажи: ${dateHuman} ${partLabel} свободных окон нет. Предложи другую часть дня или другой день.`;
       sd.part_of_day = undefined;
       state = "awaiting_part_of_day";
@@ -2268,7 +2540,8 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
   const confirmDate = formatDateInTz(sd.slot_start!, input.salon.timezone);
   const confirmTime = formatTimeInTz(sd.slot_start!, input.salon.timezone);
   if (state !== "awaiting_final_confirm") {
-    const priceStr = sd.priced_value != null ? ` Стоимость по фото — около ${sd.priced_value} сом.` : "";
+    const priceStr =
+      sd.priced_value != null ? ` Стоимость по фото — около ${sd.priced_value} сом.` : "";
     factual = `Покажи краткую сводку и попроси подтвердить запись: услуга «${sd.service_name}», ${confirmDate} в ${confirmTime}, мастер ${sd.master_name}.${priceStr} Спроси: всё верно, записываю?`;
     sd.last_prompt = "confirm";
     state = "awaiting_final_confirm";
@@ -2387,7 +2660,8 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
     } catch (e: any) {
       const raw = instructionFallbackReply(factual, language, input.salon.salonName);
       if (isFirstContact && !/^\s*(здрав|привет|саламат|салам|hello|hi|hey|добр)/iu.test(raw)) {
-        const g = input.config.greeting?.trim() ||
+        const g =
+          input.config.greeting?.trim() ||
           (language === "ky" ? "Саламатсызбы!" : language === "en" ? "Hello!" : "Здравствуйте!");
         reply = `${g} ${raw}`.trim();
       } else {
@@ -2420,7 +2694,8 @@ async function callGeminiTools(opts: {
   allowedFunctionNames?: string[]; // restrict which tools can fire on this turn
 }): Promise<{ ok: boolean; parts?: any[]; error?: string }> {
   // Empty array → block all tools (mode NONE). Non-empty → restrict to that list.
-  const noTools = Array.isArray(opts.allowedFunctionNames) && opts.allowedFunctionNames.length === 0;
+  const noTools =
+    Array.isArray(opts.allowedFunctionNames) && opts.allowedFunctionNames.length === 0;
   const fcConfig: any = noTools
     ? { mode: "NONE" }
     : opts.allowedFunctionNames
@@ -2448,8 +2723,14 @@ async function callGeminiTools(opts: {
     const txt = await r.text();
     if (!r.ok) return { ok: false, error: `gemini ${r.status}: ${txt.slice(0, 300)}` };
     let json: any;
-    try { json = JSON.parse(txt); } catch { return { ok: false, error: `gemini bad json: ${txt.slice(0, 200)}` }; }
-    const parts: any[] = (json?.candidates?.[0]?.content?.parts ?? []).filter((p: any) => !p?.thought);
+    try {
+      json = JSON.parse(txt);
+    } catch {
+      return { ok: false, error: `gemini bad json: ${txt.slice(0, 200)}` };
+    }
+    const parts: any[] = (json?.candidates?.[0]?.content?.parts ?? []).filter(
+      (p: any) => !p?.thought,
+    );
     return { ok: true, parts };
   } catch (e: any) {
     return { ok: false, error: e?.message ?? String(e) };
@@ -2468,7 +2749,9 @@ function buildSystemPromptV2(
     `Пишешь клиенту в WhatsApp. Коротко, по-человечески, без канцелярита. 1–3 предложения. Никакого markdown. Эмодзи — не более одного.`,
     `Отвечай СТРОГО на том языке, на котором написал клиент — русский или кыргызский. Не смешивай языки.`,
     config.greeting ? `Первое сообщение клиенту начни с: ${config.greeting}` : "",
-    config.tone_instructions ? `Правила общения (обязательно соблюдай): ${config.tone_instructions}` : "",
+    config.tone_instructions
+      ? `Правила общения (обязательно соблюдай): ${config.tone_instructions}`
+      : "",
     `Сегодня: ${todayHuman} (${todayDate}).`,
     ``,
     `ЦЕЛЬ — помочь клиенту записаться. Порядок шагов:`,
@@ -2548,7 +2831,10 @@ const V2_TOOL_DECLARATIONS = [
       properties: {
         service_id: { type: "string" },
         master_id: { type: "string" },
-        slot_start: { type: "string", description: "ISO timestamp начала слота (из get_available_slots)" },
+        slot_start: {
+          type: "string",
+          description: "ISO timestamp начала слота (из get_available_slots)",
+        },
         client_name: { type: "string" },
         branch_id: { type: "string", description: "ID выбранного филиала (если несколько)" },
         price_override: { type: "number", description: "Согласованная цена для range-услуг" },
@@ -2566,7 +2852,9 @@ async function executeV2Tool(
 ): Promise<any> {
   switch (name) {
     case "get_branches":
-      return { branches: input.branches.map((b) => ({ id: b.id, name: b.name, address: b.address })) };
+      return {
+        branches: input.branches.map((b) => ({ id: b.id, name: b.name, address: b.address })),
+      };
 
     case "get_services": {
       const services = await loadServicesForSalon(db, input.salon.salonId);
@@ -2583,7 +2871,8 @@ async function executeV2Tool(
 
     case "get_masters": {
       const masters = await loadMastersForService(
-        db, input.salon.salonId,
+        db,
+        input.salon.salonId,
         args.service_id as string,
         (args.branch_id as string | null) ?? null,
       );
@@ -2595,12 +2884,26 @@ async function executeV2Tool(
       const minStart = args.date === isoLocalDate ? new Date() : undefined;
       let masters: DbMaster[];
       if (args.master_id) {
-        masters = [{ id: args.master_id as string, name: "", branch_id: null, sort_order: 0, service_ids: [] }];
+        masters = [
+          {
+            id: args.master_id as string,
+            name: "",
+            branch_id: null,
+            sort_order: 0,
+            service_ids: [],
+          },
+        ];
       } else {
-        masters = await loadMastersForService(db, input.salon.salonId, args.service_id as string, null);
+        masters = await loadMastersForService(
+          db,
+          input.salon.salonId,
+          args.service_id as string,
+          null,
+        );
       }
       const slots = await fetchMergedSlots({
-        db, masters,
+        db,
+        masters,
         serviceId: args.service_id as string,
         day: args.date as string,
         tz: input.salon.timezone,
@@ -2651,7 +2954,8 @@ export async function runWaAgentV2(input: WaAgentInput): Promise<WaAgentResult> 
   let selectedBranchId = input.selectedBranchId;
 
   // V2 stores full Gemini conversation in state_data.v2_history
-  const v2History: GeminiV2Content[] = ((input.stateData as any).v2_history ?? []) as GeminiV2Content[];
+  const v2History: GeminiV2Content[] = ((input.stateData as any).v2_history ??
+    []) as GeminiV2Content[];
 
   // Build client message parts (text + optional inline image)
   const clientParts: any[] = [];
@@ -2665,7 +2969,9 @@ export async function runWaAgentV2(input: WaAgentInput): Promise<WaAgentResult> 
           let bin = "";
           for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
           if (m.text_body) clientParts.push({ text: m.text_body });
-          clientParts.push({ inlineData: { mimeType: m.media_mime ?? "image/jpeg", data: btoa(bin) } });
+          clientParts.push({
+            inlineData: { mimeType: m.media_mime ?? "image/jpeg", data: btoa(bin) },
+          });
         }
       } catch (e: any) {
         debug.errors.push(`image_fetch: ${e?.message ?? String(e)}`);
@@ -2687,7 +2993,13 @@ export async function runWaAgentV2(input: WaAgentInput): Promise<WaAgentResult> 
     };
   }
 
-  const systemPrompt = buildSystemPromptV2(input.salon, input.config, input.branches, isoLocalDate, humanDate);
+  const systemPrompt = buildSystemPromptV2(
+    input.salon,
+    input.config,
+    input.branches,
+    isoLocalDate,
+    humanDate,
+  );
   const contents: GeminiV2Content[] = [...v2History, { role: "user", parts: clientParts }];
 
   let reply = "";
@@ -2697,21 +3009,27 @@ export async function runWaAgentV2(input: WaAgentInput): Promise<WaAgentResult> 
   // Multi-branch: only get_branches, so Gemini can list branches but not proactively dump services.
   const isFirstMessage = v2History.length === 0;
   const firstTurnAllowed = isFirstMessage
-    ? (input.branches.length > 1 ? ["get_branches"] : [])
+    ? input.branches.length > 1
+      ? ["get_branches"]
+      : []
     : undefined;
 
   for (let iter = 0; iter < MAX_TOOL_ITERS; iter++) {
     const allowedNames = iter === 0 ? firstTurnAllowed : undefined;
     const res = await callGeminiTools({
-      apiKey, systemInstruction: systemPrompt, contents, tools: V2_TOOL_DECLARATIONS,
+      apiKey,
+      systemInstruction: systemPrompt,
+      contents,
+      tools: V2_TOOL_DECLARATIONS,
       allowedFunctionNames: allowedNames,
     });
 
     if (!res.ok || !res.parts) {
       debug.errors.push(`gemini_tools iter${iter}: ${res.error ?? "no parts"}`);
-      reply = input.stateData.language === "ky"
-        ? "Кечиресиз, техникалык ката. Бир аздан кийин кайра жазыңыз."
-        : "Извините, техническая ошибка. Попробуйте чуть позже.";
+      reply =
+        input.stateData.language === "ky"
+          ? "Кечиресиз, техникалык ката. Бир аздан кийин кайра жазыңыз."
+          : "Извините, техническая ошибка. Попробуйте чуть позже.";
       break;
     }
 
@@ -2739,7 +3057,9 @@ export async function runWaAgentV2(input: WaAgentInput): Promise<WaAgentResult> 
         toolResults.push({ functionResponse: { name, response: result } });
       } catch (e: any) {
         debug.errors.push(`tool_${name}: ${e?.message ?? String(e)}`);
-        toolResults.push({ functionResponse: { name, response: { error: e?.message ?? "failed" } } });
+        toolResults.push({
+          functionResponse: { name, response: { error: e?.message ?? "failed" } },
+        });
       }
     }
     contents.push({ role: "user", parts: toolResults });
@@ -2759,7 +3079,7 @@ export async function runWaAgentV2(input: WaAgentInput): Promise<WaAgentResult> 
   const nextState: WaAgentState = appointmentId ? "done" : "collecting";
   const nextStateData: WaAgentStateData = {
     language: input.stateData.language,
-    ...(appointmentId ? {} : { v2_history: historyToSave } as any),
+    ...(appointmentId ? {} : ({ v2_history: historyToSave } as any)),
   };
 
   return { reply, nextState, nextStateData, appointmentId, selectedBranchId, debug };
@@ -2788,7 +3108,9 @@ export async function greenApiSendButtons(
     });
     const txt = await r.text();
     let json: any = null;
-    try { json = JSON.parse(txt); } catch {}
+    try {
+      json = JSON.parse(txt);
+    } catch {}
     if (!r.ok) return { ok: false, error: `green-api ${r.status}: ${txt.slice(0, 200)}` };
     return { ok: true, idMessage: json?.idMessage };
   } catch (e: any) {
@@ -2822,7 +3144,9 @@ export async function greenApiSendInteractiveButtons(
     });
     const txt = await r.text();
     let json: any = null;
-    try { json = JSON.parse(txt); } catch {}
+    try {
+      json = JSON.parse(txt);
+    } catch {}
     if (!r.ok) return { ok: false, error: `green-api ${r.status}: ${txt.slice(0, 200)}` };
     return { ok: true, idMessage: json?.idMessage };
   } catch (e: any) {
@@ -2835,7 +3159,10 @@ export async function greenApiSendListMessage(
   chatId: string,
   message: string,
   buttonText: string,
-  sections: Array<{ title?: string; rows: Array<{ rowId: string; title: string; description?: string }> }>,
+  sections: Array<{
+    title?: string;
+    rows: Array<{ rowId: string; title: string; description?: string }>;
+  }>,
 ): Promise<{ ok: boolean; idMessage?: string; error?: string }> {
   try {
     const url = `https://api.green-api.com/waInstance${creds.instance}/sendListMessage/${creds.token}`;
@@ -2846,7 +3173,9 @@ export async function greenApiSendListMessage(
     });
     const txt = await r.text();
     let json: any = null;
-    try { json = JSON.parse(txt); } catch {}
+    try {
+      json = JSON.parse(txt);
+    } catch {}
     if (!r.ok) return { ok: false, error: `green-api ${r.status}: ${txt.slice(0, 200)}` };
     return { ok: true, idMessage: json?.idMessage };
   } catch (e: any) {
@@ -2877,11 +3206,17 @@ async function cloudApiSend(
         "Content-Type": "application/json",
         Authorization: `Bearer ${creds.accessToken}`,
       },
-      body: JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", ...payload }),
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        ...payload,
+      }),
     });
     const txt = await r.text();
     let json: any = null;
-    try { json = JSON.parse(txt); } catch {}
+    try {
+      json = JSON.parse(txt);
+    } catch {}
     if (!r.ok) return { ok: false, error: `cloud-api ${r.status}: ${txt.slice(0, 300)}` };
     return { ok: true, idMessage: json?.messages?.[0]?.id };
   } catch (e: any) {
@@ -2890,13 +3225,21 @@ async function cloudApiSend(
 }
 
 export async function cloudApiSendText(creds: CloudApiCreds, toPhone: string, body: string) {
-  return cloudApiSend(creds, { to: toPhone, type: "text", text: { preview_url: false, body: body.slice(0, 4096) } });
+  return cloudApiSend(creds, {
+    to: toPhone,
+    type: "text",
+    text: { preview_url: false, body: body.slice(0, 4096) },
+  });
 }
 
 // Map our provider-agnostic WaInteractiveMessage to a Cloud API interactive payload.
 // WhatsApp caps: reply-button title ≤20, list button ≤20, row title ≤24, description ≤72,
 // ≤3 buttons, ≤10 rows total. Our category-first gating keeps lists within these limits.
-export async function cloudApiSendInteractive(creds: CloudApiCreds, toPhone: string, im: WaInteractiveMessage) {
+export async function cloudApiSendInteractive(
+  creds: CloudApiCreds,
+  toPhone: string,
+  im: WaInteractiveMessage,
+) {
   if (im.kind === "buttons") {
     return cloudApiSend(creds, {
       to: toPhone,
@@ -2948,7 +3291,11 @@ export async function cloudApiSendTemplate(
       name: templateName,
       language: { code: languageCode },
       ...(bodyParams.length
-        ? { components: [{ type: "body", parameters: bodyParams.map((t) => ({ type: "text", text: t })) }] }
+        ? {
+            components: [
+              { type: "body", parameters: bodyParams.map((t) => ({ type: "text", text: t })) },
+            ],
+          }
         : {}),
     },
   });
@@ -3025,9 +3372,14 @@ type V3BookingState = {
   managing_request_text?: string; // original free-text ("перенесите на 19:00") carried past the choice step
   managing_new_slot_start?: string;
   managing_new_slot_end?: string;
-  managing_new_master_id?: string;   // set when the client agreed to move to ANOTHER master's slot
+  managing_new_master_id?: string; // set when the client agreed to move to ANOTHER master's slot
   managing_new_master_name?: string;
-  managing_slots_cache?: Array<{ start: string; end: string; master_id?: string; master_name?: string }>;
+  managing_slots_cache?: Array<{
+    start: string;
+    end: string;
+    master_id?: string;
+    master_name?: string;
+  }>;
 };
 
 function buildBranchListMsg(branches: WaBranchInfo[]): WaInteractiveMessage {
@@ -3035,13 +3387,15 @@ function buildBranchListMsg(branches: WaBranchInfo[]): WaInteractiveMessage {
     kind: "list",
     text: "Выберите филиал:",
     buttonText: "Открыть список",
-    sections: [{
-      rows: branches.map((b) => ({
-        rowId: `branch_${b.id}`,
-        title: b.name.slice(0, 24),
-        description: b.address?.slice(0, 72) ?? undefined,
-      })),
-    }],
+    sections: [
+      {
+        rows: branches.map((b) => ({
+          rowId: `branch_${b.id}`,
+          title: b.name.slice(0, 24),
+          description: b.address?.slice(0, 72) ?? undefined,
+        })),
+      },
+    ],
   };
 }
 
@@ -3056,7 +3410,10 @@ function truncateRowTitle(name: string, max = 24): string {
   return cut.trimEnd() + "…";
 }
 
-function formatDurationV3(minutes: number | null | undefined, language: "ru" | "ky" | "en"): string {
+function formatDurationV3(
+  minutes: number | null | undefined,
+  language: "ru" | "ky" | "en",
+): string {
   if (!minutes || minutes <= 0) return "";
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
@@ -3117,7 +3474,10 @@ function categoriesOf(services: any[], language: "ru" | "ky" | "en"): string[] {
   const order: string[] = [];
   for (const s of services) {
     const cat = serviceCategory(s, language);
-    if (!seen.has(cat)) { seen.add(cat); order.push(cat); }
+    if (!seen.has(cat)) {
+      seen.add(cat);
+      order.push(cat);
+    }
   }
   return order;
 }
@@ -3135,7 +3495,10 @@ function buildCategoryListMsg(services: any[], language: "ru" | "ky" | "en"): Wa
     .map((cat) => ({
       rowId: `cat_${cat}`,
       title: truncateRowTitle(cat),
-      description: (language === "ky" ? `${counts.get(cat)} кызмат` : `${counts.get(cat)} услуг`).slice(0, 72),
+      description: (language === "ky"
+        ? `${counts.get(cat)} кызмат`
+        : `${counts.get(cat)} услуг`
+      ).slice(0, 72),
       fullName: cat,
     }));
   return { kind: "list", text: question, buttonText: btnText, sections: [{ rows }] };
@@ -3180,31 +3543,61 @@ function buildSlotListMsg(
   return { kind: "list", text: question, buttonText: "Выбрать время", sections: [{ rows }] };
 }
 
-function buildMasterListMsg(masters: DbMaster[], language: "ru" | "ky" | "en"): WaInteractiveMessage {
+function buildMasterListMsg(
+  masters: DbMaster[],
+  language: "ru" | "ky" | "en",
+): WaInteractiveMessage {
   const question = language === "ky" ? "Мастерди тандаңыз:" : "Выберите мастера:";
   const rows = masters.map((m) => ({ rowId: `master_${m.id}`, title: m.name.slice(0, 24) }));
   return { kind: "list", text: question, buttonText: "Выбрать мастера", sections: [{ rows }] };
 }
 
-function buildConfirmMsg(details: string, language: "ru" | "ky" | "en"): WaInteractiveMessage {
+// A tapped button may reach the state machine as the button TITLE ("✅ Да, записать") when
+// the id is lost in transport — strip leading emoji/punctuation so ^-anchored regexes match.
+function stripLeadingNonWord(s: string): string {
+  return s.replace(/^[^\p{L}\p{N}]+/u, "");
+}
+
+function buildConfirmMsg(
+  details: string,
+  language: "ru" | "ky" | "en",
+  opts?: { withReschedule?: boolean },
+): WaInteractiveMessage {
   return {
     kind: "buttons",
     text: details,
     buttons: [
       { id: "confirm_yes", text: language === "ky" ? "✅ Ооба, жазылам" : "✅ Да, записать" },
+      // Cloud API caps reply-button titles at 20 UTF-16 units, Green-API at 25 — both fit.
+      ...(opts?.withReschedule
+        ? [
+            {
+              id: "confirm_reschedule",
+              text: language === "ky" ? "🔄 Башка убакыт" : "🔄 Нет, перенести",
+            },
+          ]
+        : []),
       { id: "confirm_no", text: language === "ky" ? "❌ Жок, өзгөртөм" : "❌ Нет, изменить" },
     ],
   };
 }
 
-function buildManageChoiceMsg(candidates: Array<{ id: string; label: string }>, language: "ru" | "ky" | "en"): WaInteractiveMessage {
+function buildManageChoiceMsg(
+  candidates: Array<{ id: string; label: string }>,
+  language: "ru" | "ky" | "en",
+): WaInteractiveMessage {
   const question = language === "ky" ? "Кайсы жазылууну тандайсыз?" : "Какую запись выбираем?";
   const rows = candidates.map((c) => ({
     rowId: `mgappt_${c.id}`,
     title: c.label.slice(0, 24),
     description: c.label.slice(0, 72),
   }));
-  return { kind: "list", text: question, buttonText: language === "ky" ? "Тандоо" : "Выбрать", sections: [{ rows }] };
+  return {
+    kind: "list",
+    text: question,
+    buttonText: language === "ky" ? "Тандоо" : "Выбрать",
+    sections: [{ rows }],
+  };
 }
 
 function buildManageActionMsg(language: "ru" | "ky" | "en"): WaInteractiveMessage {
@@ -3247,7 +3640,9 @@ async function callGeminiV3Faq(
     `Отвечай ТОЛЬКО на вопросы о салоне (расписание, адрес, услуги, мастера). Если вопрос не о салоне — вежливо откажись.`,
   ];
   if (salonInfo?.working_hours) {
-    const wh = Object.entries(salonInfo.working_hours).map(([k, v]) => `${k}: ${v}`).join(", ");
+    const wh = Object.entries(salonInfo.working_hours)
+      .map(([k, v]) => `${k}: ${v}`)
+      .join(", ");
     sysLines.push(`Режим работы: ${wh}`);
   }
   if (salonInfo?.address) sysLines.push(`Адрес: ${salonInfo.address}`);
@@ -3262,7 +3657,11 @@ async function callGeminiV3Faq(
         systemInstruction: { parts: [{ text: sysLines.join("\n") }] },
         contents: [{ role: "user", parts: [{ text: userText }] }],
         toolConfig: { functionCallingConfig: { mode: "NONE" } },
-        generationConfig: { temperature: 0.5, maxOutputTokens: 400, thinkingConfig: { thinkingBudget: 0 } },
+        generationConfig: {
+          temperature: 0.5,
+          maxOutputTokens: 400,
+          thinkingConfig: { thinkingBudget: 0 },
+        },
       }),
     });
     const json: any = await r.json();
@@ -3333,7 +3732,8 @@ function extractManageTime(text: string): { time: string; rest: string } | null 
     const suf = worded[2].toLowerCase();
     if (suf === "вечера" && h < 12) h += 12;
     if (suf === "дня" && h <= 6) h += 12;
-    if (h <= 23) return { time: `${String(h).padStart(2, "0")}:00`, rest: text.replace(worded[0], " ") };
+    if (h <= 23)
+      return { time: `${String(h).padStart(2, "0")}:00`, rest: text.replace(worded[0], " ") };
   }
   return null;
 }
@@ -3357,7 +3757,10 @@ function nearestSlots(slots: MergedSlot[], reqTime: string, n: number, tz: strin
   const [rh, rm] = reqTime.split(":").map(Number);
   const req = rh * 60 + rm;
   return [...slots]
-    .sort((a, b) => Math.abs(slotMinutesInTz(a.start, tz) - req) - Math.abs(slotMinutesInTz(b.start, tz) - req))
+    .sort(
+      (a, b) =>
+        Math.abs(slotMinutesInTz(a.start, tz) - req) - Math.abs(slotMinutesInTz(b.start, tz) - req),
+    )
     .slice(0, n)
     .sort((a, b) => (a.start < b.start ? -1 : 1));
 }
@@ -3384,7 +3787,11 @@ async function translateGreetingV3(
         systemInstruction: { parts: [{ text: sys }] },
         contents: [{ role: "user", parts: [{ text }] }],
         toolConfig: { functionCallingConfig: { mode: "NONE" } },
-        generationConfig: { temperature: 0.3, maxOutputTokens: 400, thinkingConfig: { thinkingBudget: 0 } },
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens: 400,
+          thinkingConfig: { thinkingBudget: 0 },
+        },
       }),
     });
     const json: any = await r.json();
@@ -3479,13 +3886,17 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       price_max: svcRow.price_max,
     };
     if (svcRow.price_type === "range" && !newV3.price_override && !newV3.price_skipped) {
-      const ask = language === "ky"
-        ? `«${svcRow.name}» — баасы ${svcRow.price}–${svcRow.price_max} сом. Так баасын аныктоо үчүн фото жиберсеңиз болот же "жоксуз фото" деп жазыңыз.`
-        : `Услуга «${svcRow.name}» — цена от ${svcRow.price} до ${svcRow.price_max} сом. Пришлите фото для точной оценки стоимости или напишите "без фото".`;
+      const ask =
+        language === "ky"
+          ? `«${svcRow.name}» — баасы ${svcRow.price}–${svcRow.price_max} сом. Так баасын аныктоо үчүн фото жиберсеңиз болот же "жоксуз фото" деп жазыңыз.`
+          : `Услуга «${svcRow.name}» — цена от ${svcRow.price} до ${svcRow.price_max} сом. Пришлите фото для точной оценки стоимости или напишите "без фото".`;
       return finish(ask, "awaiting_photo", newV3);
     }
     const dateMap = buildDateMap(tz, 7);
-    const q = language === "ky" ? `*${svcRow.name}* — кайсы күнгө жазыласыз?` : `*${svcRow.name}* — выберите дату:`;
+    const q =
+      language === "ky"
+        ? `*${svcRow.name}* — кайсы күнгө жазыласыз?`
+        : `*${svcRow.name}* — выберите дату:`;
     return finish(q, "awaiting_date_choice", newV3, buildDateListMsg(dateMap, language));
   }
 
@@ -3494,6 +3905,31 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
   function reaskServiceMenu(reply: string, baseV3: V3BookingState, services: any[]): WaAgentResult {
     const menu = initialServiceMenu(services, language);
     return finish(reply, menu.state, baseV3, menu.msg);
+  }
+
+  // Booking summary + confirm buttons. Shared by awaiting_name and the paths where the name
+  // is already known (re-selection after "Нет, перенести", unrecognized reply at confirm).
+  function confirmBooking(nextV3: V3BookingState): WaAgentResult {
+    const dateLabel = nextV3.date ? formatDateInTz(`${nextV3.date}T12:00:00Z`, tz) : "—";
+    const timeLabel = nextV3.slot_start ? formatTimeInTz(nextV3.slot_start, tz) : "—";
+    const masterLabel =
+      nextV3.master_name ?? (language === "ky" ? "кез келген мастер" : "любой мастер");
+    const priceStr =
+      nextV3.price_override != null
+        ? language === "ky"
+          ? `\n💰 Болжолдуу баа: ${nextV3.price_override} сом`
+          : `\n💰 Ориентировочная стоимость: ${nextV3.price_override} сом`
+        : "";
+    const details =
+      language === "ky"
+        ? `✅ Жазылуу маалыматы:\n\n💇 ${nextV3.service_name}\n📅 ${dateLabel}\n⏰ ${timeLabel}\n👤 Мастер: ${masterLabel}\n🙍 Ат: ${nextV3.client_name}${priceStr}\n\nРастайсызбы?`
+        : `✅ Данные записи:\n\n💇 ${nextV3.service_name}\n📅 ${dateLabel}\n⏰ ${timeLabel}\n👤 Мастер: ${masterLabel}\n🙍 Имя: ${nextV3.client_name}${priceStr}\n\nПодтверждаете?`;
+    return finish(
+      details,
+      "awaiting_final_confirm",
+      nextV3,
+      buildConfirmMsg(details, language, { withReschedule: true }),
+    );
   }
 
   const state = input.state;
@@ -3513,7 +3949,11 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
 
   // Reschedule flow entry: try to honour a date/time the client already named
   // ("перенесите на завтра на 19:00") instead of walking them through date+slot lists.
-  async function startRescheduleV3(baseV3: V3BookingState, requestText: string, apptStartsAt: string): Promise<WaAgentResult> {
+  async function startRescheduleV3(
+    baseV3: V3BookingState,
+    requestText: string,
+    apptStartsAt: string,
+  ): Promise<WaAgentResult> {
     const v3r: V3BookingState = { ...baseV3, managing_action: "reschedule" };
     const timeHit = requestText ? extractManageTime(requestText) : null;
     const reqDate =
@@ -3522,7 +3962,12 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       (timeHit ? isoDateInTz(apptStartsAt, tz) : null);
     if (!reqDate) {
       const q = language === "ky" ? "Кайсы күнгө которобуз?" : "На какую дату переносим?";
-      return finish(q, "awaiting_reschedule_date", v3r, buildDateListMsg(buildDateMap(tz, 7), language));
+      return finish(
+        q,
+        "awaiting_reschedule_date",
+        v3r,
+        buildDateListMsg(buildDateMap(tz, 7), language),
+      );
     }
     return offerRescheduleSlots(v3r, reqDate, timeHit?.time ?? null);
   }
@@ -3530,27 +3975,57 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
   // Shows reschedule options for a chosen date: exact requested time → straight to confirm;
   // busy → nearest slots of the same master; master fully booked → other masters who do the
   // service that day; nobody free → pick another date.
-  async function offerRescheduleSlots(v3r: V3BookingState, dateIso: string, reqTime: string | null): Promise<WaAgentResult> {
-    const masters = await loadMastersForService(db, input.salon.salonId, v3r.managing_service_id ?? "", null);
+  async function offerRescheduleSlots(
+    v3r: V3BookingState,
+    dateIso: string,
+    reqTime: string | null,
+  ): Promise<WaAgentResult> {
+    const masters = await loadMastersForService(
+      db,
+      input.salon.salonId,
+      v3r.managing_service_id ?? "",
+      null,
+    );
     const own = masters.find((m) => m.id === v3r.managing_master_id);
     if (!own) {
-      const msg = language === "ky" ? "Мастер табылган жок. Салонго кайрылыңыз." : "Не удалось найти мастера. Свяжитесь с салоном напрямую.";
+      const msg =
+        language === "ky"
+          ? "Мастер табылган жок. Салонго кайрылыңыз."
+          : "Не удалось найти мастера. Свяжитесь с салоном напрямую.";
       return finish(msg, "done", {});
     }
     const { isoLocalDate } = nowInTz(tz);
     const minStart = dateIso === isoLocalDate ? new Date() : undefined;
-    const ownSlots = await fetchMergedSlots({ db, masters: [own], serviceId: v3r.managing_service_id!, day: dateIso, tz, minStartTime: minStart, limit: 8 });
+    const ownSlots = await fetchMergedSlots({
+      db,
+      masters: [own],
+      serviceId: v3r.managing_service_id!,
+      day: dateIso,
+      tz,
+      minStartTime: minStart,
+      limit: 8,
+    });
     const dateLabel = formatDateInTz(`${dateIso}T12:00:00Z`, tz);
 
     if (reqTime) {
       const exact = ownSlots.find((s) => formatTimeInTz(s.start, tz) === reqTime);
       if (exact) {
         debug.actions.push(`reschedule_fast_path:${dateIso}T${reqTime}`);
-        const details = language === "ky"
-          ? `Жаңы убакыт: ${dateLabel}, ${reqTime}. Ырастайсызбы?`
-          : `Новое время: ${dateLabel}, ${reqTime}. Подтверждаете?`;
-        const newV3 = { ...v3r, managing_new_slot_start: exact.start, managing_new_slot_end: exact.end };
-        return finish(details, "awaiting_manage_confirm", newV3, buildConfirmMsg(details, language));
+        const details =
+          language === "ky"
+            ? `Жаңы убакыт: ${dateLabel}, ${reqTime}. Ырастайсызбы?`
+            : `Новое время: ${dateLabel}, ${reqTime}. Подтверждаете?`;
+        const newV3 = {
+          ...v3r,
+          managing_new_slot_start: exact.start,
+          managing_new_slot_end: exact.end,
+        };
+        return finish(
+          details,
+          "awaiting_manage_confirm",
+          newV3,
+          buildConfirmMsg(details, language),
+        );
       }
     }
 
@@ -3559,18 +4034,34 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       debug.actions.push(reqTime ? "reschedule_nearest_own" : "reschedule_slot_list");
       const cache = chosen.map((s) => ({ start: s.start, end: s.end }));
       const head = reqTime
-        ? (language === "ky"
-            ? `Тилекке каршы, ${reqTime} бош эмес. Ошол күнү мастерде жакынкы бош убакыт:`
-            : `К сожалению, на ${reqTime} занято. Ближайшее свободное время у мастера в этот день:`)
-        : (language === "ky" ? `${dateLabel} — убакытты тандаңыз:` : `${dateLabel} — выберите время:`);
-      return finish(head, "awaiting_reschedule_slot", { ...v3r, managing_slots_cache: cache }, buildSlotListMsg(chosen, tz, language));
+        ? language === "ky"
+          ? `Тилекке каршы, ${reqTime} бош эмес. Ошол күнү мастерде жакынкы бош убакыт:`
+          : `К сожалению, на ${reqTime} занято. Ближайшее свободное время у мастера в этот день:`
+        : language === "ky"
+          ? `${dateLabel} — убакытты тандаңыз:`
+          : `${dateLabel} — выберите время:`;
+      return finish(
+        head,
+        "awaiting_reschedule_slot",
+        { ...v3r, managing_slots_cache: cache },
+        buildSlotListMsg(chosen, tz, language),
+      );
     }
 
     // Own master fully booked that day → other masters offering the same service.
     const others = masters.filter((m) => m.id !== v3r.managing_master_id);
-    const otherSlots = others.length > 0
-      ? await fetchMergedSlots({ db, masters: others, serviceId: v3r.managing_service_id!, day: dateIso, tz, minStartTime: minStart, limit: 8 })
-      : [];
+    const otherSlots =
+      others.length > 0
+        ? await fetchMergedSlots({
+            db,
+            masters: others,
+            serviceId: v3r.managing_service_id!,
+            day: dateIso,
+            tz,
+            minStartTime: minStart,
+            limit: 8,
+          })
+        : [];
     if (otherSlots.length > 0) {
       debug.actions.push("reschedule_other_masters");
       const byId = new Map(masters.map((m) => [m.id, m.name]));
@@ -3581,17 +4072,29 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         master_id: s.master_ids[0],
         master_name: byId.get(s.master_ids[0] ?? "") ?? "",
       }));
-      const head = language === "ky"
-        ? `${own.name} ошол күнү бош эмес, бирок башка мастерлерде убакыт бар:`
-        : `У мастера ${own.name} на этот день всё занято, но есть время у других мастеров:`;
-      return finish(head, "awaiting_reschedule_slot", { ...v3r, managing_slots_cache: cache }, buildSlotListMsg(chosen, tz, language, byId));
+      const head =
+        language === "ky"
+          ? `${own.name} ошол күнү бош эмес, бирок башка мастерлерде убакыт бар:`
+          : `У мастера ${own.name} на этот день всё занято, но есть время у других мастеров:`;
+      return finish(
+        head,
+        "awaiting_reschedule_slot",
+        { ...v3r, managing_slots_cache: cache },
+        buildSlotListMsg(chosen, tz, language, byId),
+      );
     }
 
     debug.actions.push("reschedule_no_slots_that_day");
-    const msg = language === "ky"
-      ? "Бул күнгө бош убакыт жок. Башка күн тандаңыз:"
-      : "На эту дату нет свободного времени ни у одного мастера. Выберите другую дату:";
-    return finish(msg, "awaiting_reschedule_date", { ...v3r, managing_slots_cache: undefined }, buildDateListMsg(buildDateMap(tz, 7), language));
+    const msg =
+      language === "ky"
+        ? "Бул күнгө бош убакыт жок. Башка күн тандаңыз:"
+        : "На эту дату нет свободного времени ни у одного мастера. Выберите другую дату:";
+    return finish(
+      msg,
+      "awaiting_reschedule_date",
+      { ...v3r, managing_slots_cache: undefined },
+      buildDateListMsg(buildDateMap(tz, 7), language),
+    );
   }
 
   // ===== Manage an existing appointment (cancel/reschedule) — checked in ANY state except
@@ -3600,10 +4103,25 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
   // back to "done" instead of trying to resume whatever new-booking flow was interrupted —
   // the client just re-starts a booking afterwards (which always shows the full menu again).
   const manageFlowStates: WaAgentState[] = [
-    "awaiting_manage_choice", "awaiting_manage_action",
-    "awaiting_reschedule_date", "awaiting_reschedule_slot", "awaiting_manage_confirm",
+    "awaiting_manage_choice",
+    "awaiting_manage_action",
+    "awaiting_reschedule_date",
+    "awaiting_reschedule_slot",
+    "awaiting_manage_confirm",
   ];
-  const manageEligible = !manageFlowStates.includes(state) && !selectedId && !!combinedText;
+  // At the final-confirm step a text that is just a confirm-button title (id lost in
+  // transport) must reach the confirm handler, not the manage-intent interception below —
+  // "Нет, перенести" is about THIS draft, not an existing appointment.
+  const looksLikeConfirmButtonTitle =
+    state === "awaiting_final_confirm" &&
+    /^(да, запис|нет, перенес|нет, измен|ооба, жазыл|башка убакыт|жок, өзгөрт)/.test(
+      stripLeadingNonWord(combinedText.trim().toLowerCase()),
+    );
+  const manageEligible =
+    !manageFlowStates.includes(state) &&
+    !selectedId &&
+    !!combinedText &&
+    !looksLikeConfirmButtonTitle;
   // "cancel"/"reschedule" when the wording is explicit (incl. fuzzy match for typos like
   // "пенеренести"), "ambiguous" for phrases like "не смогу прийти" that could mean either —
   // those still get the Отменить/Перенести buttons.
@@ -3611,7 +4129,8 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
   if (manageEligible) {
     const toks = normalizeForMatch(combinedText).split(/\s+/).filter(Boolean);
     const wantsCancel =
-      /отмен/i.test(combinedText) || /жокко чыгар/i.test(combinedText) ||
+      /отмен/i.test(combinedText) ||
+      /жокко чыгар/i.test(combinedText) ||
       fuzzyHit(toks, ["отмените", "отменить", "отмена", "отменяю", "отменим"], 2);
     const wantsReschedule =
       /перенес|перенос|перезапис/i.test(combinedText) ||
@@ -3619,8 +4138,9 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       /которуп ко|кийинкиге калтыр|башка убак/i.test(combinedText) ||
       fuzzyHit(toks, ["перенести", "перенесите", "перенос", "переносим", "перенесем"], 2);
     const ambiguous =
-      /не смогу прийти|не могу прийти|не приду|не получится прийти|не успеваю/i.test(combinedText) ||
-      /келе албайм|жетишпейм/i.test(combinedText);
+      /не смогу прийти|не могу прийти|не приду|не получится прийти|не успеваю/i.test(
+        combinedText,
+      ) || /келе албайм|жетишпейм/i.test(combinedText);
     if (wantsCancel) manageAction = "cancel";
     else if (wantsReschedule) manageAction = "reschedule";
     else if (ambiguous) manageAction = "ambiguous";
@@ -3673,29 +4193,41 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         };
         if (manageAction === "cancel") {
           // The client already said "отменить" — skip the action menu, go straight to confirm.
-          const details = language === "ky"
-            ? `Чын эле бул жазылууну жокко чыгарабызбы?\n${candidates[0].label}`
-            : `Точно отменяем эту запись?\n${candidates[0].label}`;
-          return finish(details, "awaiting_manage_confirm", { ...newV3, managing_action: "cancel" }, buildConfirmMsg(details, language));
+          const details =
+            language === "ky"
+              ? `Чын эле бул жазылууну жокко чыгарабызбы?\n${candidates[0].label}`
+              : `Точно отменяем эту запись?\n${candidates[0].label}`;
+          return finish(
+            details,
+            "awaiting_manage_confirm",
+            { ...newV3, managing_action: "cancel" },
+            buildConfirmMsg(details, language),
+          );
         }
         if (manageAction === "reschedule") {
           return startRescheduleV3(newV3, combinedText, a.starts_at);
         }
         // Ambiguous ("не смогу прийти") → let the client pick cancel/reschedule/leave.
-        const q = language === "ky"
-          ? `Сиздин жазылууңуз: ${candidates[0].label}. Эмне кылабыз?`
-          : `Ваша запись: ${candidates[0].label}. Что делаем?`;
+        const q =
+          language === "ky"
+            ? `Сиздин жазылууңуз: ${candidates[0].label}. Эмне кылабыз?`
+            : `Ваша запись: ${candidates[0].label}. Что делаем?`;
         return finish(q, "awaiting_manage_action", newV3, buildManageActionMsg(language));
       }
       debug.actions.push(`manage_intent:${upcoming.length}_found:${manageAction}`);
       const q = language === "ky" ? "Кайсы жазылууну тандайсыз?" : "Какую запись выбираем?";
       // Remember the action (and the original text with its date/time) so after the client
       // picks WHICH appointment we don't re-ask what to do with it.
-      return finish(q, "awaiting_manage_choice", {
-        managing_candidates: candidates,
-        managing_action: manageAction === "ambiguous" ? undefined : manageAction,
-        managing_request_text: manageAction === "reschedule" ? combinedText : undefined,
-      }, buildManageChoiceMsg(candidates, language));
+      return finish(
+        q,
+        "awaiting_manage_choice",
+        {
+          managing_candidates: candidates,
+          managing_action: manageAction === "ambiguous" ? undefined : manageAction,
+          managing_request_text: manageAction === "reschedule" ? combinedText : undefined,
+        },
+        buildManageChoiceMsg(candidates, language),
+      );
     }
     debug.actions.push("manage_intent:none_found");
   }
@@ -3704,12 +4236,16 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
   if (state === "idle" || state === "done") {
     const islamicGreeting = /ассаламу?\s*а?лейку?м|ассалму|салам\s+а?ллейку?м/i.test(combinedText);
     let greet = islamicGreeting
-      ? (language === "ky" ? "Ваалейкум ассалам! " : "Ваалейкум ас-салям! ")
+      ? language === "ky"
+        ? "Ваалейкум ассалам! "
+        : "Ваалейкум ас-салям! "
       : "";
     // The admin writes one greeting in Russian; for other client languages we
     // translate it on the fly (constrained to the salon's enabled languages),
     // instead of hardcoding per-language strings.
-    const baseGreeting = input.config.greeting?.trim() || `Здравствуйте! Я помощник салона «${input.salon.salonName}».`;
+    const baseGreeting =
+      input.config.greeting?.trim() ||
+      `Здравствуйте! Я помощник салона «${input.salon.salonName}».`;
     if (language === "ru") {
       greet += baseGreeting;
     } else {
@@ -3724,9 +4260,10 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
 
     const services = await loadAiVisibleServicesForSalon(db, input.salon.salonId);
     if (services.length === 0) {
-      const msg = language === "ky"
-        ? `${greet}\n\nКызматтар азырынча жок. Салонго түз кайрылыңыз.`
-        : `${greet}\n\nУслуги ещё не настроены. Пожалуйста, свяжитесь с салоном напрямую.`;
+      const msg =
+        language === "ky"
+          ? `${greet}\n\nКызматтар азырынча жок. Салонго түз кайрылыңыз.`
+          : `${greet}\n\nУслуги ещё не настроены. Пожалуйста, свяжитесь с салоном напрямую.`;
       return finish(msg, "done", v3);
     }
 
@@ -3752,27 +4289,48 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         const t = normalizeForMatch(combinedText);
         return n.includes(t) || t.includes(n);
       });
-      if (found) { branchId = found.id; debug.actions.push(`branch_text_match:${found.id}`); }
+      if (found) {
+        branchId = found.id;
+        debug.actions.push(`branch_text_match:${found.id}`);
+      }
     }
 
     if (!branchId) {
       const faqReply = combinedText
-        ? await callGeminiV3Faq(apiKey, input.salon.salonName, input.salonInfo, input.config, combinedText, language)
+        ? await callGeminiV3Faq(
+            apiKey,
+            input.salon.salonName,
+            input.salonInfo,
+            input.config,
+            combinedText,
+            language,
+          )
         : "";
       const reask = language === "ky" ? "Кайсы филиалды тандаңыз?" : "Пожалуйста, выберите филиал:";
-      return finish(faqReply ? `${faqReply}\n\n${reask}` : reask, "awaiting_branch", v3, buildBranchListMsg(input.branches));
+      return finish(
+        faqReply ? `${faqReply}\n\n${reask}` : reask,
+        "awaiting_branch",
+        v3,
+        buildBranchListMsg(input.branches),
+      );
     }
 
     const newV3 = { ...v3, branch_id: branchId };
     const services = await loadAiVisibleServicesForSalon(db, input.salon.salonId);
     if (services.length === 0) {
-      const msg = language === "ky" ? "Бул филиалда кызматтар жок." : "В этом филиале услуги не настроены.";
+      const msg =
+        language === "ky" ? "Бул филиалда кызматтар жок." : "В этом филиале услуги не настроены.";
       return finish(msg, "done", newV3);
     }
     const menu = initialServiceMenu(services, language);
-    const q = menu.state === "awaiting_category"
-      ? (language === "ky" ? "Кайсы багытты тандайсыз?" : "Выберите категорию услуг:")
-      : (language === "ky" ? "Кайсы кызматка жазыласыз?" : "На какую услугу вас записать?");
+    const q =
+      menu.state === "awaiting_category"
+        ? language === "ky"
+          ? "Кайсы багытты тандайсыз?"
+          : "Выберите категорию услуг:"
+        : language === "ky"
+          ? "Кайсы кызматка жазыласыз?"
+          : "На какую услугу вас записать?";
     return finish(q, menu.state, newV3, menu.msg);
   }
 
@@ -3796,30 +4354,51 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       debug.actions.push(`cat_selected:${category}`);
     } else if (combinedText) {
       const t = normalizeForMatch(combinedText);
-      category = categoriesOf(services, language).find((c) => {
-        const n = normalizeForMatch(c);
-        return !!n && (n.includes(t) || t.includes(n));
-      }) ?? null;
+      category =
+        categoriesOf(services, language).find((c) => {
+          const n = normalizeForMatch(c);
+          return !!n && (n.includes(t) || t.includes(n));
+        }) ?? null;
       if (category) debug.actions.push(`cat_text_match:${category}`);
     }
 
     if (!category) {
-      const faqCue = /\?|расписани|часы|работаете|адрес|где вы|умеете|делаете|ведёте|принимаете|жасайсыз|иштейсиз|убакт|дарек|канча|барбы/i.test(combinedText);
-      const faqReply = (faqCue && combinedText)
-        ? await callGeminiV3Faq(apiKey, input.salon.salonName, input.salonInfo, input.config, combinedText, language)
-        : "";
+      const faqCue =
+        /\?|расписани|часы|работаете|адрес|где вы|умеете|делаете|ведёте|принимаете|жасайсыз|иштейсиз|убакт|дарек|канча|барбы/i.test(
+          combinedText,
+        );
+      const faqReply =
+        faqCue && combinedText
+          ? await callGeminiV3Faq(
+              apiKey,
+              input.salon.salonName,
+              input.salonInfo,
+              input.config,
+              combinedText,
+              language,
+            )
+          : "";
       const reask = language === "ky" ? "Багытты тандаңыз:" : "Выберите, пожалуйста, категорию:";
-      return finish(faqReply ? `${faqReply}\n\n${reask}` : reask, "awaiting_category", v3, buildCategoryListMsg(services, language));
+      return finish(
+        faqReply ? `${faqReply}\n\n${reask}` : reask,
+        "awaiting_category",
+        v3,
+        buildCategoryListMsg(services, language),
+      );
     }
 
     const inCat = services
       .filter((s: any) => serviceCategory(s, language) === category)
       .slice(0, SERVICE_LIST_ROW_LIMIT);
     if (inCat.length === 0) {
-      const reask = language === "ky" ? "Бул багытта кызмат жок. Башка багытты тандаңыз:" : "В этой категории нет услуг. Выберите другую:";
+      const reask =
+        language === "ky"
+          ? "Бул багытта кызмат жок. Башка багытты тандаңыз:"
+          : "В этой категории нет услуг. Выберите другую:";
       return finish(reask, "awaiting_category", v3, buildCategoryListMsg(services, language));
     }
-    const q = language === "ky" ? `*${category}* — кызматты тандаңыз:` : `*${category}* — выберите услугу:`;
+    const q =
+      language === "ky" ? `*${category}* — кызматты тандаңыз:` : `*${category}* — выберите услугу:`;
     return finish(q, "awaiting_service", v3, buildServiceListMsg(inCat, language));
   }
 
@@ -3833,21 +4412,38 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       debug.actions.push(`svc_selected:${serviceId}`);
     } else if (combinedText) {
       const found = findServiceByText(combinedText, services);
-      if (found) { serviceId = (found as any).id; debug.actions.push(`svc_text_match:${serviceId}`); }
+      if (found) {
+        serviceId = (found as any).id;
+        debug.actions.push(`svc_text_match:${serviceId}`);
+      }
     }
 
     if (!serviceId) {
-      const faqCue = /\?|расписани|часы|работаете|адрес|где вы|умеете|делаете|ведёте|принимаете|жасайсыз|иштейсиз|убакт|дарек|канча|барбы/i.test(combinedText);
-      const faqReply = (faqCue && combinedText)
-        ? await callGeminiV3Faq(apiKey, input.salon.salonName, input.salonInfo, input.config, combinedText, language)
-        : "";
+      const faqCue =
+        /\?|расписани|часы|работаете|адрес|где вы|умеете|делаете|ведёте|принимаете|жасайсыз|иштейсиз|убакт|дарек|канча|барбы/i.test(
+          combinedText,
+        );
+      const faqReply =
+        faqCue && combinedText
+          ? await callGeminiV3Faq(
+              apiKey,
+              input.salon.salonName,
+              input.salonInfo,
+              input.config,
+              combinedText,
+              language,
+            )
+          : "";
       const reask = language === "ky" ? "Кызматты тандаңыз:" : "Выберите, пожалуйста, услугу:";
       return reaskServiceMenu(faqReply ? `${faqReply}\n\n${reask}` : reask, v3, services);
     }
 
     const svcRow = services.find((s: any) => s.id === serviceId) as any;
     if (!svcRow) {
-      const reask = language === "ky" ? "Кызмат табылган жок. Кайра тандаңыз:" : "Услуга не найдена. Выберите ещё раз:";
+      const reask =
+        language === "ky"
+          ? "Кызмат табылган жок. Кайра тандаңыз:"
+          : "Услуга не найдена. Выберите ещё раз:";
       return reaskServiceMenu(reask, v3, services);
     }
 
@@ -3862,70 +4458,95 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       const dl = await downloadImageAsBase64(lastImage.media_signed_url);
       if ("error" in dl) {
         debug.errors.push(`photo_dl:${dl.error}`);
-        const msg = language === "ky"
-          ? "Фото ачылган жок. Кайра жиберип коруңуз 📷 же «жоксуз фото» деп жазыңыз."
-          : "Не удалось открыть фото. Попробуйте ещё раз 📷 или напишите «без фото».";
+        const msg =
+          language === "ky"
+            ? "Фото ачылган жок. Кайра жиберип коруңуз 📷 же «жоксуз фото» деп жазыңыз."
+            : "Не удалось открыть фото. Попробуйте ещё раз 📷 или напишите «без фото».";
         return finish(msg, "awaiting_photo", v3);
       }
       const priced = await priceFromPhoto({
-        apiKey, imageBase64: dl.base64, mime: dl.mime,
-        serviceName: v3.service_name ?? "", priceMin: v3.price_min ?? 0, priceMax: v3.price_max ?? 0,
-        pricingRules: input.config.pricing_rules, language,
+        apiKey,
+        imageBase64: dl.base64,
+        mime: dl.mime,
+        serviceName: v3.service_name ?? "",
+        priceMin: v3.price_min ?? 0,
+        priceMax: v3.price_max ?? 0,
+        pricingRules: input.config.pricing_rules,
+        language,
       });
       const dateMap = buildDateMap(tz, 7);
       if ("error" in priced) {
         debug.errors.push(`vision:${priced.error}`);
-        const msg = language === "ky"
-          ? "Фото боюнча так баа аныктоо мүмкүн болгон жок. Мастер жолугушканда айтат."
-          : "По фото точную цену определить не удалось. Мастер уточнит на месте.";
+        const msg =
+          language === "ky"
+            ? "Фото боюнча так баа аныктоо мүмкүн болгон жок. Мастер жолугушканда айтат."
+            : "По фото точную цену определить не удалось. Мастер уточнит на месте.";
         const dateQ = language === "ky" ? "\n\nКайсы күнгө жазыласыз?" : "\n\nНа какую дату?";
-        return finish(msg + dateQ, "awaiting_date_choice", { ...v3, price_skipped: true }, buildDateListMsg(dateMap, language));
+        return finish(
+          msg + dateQ,
+          "awaiting_date_choice",
+          { ...v3, price_skipped: true },
+          buildDateListMsg(dateMap, language),
+        );
       }
 
       if (priced.confidence === "low") {
         const attempts = (v3.photo_attempts ?? 0) + 1;
         if (attempts < 2) {
           debug.actions.push("photo_low_confidence_retry");
-          const msg = language === "ky"
-            ? "Сүрөттөн так айырмалоо кыйын болду 🙏 Жарыгы жакшы жерде, жакыныраак дагы бир сүрөт жиберип көрүңүзчү."
-            : "По этому фото сложно точно оценить 🙏 Пришлите, пожалуйста, ещё одно фото — при хорошем освещении и поближе.";
+          const msg =
+            language === "ky"
+              ? "Сүрөттөн так айырмалоо кыйын болду 🙏 Жарыгы жакшы жерде, жакыныраак дагы бир сүрөт жиберип көрүңүзчү."
+              : "По этому фото сложно точно оценить 🙏 Пришлите, пожалуйста, ещё одно фото — при хорошем освещении и поближе.";
           return finish(msg, "awaiting_photo", { ...v3, photo_attempts: attempts });
         }
         // Second low-confidence attempt in a row — hand off to a human instead of guessing.
         debug.actions.push("photo_low_confidence_escalate");
-        const clientLabel = input.client.name ? `${input.client.name} (${input.client.phone})` : input.client.phone;
-        const caption = language === "ky"
-          ? `Кардар (${clientLabel}) «${v3.service_name}» кызматы боюнча фото жиберди, бирок ИИ баасын так аныктай алган жок.`
-          : `Клиент (${clientLabel}) прислал фото для услуги «${v3.service_name}», но ИИ не смог уверенно оценить стоимость.`;
-        const msg = language === "ky"
-          ? "Кечиресиз, фото боюнча так баа бере албадым. Администраторго жибердим — ал сиз менен 5 мүнөттүн ичинде байланышат."
-          : "Извините, не смог точно оценить по фото. Передал администратору — он свяжется с вами в течение 5 минут.";
-        return finish(
-          msg,
-          "done",
-          { ...v3, photo_attempts: attempts },
-          undefined,
-          null,
-          { mediaUrl: lastImage.media_signed_url, caption },
-        );
+        const clientLabel = input.client.name
+          ? `${input.client.name} (${input.client.phone})`
+          : input.client.phone;
+        const caption =
+          language === "ky"
+            ? `Кардар (${clientLabel}) «${v3.service_name}» кызматы боюнча фото жиберди, бирок ИИ баасын так аныктай алган жок.`
+            : `Клиент (${clientLabel}) прислал фото для услуги «${v3.service_name}», но ИИ не смог уверенно оценить стоимость.`;
+        const msg =
+          language === "ky"
+            ? "Кечиресиз, фото боюнча так баа бере албадым. Администраторго жибердим — ал сиз менен 5 мүнөттүн ичинде байланышат."
+            : "Извините, не смог точно оценить по фото. Передал администратору — он свяжется с вами в течение 5 минут.";
+        return finish(msg, "done", { ...v3, photo_attempts: attempts }, undefined, null, {
+          mediaUrl: lastImage.media_signed_url,
+          caption,
+        });
       }
 
-      const msg = language === "ky"
-        ? `Болжолдуу баа: ${priced.price} сом (${priced.explanation}). Так баасын мастер айтат.`
-        : `Ориентировочная стоимость: ${priced.price} сом (${priced.explanation}). Точную сумму мастер уточнит на месте.`;
+      const msg =
+        language === "ky"
+          ? `Болжолдуу баа: ${priced.price} сом (${priced.explanation}). Так баасын мастер айтат.`
+          : `Ориентировочная стоимость: ${priced.price} сом (${priced.explanation}). Точную сумму мастер уточнит на месте.`;
       const dateQ = language === "ky" ? "\n\nКайсы күнгө жазыласыз?" : "\n\nНа какую дату?";
-      return finish(msg + dateQ, "awaiting_date_choice", { ...v3, price_override: priced.price }, buildDateListMsg(dateMap, language));
+      return finish(
+        msg + dateQ,
+        "awaiting_date_choice",
+        { ...v3, price_override: priced.price },
+        buildDateListMsg(dateMap, language),
+      );
     }
 
     if (skipPhoto) {
       const dateMap = buildDateMap(tz, 7);
       const msg = language === "ky" ? "Жакшы. Кайсы күнгө жазыласыз?" : "Хорошо. На какую дату?";
-      return finish(msg, "awaiting_date_choice", { ...v3, price_skipped: true }, buildDateListMsg(dateMap, language));
+      return finish(
+        msg,
+        "awaiting_date_choice",
+        { ...v3, price_skipped: true },
+        buildDateListMsg(dateMap, language),
+      );
     }
 
-    const msg = language === "ky"
-      ? "Фото алынган жок. 📷 иконкасы аркылуу фото жиберип же «жоксуз фото» деп жазыңыз."
-      : "Фото не получили. Отправьте фото через иконку 📷 или напишите «без фото».";
+    const msg =
+      language === "ky"
+        ? "Фото алынган жок. 📷 иконкасы аркылуу фото жиберип же «жоксуз фото» деп жазыңыз."
+        : "Фото не получили. Отправьте фото через иконку 📷 или напишите «без фото».";
     return finish(msg, "awaiting_photo", v3);
   }
 
@@ -3944,24 +4565,61 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     const dateMap = buildDateMap(tz, 7);
     if (!dateIso) {
       const faqReply = combinedText.includes("?")
-        ? await callGeminiV3Faq(apiKey, input.salon.salonName, input.salonInfo, input.config, combinedText, language)
+        ? await callGeminiV3Faq(
+            apiKey,
+            input.salon.salonName,
+            input.salonInfo,
+            input.config,
+            combinedText,
+            language,
+          )
         : "";
       const reask = language === "ky" ? "Датаны тандаңыз:" : "Выберите дату:";
-      return finish(faqReply ? `${faqReply}\n\n${reask}` : reask, "awaiting_date_choice", v3, buildDateListMsg(dateMap, language));
+      return finish(
+        faqReply ? `${faqReply}\n\n${reask}` : reask,
+        "awaiting_date_choice",
+        v3,
+        buildDateListMsg(dateMap, language),
+      );
     }
 
-    const masters = await loadMastersForService(db, input.salon.salonId, v3.service_id!, v3.branch_id ?? null);
+    let masters = await loadMastersForService(
+      db,
+      input.salon.salonId,
+      v3.service_id!,
+      v3.branch_id ?? null,
+    );
+    // After "Нет, перенести" the master is already chosen — offer only their slots,
+    // falling back to everyone if that master no longer does the service.
+    if (v3.master_id) {
+      const kept = masters.filter((m) => m.id === v3.master_id);
+      if (kept.length > 0) masters = kept;
+    }
     if (masters.length === 0) {
-      const msg = language === "ky" ? "Бул күнгө мастер жок. Башка күн тандаңыз:" : "На эту дату мастеров нет. Выберите другую дату:";
+      const msg =
+        language === "ky"
+          ? "Бул күнгө мастер жок. Башка күн тандаңыз:"
+          : "На эту дату мастеров нет. Выберите другую дату:";
       return finish(msg, "awaiting_date_choice", v3, buildDateListMsg(dateMap, language));
     }
 
     const { isoLocalDate } = nowInTz(tz);
     const minStart = dateIso === isoLocalDate ? new Date() : undefined;
-    const slots = await fetchMergedSlots({ db, masters, serviceId: v3.service_id!, day: dateIso, tz, minStartTime: minStart, limit: 8 });
+    const slots = await fetchMergedSlots({
+      db,
+      masters,
+      serviceId: v3.service_id!,
+      day: dateIso,
+      tz,
+      minStartTime: minStart,
+      limit: 8,
+    });
 
     if (slots.length === 0) {
-      const msg = language === "ky" ? "Бул күнгө бош убакыт жок. Башка күн тандаңыз:" : "На эту дату нет свободных слотов. Выберите другую дату:";
+      const msg =
+        language === "ky"
+          ? "Бул күнгө бош убакыт жок. Башка күн тандаңыз:"
+          : "На эту дату нет свободных слотов. Выберите другую дату:";
       return finish(msg, "awaiting_date_choice", v3, buildDateListMsg(dateMap, language));
     }
 
@@ -3972,7 +4630,8 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     };
 
     const dateLabel = formatDateInTz(`${dateIso}T12:00:00Z`, tz);
-    const msg = language === "ky" ? `${dateLabel} — убакытты тандаңыз:` : `${dateLabel} — выберите время:`;
+    const msg =
+      language === "ky" ? `${dateLabel} — убакытты тандаңыз:` : `${dateLabel} — выберите время:`;
     return finish(msg, "awaiting_slot_choice", newV3, buildSlotListMsg(slots, tz, language));
   }
 
@@ -4000,11 +4659,12 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       if (timeMatch) {
         const h = parseInt(timeMatch[1], 10);
         const m = parseInt(timeMatch[2], 10);
-        slot = slotsCache.find((s) => {
-          const t = formatTimeInTz(s.start, tz);
-          const [sh, sm] = t.split(":").map(Number);
-          return sh === h && sm === m;
-        }) ?? null;
+        slot =
+          slotsCache.find((s) => {
+            const t = formatTimeInTz(s.start, tz);
+            const [sh, sm] = t.split(":").map(Number);
+            return sh === h && sm === m;
+          }) ?? null;
         if (slot) debug.actions.push(`slot_time_match:${slot.start}`);
       }
       if (!slot) {
@@ -4015,43 +4675,74 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       }
     }
 
-    const mockSlots: MergedSlot[] = slotsCache.map((s) => ({ start: s.start, end: s.end, master_ids: s.masterIds }));
+    const mockSlots: MergedSlot[] = slotsCache.map((s) => ({
+      start: s.start,
+      end: s.end,
+      master_ids: s.masterIds,
+    }));
     if (!slot) {
       const partOfDay = combinedText ? detectPartOfDayV3(combinedText) : null;
       if (partOfDay && slotsCache.length > 0) {
-        const ranges: Record<typeof partOfDay, [number, number]> = { morning: [0, 12], afternoon: [12, 17], evening: [17, 24] };
+        const ranges: Record<typeof partOfDay, [number, number]> = {
+          morning: [0, 12],
+          afternoon: [12, 17],
+          evening: [17, 24],
+        };
         const [lo, hi] = ranges[partOfDay];
         const filtered = mockSlots.filter((s) => {
           const h = parseInt(formatTimeInTz(s.start, tz).split(":")[0], 10);
           return h >= lo && h < hi;
         });
-        const label = partOfDay === "morning"
-          ? (language === "ky" ? "эртең менен" : "утром")
-          : partOfDay === "afternoon"
-          ? (language === "ky" ? "түштө" : "днём")
-          : (language === "ky" ? "кечинде" : "вечером");
+        const label =
+          partOfDay === "morning"
+            ? language === "ky"
+              ? "эртең менен"
+              : "утром"
+            : partOfDay === "afternoon"
+              ? language === "ky"
+                ? "түштө"
+                : "днём"
+              : language === "ky"
+                ? "кечинде"
+                : "вечером";
         if (filtered.length > 0) {
           const msg = language === "ky" ? `Бош убакыттар ${label}:` : `Свободное время ${label}:`;
           return finish(msg, "awaiting_slot_choice", v3, buildSlotListMsg(filtered, tz, language));
         }
-        const msg = language === "ky"
-          ? `${label.charAt(0).toUpperCase() + label.slice(1)} бош орун жок. Башка убакытты тандаңыз:`
-          : `${label.charAt(0).toUpperCase() + label.slice(1)} свободных окон нет. Выберите другое время:`;
+        const msg =
+          language === "ky"
+            ? `${label.charAt(0).toUpperCase() + label.slice(1)} бош орун жок. Башка убакытты тандаңыз:`
+            : `${label.charAt(0).toUpperCase() + label.slice(1)} свободных окон нет. Выберите другое время:`;
         return finish(msg, "awaiting_slot_choice", v3, buildSlotListMsg(mockSlots, tz, language));
       }
       const msg = language === "ky" ? "Убакытты тандаңыз:" : "Пожалуйста, выберите время:";
-      if (slotsCache.length > 0) return finish(msg, "awaiting_slot_choice", v3, buildSlotListMsg(mockSlots, tz, language));
+      if (slotsCache.length > 0)
+        return finish(msg, "awaiting_slot_choice", v3, buildSlotListMsg(mockSlots, tz, language));
       const dateMap = buildDateMap(tz, 7);
-      return finish(msg, "awaiting_date_choice", { ...v3, date: undefined, slots_cache: undefined }, buildDateListMsg(dateMap, language));
+      return finish(
+        msg,
+        "awaiting_date_choice",
+        { ...v3, date: undefined, slots_cache: undefined },
+        buildDateListMsg(dateMap, language),
+      );
     }
 
-    const allMasters = await loadMastersForService(db, input.salon.salonId, v3.service_id!, v3.branch_id ?? null);
-    const eligible = slot.masterIds.length > 0
-      ? allMasters.filter((m) => slot!.masterIds.includes(m.id))
-      : allMasters;
+    const allMasters = await loadMastersForService(
+      db,
+      input.salon.salonId,
+      v3.service_id!,
+      v3.branch_id ?? null,
+    );
+    const eligible =
+      slot.masterIds.length > 0
+        ? allMasters.filter((m) => slot!.masterIds.includes(m.id))
+        : allMasters;
 
     if (eligible.length === 0) {
-      const msg = language === "ky" ? "Мастер табылган жок. Башка убакытты тандаңыз:" : "Мастер не найден. Выберите другое время:";
+      const msg =
+        language === "ky"
+          ? "Мастер табылган жок. Башка убакытты тандаңыз:"
+          : "Мастер не найден. Выберите другое время:";
       return finish(msg, "awaiting_slot_choice", v3, buildSlotListMsg(mockSlots, tz, language));
     }
 
@@ -4061,6 +4752,8 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       newV3.master_id = eligible[0].id;
       newV3.master_name = eligible[0].name;
       debug.actions.push(`auto_master:${eligible[0].id}`);
+      // Name already collected earlier (e.g. re-selection after "Нет, перенести") → straight to confirm.
+      if (newV3.client_name) return confirmBooking(newV3);
       const msg = language === "ky" ? "Атыңызды жазыңыз:" : "Введите ваше имя:";
       return finish(msg, "awaiting_name", newV3);
     }
@@ -4077,20 +4770,35 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       masterId = selectedId.slice(7);
       debug.actions.push(`master_selected:${masterId}`);
     } else {
-      const masters = await loadMastersForService(db, input.salon.salonId, v3.service_id!, v3.branch_id ?? null);
+      const masters = await loadMastersForService(
+        db,
+        input.salon.salonId,
+        v3.service_id!,
+        v3.branch_id ?? null,
+      );
       const found = matchMasterByName(masters, combinedText);
-      if (found) { masterId = found.id; debug.actions.push(`master_text_match:${found.id}`); }
+      if (found) {
+        masterId = found.id;
+        debug.actions.push(`master_text_match:${found.id}`);
+      }
     }
 
-    const masters = await loadMastersForService(db, input.salon.salonId, v3.service_id!, v3.branch_id ?? null);
+    const masters = await loadMastersForService(
+      db,
+      input.salon.salonId,
+      v3.service_id!,
+      v3.branch_id ?? null,
+    );
     if (!masterId) {
       const msg = language === "ky" ? "Мастерди тандаңыз:" : "Выберите мастера:";
       return finish(msg, "awaiting_master_choice", v3, buildMasterListMsg(masters, language));
     }
 
     const master = masters.find((m) => m.id === masterId);
+    const newV3 = { ...v3, master_id: masterId, master_name: master?.name ?? "" };
+    if (newV3.client_name) return confirmBooking(newV3);
     const msg = language === "ky" ? "Атыңызды жазыңыз:" : "Введите ваше имя:";
-    return finish(msg, "awaiting_name", { ...v3, master_id: masterId, master_name: master?.name ?? "" });
+    return finish(msg, "awaiting_name", newV3);
   }
 
   // ===== awaiting_name =====
@@ -4101,46 +4809,73 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       return finish(msg, "awaiting_name", v3);
     }
 
-    const newV3 = { ...v3, client_name: name };
-    const dateLabel = v3.date ? formatDateInTz(`${v3.date}T12:00:00Z`, tz) : "—";
-    const timeLabel = v3.slot_start ? formatTimeInTz(v3.slot_start, tz) : "—";
-    const masterLabel = v3.master_name ?? (language === "ky" ? "кез келген мастер" : "любой мастер");
-    const priceStr = v3.price_override != null
-      ? (language === "ky" ? `\n💰 Болжолдуу баа: ${v3.price_override} сом` : `\n💰 Ориентировочная стоимость: ${v3.price_override} сом`)
-      : "";
-    const details = language === "ky"
-      ? `✅ Жазылуу маалыматы:\n\n💇 ${v3.service_name}\n📅 ${dateLabel}\n⏰ ${timeLabel}\n👤 Мастер: ${masterLabel}\n🙍 Ат: ${name}${priceStr}\n\nРастайсызбы?`
-      : `✅ Данные записи:\n\n💇 ${v3.service_name}\n📅 ${dateLabel}\n⏰ ${timeLabel}\n👤 Мастер: ${masterLabel}\n🙍 Имя: ${name}${priceStr}\n\nПодтверждаете?`;
-    return finish(details, "awaiting_final_confirm", newV3, buildConfirmMsg(details, language));
+    return confirmBooking({ ...v3, client_name: name });
   }
 
   // ===== awaiting_final_confirm =====
   if (state === "awaiting_final_confirm") {
-    const ct = combinedText.trim().toLowerCase();
-    const confirmed =
+    // A tapped button normally arrives as selectedId; when it doesn't, the title text
+    // ("✅ Да, записать") must still match — hence the emoji/punctuation strip.
+    const ct = stripLeadingNonWord(combinedText.trim().toLowerCase());
+    // Checked before confirmed/denied: "нет, перенести" starts with "нет" and would
+    // otherwise fall into the full-reset branch; "давай перенесём" starts with "давай".
+    const knownConfirmId =
       selectedId === "confirm_yes" ||
-      /^(да|ок|ладно|согласен|согласна|подтвер|записывай|давай)/.test(ct) ||
-      /^(ооба|макул|жазыл)/.test(ct);
-    const denied =
       selectedId === "confirm_no" ||
-      /^(нет|не надо|отмен|изменить|другой|другую|поменяй)/.test(ct) ||
-      /^(жок|өзгөрт)/.test(ct);
+      selectedId === "confirm_reschedule";
+    const reschedule =
+      selectedId === "confirm_reschedule" ||
+      (!knownConfirmId &&
+        (/перенес|перенос|другое время|другой день/.test(ct) || /башка убакыт|которуу/.test(ct)));
+    const confirmed =
+      !reschedule &&
+      (selectedId === "confirm_yes" ||
+        /^(да|ок|ладно|согласен|согласна|подтвер|записывай|давай)/.test(ct) ||
+        /^(ооба|макул|жазыл)/.test(ct));
+    const denied =
+      !reschedule &&
+      !confirmed &&
+      (selectedId === "confirm_no" ||
+        /^(нет|не надо|отмен|изменить|другой|другую|поменяй)/.test(ct) ||
+        /^(жок|өзгөрт)/.test(ct));
+
+    if (reschedule) {
+      // Keep service, master and name — only the date/time is re-selected.
+      debug.actions.push("confirm_reschedule");
+      const newV3: V3BookingState = {
+        ...v3,
+        date: undefined,
+        slot_start: undefined,
+        slot_end: undefined,
+        slots_cache: undefined,
+      };
+      const msg =
+        language === "ky"
+          ? "Жакшы, башка убакыт тандайлы. Датаны тандаңыз:"
+          : "Хорошо, выберем другое время. Выберите дату:";
+      return finish(
+        msg,
+        "awaiting_date_choice",
+        newV3,
+        buildDateListMsg(buildDateMap(tz, 7), language),
+      );
+    }
 
     if (denied) {
-      debug.actions.push("confirm_denied");
-      const dateMap = buildDateMap(tz, 7);
-      const msg = language === "ky" ? "Жакшы. Жаңы датаны тандаңыз:" : "Хорошо. Выберите новую дату:";
-      const newV3 = { ...v3, date: undefined, slot_start: undefined, slot_end: undefined, slots_cache: undefined, master_id: undefined, master_name: undefined };
-      return finish(msg, "awaiting_date_choice", newV3, buildDateListMsg(dateMap, language));
+      // Full reset: the client wants something else entirely — start over from the service
+      // menu, keeping only the branch and the name.
+      debug.actions.push("confirm_denied_full_reset");
+      const services = await loadAiVisibleServicesForSalon(db, input.salon.salonId);
+      const newV3: V3BookingState = { branch_id: v3.branch_id, client_name: v3.client_name };
+      const msg =
+        language === "ky"
+          ? "Жакшы, кайра баштайлы. Кызматты тандаңыз:"
+          : "Хорошо, начнём заново. Выберите услугу:";
+      return reaskServiceMenu(msg, newV3, services);
     }
 
     if (!confirmed) {
-      const dateLabel = v3.date ? formatDateInTz(`${v3.date}T12:00:00Z`, tz) : "—";
-      const timeLabel = v3.slot_start ? formatTimeInTz(v3.slot_start, tz) : "—";
-      const details = language === "ky"
-        ? `💇 ${v3.service_name}\n📅 ${dateLabel}\n⏰ ${timeLabel}\n👤 ${v3.master_name ?? "кез келген мастер"}\n🙍 ${v3.client_name}\n\nРастайсызбы?`
-        : `💇 ${v3.service_name}\n📅 ${dateLabel}\n⏰ ${timeLabel}\n👤 ${v3.master_name ?? "любой мастер"}\n🙍 ${v3.client_name}\n\nПодтверждаете?`;
-      return finish(details, "awaiting_final_confirm", v3, buildConfirmMsg(details, language));
+      return confirmBooking(v3);
     }
 
     debug.actions.push("create_appointment");
@@ -4163,9 +4898,10 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
 
       const dateLabel = v3.date ? formatDateInTz(`${v3.date}T12:00:00Z`, tz) : "";
       const timeLabel = v3.slot_start ? formatTimeInTz(v3.slot_start, tz) : "";
-      const successMsg = language === "ky"
-        ? `🎉 Жазылуу ырасталды!\n\n📅 ${dateLabel}, ⏰ ${timeLabel}\n💇 ${v3.service_name}\n\nКүтөбүз! ❤️`
-        : `🎉 Запись подтверждена!\n\n📅 ${dateLabel}, ⏰ ${timeLabel}\n💇 ${v3.service_name}\n\nДо встречи! ❤️`;
+      const successMsg =
+        language === "ky"
+          ? `🎉 Жазылуу ырасталды!\n\n📅 ${dateLabel}, ⏰ ${timeLabel}\n💇 ${v3.service_name}\n\nКүтөбүз! ❤️`
+          : `🎉 Запись подтверждена!\n\n📅 ${dateLabel}, ⏰ ${timeLabel}\n💇 ${v3.service_name}\n\nДо встречи! ❤️`;
       return {
         reply: successMsg,
         nextState: "done",
@@ -4176,9 +4912,10 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       };
     } catch (e: any) {
       debug.errors.push(`create_appointment:${e?.message ?? e}`);
-      const msg = language === "ky"
-        ? "Жазылуу мүмкүн болгон жок. Кайра аракет кылып же салонго түз кайрылыңыз."
-        : "Не удалось создать запись. Попробуйте ещё раз или свяжитесь с салоном напрямую.";
+      const msg =
+        language === "ky"
+          ? "Жазылуу мүмкүн болгон жок. Кайра аракет кылып же салонго түз кайрылыңыз."
+          : "Не удалось создать запись. Попробуйте ещё раз или свяжитесь с салоном напрямую.";
       return finish(msg, "awaiting_final_confirm", v3);
     }
   }
@@ -4210,33 +4947,54 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     };
     // The client already said what to do before picking the appointment — don't re-ask.
     if (v3.managing_action === "cancel") {
-      const details = language === "ky"
-        ? `Чын эле бул жазылууну жокко чыгарабызбы?\n${label}`
-        : `Точно отменяем эту запись?\n${label}`;
-      return finish(details, "awaiting_manage_confirm", { ...newV3, managing_action: "cancel" }, buildConfirmMsg(details, language));
+      const details =
+        language === "ky"
+          ? `Чын эле бул жазылууну жокко чыгарабызбы?\n${label}`
+          : `Точно отменяем эту запись?\n${label}`;
+      return finish(
+        details,
+        "awaiting_manage_confirm",
+        { ...newV3, managing_action: "cancel" },
+        buildConfirmMsg(details, language),
+      );
     }
     if (v3.managing_action === "reschedule") {
       return startRescheduleV3(newV3, v3.managing_request_text ?? "", (a as any).starts_at);
     }
-    const q = language === "ky" ? `Тандалды: ${label}. Эмне кылабыз?` : `Выбрано: ${label}. Что делаем?`;
+    const q =
+      language === "ky" ? `Тандалды: ${label}. Эмне кылабыз?` : `Выбрано: ${label}. Что делаем?`;
     return finish(q, "awaiting_manage_action", newV3, buildManageActionMsg(language));
   }
 
   // ===== awaiting_manage_action =====
   if (state === "awaiting_manage_action") {
-    const wantsCancel = selectedId === "manage_cancel" || /отмен/i.test(combinedText) || /жокко/i.test(combinedText);
-    const wantsReschedule = selectedId === "manage_reschedule" || /перенес|перенос/i.test(combinedText) || /которуп/i.test(combinedText);
-    const wantsLeave = selectedId === "manage_leave" || /не трогай|оставь|не надо/i.test(combinedText) || /тийбе/i.test(combinedText);
+    const wantsCancel =
+      selectedId === "manage_cancel" || /отмен/i.test(combinedText) || /жокко/i.test(combinedText);
+    const wantsReschedule =
+      selectedId === "manage_reschedule" ||
+      /перенес|перенос/i.test(combinedText) ||
+      /которуп/i.test(combinedText);
+    const wantsLeave =
+      selectedId === "manage_leave" ||
+      /не трогай|оставь|не надо/i.test(combinedText) ||
+      /тийбе/i.test(combinedText);
 
     if (wantsLeave) {
-      const msg = language === "ky" ? "Жакшы, эч нерсе өзгөртүлгөн жок." : "Хорошо, ничего не меняю.";
+      const msg =
+        language === "ky" ? "Жакшы, эч нерсе өзгөртүлгөн жок." : "Хорошо, ничего не меняю.";
       return finish(msg, "done", {});
     }
     if (wantsCancel) {
-      const details = language === "ky"
-        ? `Чын эле бул жазылууну жокко чыгарабызбы?\n${v3.managing_appointment_label}`
-        : `Точно отменяем эту запись?\n${v3.managing_appointment_label}`;
-      return finish(details, "awaiting_manage_confirm", { ...v3, managing_action: "cancel" }, buildConfirmMsg(details, language));
+      const details =
+        language === "ky"
+          ? `Чын эле бул жазылууну жокко чыгарабызбы?\n${v3.managing_appointment_label}`
+          : `Точно отменяем эту запись?\n${v3.managing_appointment_label}`;
+      return finish(
+        details,
+        "awaiting_manage_confirm",
+        { ...v3, managing_action: "cancel" },
+        buildConfirmMsg(details, language),
+      );
     }
     if (wantsReschedule) {
       // The client may have typed the target right here ("перенесите на завтра в 19:00") —
@@ -4246,7 +5004,11 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         .select("starts_at")
         .eq("id", v3.managing_appointment_id!)
         .maybeSingle();
-      return startRescheduleV3(v3, combinedText, (apptRow as any)?.starts_at ?? new Date().toISOString());
+      return startRescheduleV3(
+        v3,
+        combinedText,
+        (apptRow as any)?.starts_at ?? new Date().toISOString(),
+      );
     }
     const q = language === "ky" ? "Эмне кылабыз?" : "Что делаем с записью?";
     return finish(q, "awaiting_manage_action", v3, buildManageActionMsg(language));
@@ -4263,7 +5025,12 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     }
     if (!dateIso) {
       const q = language === "ky" ? "Датаны тандаңыз:" : "Выберите дату:";
-      return finish(q, "awaiting_reschedule_date", v3, buildDateListMsg(buildDateMap(tz, 7), language));
+      return finish(
+        q,
+        "awaiting_reschedule_date",
+        v3,
+        buildDateListMsg(buildDateMap(tz, 7), language),
+      );
     }
     // offerRescheduleSlots keeps the SAME master when possible, offers other masters when
     // that master's day is full, and jumps straight to confirm when the client also named
@@ -4274,7 +5041,8 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
   // ===== awaiting_reschedule_slot =====
   if (state === "awaiting_reschedule_slot") {
     const slotsCache = v3.managing_slots_cache ?? [];
-    let slot: { start: string; end: string; master_id?: string; master_name?: string } | null = null;
+    let slot: { start: string; end: string; master_id?: string; master_name?: string } | null =
+      null;
     if (selectedId?.startsWith("slot_")) {
       const idx = parseInt(selectedId.slice(5), 10);
       if (!isNaN(idx) && idx >= 0 && idx < slotsCache.length) slot = slotsCache[idx];
@@ -4283,28 +5051,41 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       if (timeMatch) {
         const h = parseInt(timeMatch[1], 10);
         const m = parseInt(timeMatch[2], 10);
-        slot = slotsCache.find((s) => {
-          const t = formatTimeInTz(s.start, tz);
-          const [sh, sm] = t.split(":").map(Number);
-          return sh === h && sm === m;
-        }) ?? null;
+        slot =
+          slotsCache.find((s) => {
+            const t = formatTimeInTz(s.start, tz);
+            const [sh, sm] = t.split(":").map(Number);
+            return sh === h && sm === m;
+          }) ?? null;
       }
     }
     if (!slot) {
       const msg = language === "ky" ? "Убакытты тандаңыз:" : "Выберите время:";
-      const mockSlots: MergedSlot[] = slotsCache.map((s) => ({ start: s.start, end: s.end, master_ids: s.master_id ? [s.master_id] : [] }));
+      const mockSlots: MergedSlot[] = slotsCache.map((s) => ({
+        start: s.start,
+        end: s.end,
+        master_ids: s.master_id ? [s.master_id] : [],
+      }));
       const byId = slotsCache.some((s) => s.master_name)
-        ? new Map(slotsCache.filter((s) => s.master_id).map((s) => [s.master_id!, s.master_name ?? ""]))
+        ? new Map(
+            slotsCache.filter((s) => s.master_id).map((s) => [s.master_id!, s.master_name ?? ""]),
+          )
         : undefined;
-      return finish(msg, "awaiting_reschedule_slot", v3, buildSlotListMsg(mockSlots, tz, language, byId));
+      return finish(
+        msg,
+        "awaiting_reschedule_slot",
+        v3,
+        buildSlotListMsg(mockSlots, tz, language, byId),
+      );
     }
     const dateLabel = formatDateInTz(slot.start, tz);
     const timeLabel = formatTimeInTz(slot.start, tz);
     // Slot from ANOTHER master (own master's day was full) → say so in the confirmation.
     const masterSuffix = slot.master_name ? `, мастер ${slot.master_name}` : "";
-    const details = language === "ky"
-      ? `Жаңы убакыт: ${dateLabel}, ${timeLabel}${masterSuffix}. Ырастайсызбы?`
-      : `Новое время: ${dateLabel}, ${timeLabel}${masterSuffix}. Подтверждаете?`;
+    const details =
+      language === "ky"
+        ? `Жаңы убакыт: ${dateLabel}, ${timeLabel}${masterSuffix}. Ырастайсызбы?`
+        : `Новое время: ${dateLabel}, ${timeLabel}${masterSuffix}. Подтверждаете?`;
     const newV3 = {
       ...v3,
       managing_new_slot_start: slot.start,
@@ -4317,18 +5098,28 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
 
   // ===== awaiting_manage_confirm =====
   if (state === "awaiting_manage_confirm") {
-    const ct = combinedText.trim().toLowerCase();
-    const confirmed = selectedId === "confirm_yes" || /^(да|ок|ладно|согласен|согласна|подтвер|давай)/.test(ct) || /^(ооба|макул)/.test(ct);
-    const denied = selectedId === "confirm_no" || /^(нет|не надо|отмен|стоп)/.test(ct) || /^(жок)/.test(ct);
+    const ct = stripLeadingNonWord(combinedText.trim().toLowerCase());
+    const confirmed =
+      selectedId === "confirm_yes" ||
+      /^(да|ок|ладно|согласен|согласна|подтвер|давай)/.test(ct) ||
+      /^(ооба|макул)/.test(ct);
+    const denied =
+      selectedId === "confirm_no" || /^(нет|не надо|отмен|стоп)/.test(ct) || /^(жок)/.test(ct);
 
     if (denied) {
-      const msg = language === "ky" ? "Жакшы, эч нерсе өзгөртүлгөн жок." : "Хорошо, ничего не меняю.";
+      const msg =
+        language === "ky" ? "Жакшы, эч нерсе өзгөртүлгөн жок." : "Хорошо, ничего не меняю.";
       return finish(msg, "done", {});
     }
     if (!confirmed) {
-      const details = v3.managing_action === "cancel"
-        ? (language === "ky" ? `Жокко чыгарабызбы?\n${v3.managing_appointment_label}` : `Отменяем?\n${v3.managing_appointment_label}`)
-        : (language === "ky" ? "Ырастайсызбы?" : "Подтверждаете?");
+      const details =
+        v3.managing_action === "cancel"
+          ? language === "ky"
+            ? `Жокко чыгарабызбы?\n${v3.managing_appointment_label}`
+            : `Отменяем?\n${v3.managing_appointment_label}`
+          : language === "ky"
+            ? "Ырастайсызбы?"
+            : "Подтверждаете?";
       return finish(details, "awaiting_manage_confirm", v3, buildConfirmMsg(details, language));
     }
 
@@ -4339,7 +5130,8 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         .select("starts_at")
         .eq("id", v3.managing_appointment_id)
         .maybeSingle();
-      if (cur && isWithinManageCutoff((cur as any).starts_at)) return finish(manageCutoffMsg(), "done", {});
+      if (cur && isWithinManageCutoff((cur as any).starts_at))
+        return finish(manageCutoffMsg(), "done", {});
     }
 
     if (v3.managing_action === "cancel") {
@@ -4350,42 +5142,60 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         .eq("client_phone", input.client.phone);
       if (error) {
         debug.errors.push(`cancel_appointment:${error.message}`);
-        const msg = language === "ky" ? "Жокко чыгаруу мүмкүн болгон жок. Салонго кайрылыңыз." : "Не удалось отменить. Свяжитесь с салоном напрямую.";
+        const msg =
+          language === "ky"
+            ? "Жокко чыгаруу мүмкүн болгон жок. Салонго кайрылыңыз."
+            : "Не удалось отменить. Свяжитесь с салоном напрямую.";
         return finish(msg, "done", {});
       }
-      const msg = language === "ky"
-        ? "✅ Жазылуу жокко чыгарылды. Кайра жазылгыңыз келсе — жөн гана жазыңыз 😊"
-        : "✅ Запись отменена. Если захотите записаться снова — просто напишите 😊";
+      const msg =
+        language === "ky"
+          ? "✅ Жазылуу жокко чыгарылды. Кайра жазылгыңыз келсе — жөн гана жазыңыз 😊"
+          : "✅ Запись отменена. Если захотите записаться снова — просто напишите 😊";
       return finish(msg, "done", {});
     }
 
     // reschedule (v2 RPC when the client agreed to move to another master's slot)
     try {
-      const { error } = v3.managing_new_master_id && v3.managing_new_master_id !== v3.managing_master_id
-        ? await db.rpc("reschedule_appointment_v2" as any, {
-            _appointment_id: v3.managing_appointment_id,
-            _new_starts_at: v3.managing_new_slot_start,
-            _new_master_id: v3.managing_new_master_id,
-          } as any)
-        : await db.rpc("reschedule_appointment" as any, {
-            _appointment_id: v3.managing_appointment_id,
-            _new_starts_at: v3.managing_new_slot_start,
-          } as any);
+      const { error } =
+        v3.managing_new_master_id && v3.managing_new_master_id !== v3.managing_master_id
+          ? await db.rpc(
+              "reschedule_appointment_v2" as any,
+              {
+                _appointment_id: v3.managing_appointment_id,
+                _new_starts_at: v3.managing_new_slot_start,
+                _new_master_id: v3.managing_new_master_id,
+              } as any,
+            )
+          : await db.rpc(
+              "reschedule_appointment" as any,
+              {
+                _appointment_id: v3.managing_appointment_id,
+                _new_starts_at: v3.managing_new_slot_start,
+              } as any,
+            );
       if (error) throw error;
-      const dateLabel = v3.managing_new_slot_start ? formatDateInTz(v3.managing_new_slot_start, tz) : "";
-      const timeLabel = v3.managing_new_slot_start ? formatTimeInTz(v3.managing_new_slot_start, tz) : "";
-      const masterSuffix = v3.managing_new_master_name && v3.managing_new_master_id !== v3.managing_master_id
-        ? `, мастер ${v3.managing_new_master_name}`
+      const dateLabel = v3.managing_new_slot_start
+        ? formatDateInTz(v3.managing_new_slot_start, tz)
         : "";
-      const msg = language === "ky"
-        ? `✅ Жазылуу которулду: ${dateLabel}, ${timeLabel}${masterSuffix}.`
-        : `✅ Запись перенесена: ${dateLabel}, ${timeLabel}${masterSuffix}.`;
+      const timeLabel = v3.managing_new_slot_start
+        ? formatTimeInTz(v3.managing_new_slot_start, tz)
+        : "";
+      const masterSuffix =
+        v3.managing_new_master_name && v3.managing_new_master_id !== v3.managing_master_id
+          ? `, мастер ${v3.managing_new_master_name}`
+          : "";
+      const msg =
+        language === "ky"
+          ? `✅ Жазылуу которулду: ${dateLabel}, ${timeLabel}${masterSuffix}.`
+          : `✅ Запись перенесена: ${dateLabel}, ${timeLabel}${masterSuffix}.`;
       return finish(msg, "done", {});
     } catch (e: any) {
       debug.errors.push(`reschedule_appointment:${e?.message ?? e}`);
-      const msg = language === "ky"
-        ? "Которуу мүмкүн болгон жок. Башка убакытты тандап көрүңүз."
-        : "Не удалось перенести. Попробуйте выбрать другое время.";
+      const msg =
+        language === "ky"
+          ? "Которуу мүмкүн болгон жок. Башка убакытты тандап көрүңүз."
+          : "Не удалось перенести. Попробуйте выбрать другое время.";
       return finish(msg, "awaiting_reschedule_date", { ...v3, managing_slots_cache: undefined });
     }
   }
@@ -4393,6 +5203,9 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
   // Fallback: reset to service selection
   debug.errors.push(`unhandled_state:${state}`);
   const services = await loadAiVisibleServicesForSalon(db, input.salon.salonId);
-  const fallback = language === "ky" ? "Кайра баштайлы. Кайсы кызматка жазыласыз?" : "Начнём сначала. На какую услугу вас записать?";
+  const fallback =
+    language === "ky"
+      ? "Кайра баштайлы. Кайсы кызматка жазыласыз?"
+      : "Начнём сначала. На какую услугу вас записать?";
   return reaskServiceMenu(fallback, {}, services);
 }

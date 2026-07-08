@@ -4,13 +4,20 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PhoneInput } from "@/components/ui/phone-input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { CalendarIcon } from "lucide-react";
 import { dayKeyInTz, zonedTimeToUtc, formatInTz, startOfDayKeyInTz } from "@/lib/tz";
+import { checkPhoneWhatsapp } from "@/lib/wa-check.functions";
 
 type Master = { id: string; name: string };
 type Service = { id: string; name: string; duration_min: number; price: number };
@@ -47,10 +54,20 @@ function DateQuickPicker({
   })();
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <Button type="button" size="sm" variant={dayKey === today ? "default" : "outline"} onClick={() => setDayKey(today)}>
+      <Button
+        type="button"
+        size="sm"
+        variant={dayKey === today ? "default" : "outline"}
+        onClick={() => setDayKey(today)}
+      >
         Сегодня
       </Button>
-      <Button type="button" size="sm" variant={dayKey === tomorrow ? "default" : "outline"} onClick={() => setDayKey(tomorrow)}>
+      <Button
+        type="button"
+        size="sm"
+        variant={dayKey === tomorrow ? "default" : "outline"}
+        onClick={() => setDayKey(tomorrow)}
+      >
         Завтра
       </Button>
       <Popover open={open} onOpenChange={setOpen}>
@@ -82,10 +99,14 @@ function DateQuickPicker({
 function TimeScroller({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
     <Select value={value} onValueChange={onChange}>
-      <SelectTrigger className="w-32 text-base font-mono"><SelectValue /></SelectTrigger>
+      <SelectTrigger className="w-32 text-base font-mono">
+        <SelectValue />
+      </SelectTrigger>
       <SelectContent className="max-h-72">
         {TIME_OPTIONS.map((t) => (
-          <SelectItem key={t} value={t} className="font-mono">{t}</SelectItem>
+          <SelectItem key={t} value={t} className="font-mono">
+            {t}
+          </SelectItem>
         ))}
       </SelectContent>
     </Select>
@@ -122,6 +143,8 @@ export function CreateAppointmentDialog({
   const [clientPhone, setClientPhone] = useState("");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  // Phone (digits only) the admin was already warned about — second submit proceeds.
+  const [waWarnedPhone, setWaWarnedPhone] = useState<string | null>(null);
 
   // Reset form fields ONLY when the dialog transitions from closed → open.
   // Depending on defaultDayKey here caused the inputs (Имя клиента / Телефон)
@@ -138,20 +161,36 @@ export function CreateAppointmentDialog({
 
   useEffect(() => {
     if (!open || !salonId) return;
-    let q = supabase.from("masters").select("id, name").eq("salon_id", salonId).eq("is_active", true).order("sort_order");
+    let q = supabase
+      .from("masters")
+      .select("id, name")
+      .eq("salon_id", salonId)
+      .eq("is_active", true)
+      .order("sort_order");
     if (branchId) q = q.eq("branch_id", branchId);
     q.then(({ data }) => {
       const list = (data ?? []) as Master[];
       setMasters(list);
       if (list.length > 0 && !masterId) setMasterId(list[0].id);
     });
-    supabase.from("services").select("id, name, duration_min, price").eq("salon_id", salonId).eq("is_active", true).order("name")
+    supabase
+      .from("services")
+      .select("id, name, duration_min, price")
+      .eq("salon_id", salonId)
+      .eq("is_active", true)
+      .order("name")
       .then(({ data }) => setServices((data ?? []) as Service[]));
   }, [open, salonId, branchId]);
 
   useEffect(() => {
-    if (!masterId) { setAllowedServiceIds(new Set()); return; }
-    supabase.from("master_services").select("service_id").eq("master_id", masterId)
+    if (!masterId) {
+      setAllowedServiceIds(new Set());
+      return;
+    }
+    supabase
+      .from("master_services")
+      .select("service_id")
+      .eq("master_id", masterId)
       .then(({ data }) => {
         const ids = new Set<string>((data ?? []).map((r: any) => r.service_id));
         setAllowedServiceIds(ids);
@@ -171,9 +210,27 @@ export function CreateAppointmentDialog({
     const [hh, mm] = time.split(":").map(Number);
     const [y, mo, da] = dayKey.split("-").map(Number);
     const startsAt = zonedTimeToUtc(y, mo, da, hh, mm, tz);
-    if (startsAt.getTime() <= Date.now()) return toast.error("Нельзя создать запись на уже прошедшее время");
+    if (startsAt.getTime() <= Date.now())
+      return toast.error("Нельзя создать запись на уже прошедшее время");
 
     setSaving(true);
+    // Admins may book walk-ins with non-WhatsApp numbers, so a failed check only warns —
+    // a second click on «Создать» with the same number proceeds anyway.
+    const phoneDigits = clientPhone.replace(/\D/g, "");
+    if (waWarnedPhone !== phoneDigits) {
+      try {
+        const { status } = await checkPhoneWhatsapp({ data: { salonId, phone: clientPhone } });
+        if (status === "not_registered") {
+          setWaWarnedPhone(phoneDigits);
+          setSaving(false);
+          return toast.error(
+            "Этот номер не зарегистрирован в WhatsApp — уведомления клиенту не дойдут. Нажмите «Создать» ещё раз, чтобы записать всё равно.",
+          );
+        }
+      } catch {
+        // Check unavailable — don't block the admin.
+      }
+    }
     try {
       const { error } = await supabase.rpc("create_appointment", {
         _salon_id: salonId,
@@ -200,21 +257,33 @@ export function CreateAppointmentDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
-        <DialogHeader><DialogTitle>Новая запись</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>Новая запись</DialogTitle>
+        </DialogHeader>
         <div className="space-y-3">
           <div>
             <Label>Мастер</Label>
             <Select value={masterId} onValueChange={setMasterId}>
-              <SelectTrigger><SelectValue placeholder="Выберите" /></SelectTrigger>
+              <SelectTrigger>
+                <SelectValue placeholder="Выберите" />
+              </SelectTrigger>
               <SelectContent>
-                {masters.map((m) => <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>)}
+                {masters.map((m) => (
+                  <SelectItem key={m.id} value={m.id}>
+                    {m.name}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
           <div>
             <Label>Услуга</Label>
             <Select value={serviceId} onValueChange={setServiceId}>
-              <SelectTrigger><SelectValue placeholder={visibleServices.length ? "Выберите" : "Мастер не оказывает услуг"} /></SelectTrigger>
+              <SelectTrigger>
+                <SelectValue
+                  placeholder={visibleServices.length ? "Выберите" : "Мастер не оказывает услуг"}
+                />
+              </SelectTrigger>
               <SelectContent>
                 {visibleServices.map((s) => (
                   <SelectItem key={s.id} value={s.id}>
@@ -234,7 +303,11 @@ export function CreateAppointmentDialog({
           </div>
           <div>
             <Label>Имя клиента</Label>
-            <Input value={clientName} onChange={(e) => setClientName(e.target.value)} maxLength={100} />
+            <Input
+              value={clientName}
+              onChange={(e) => setClientName(e.target.value)}
+              maxLength={100}
+            />
           </div>
           <div>
             <Label>Телефон</Label>
@@ -245,8 +318,12 @@ export function CreateAppointmentDialog({
             <Input value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={300} />
           </div>
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>Отмена</Button>
-            <Button onClick={submit} disabled={saving}>{saving ? "..." : "Создать"}</Button>
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              Отмена
+            </Button>
+            <Button onClick={submit} disabled={saving}>
+              {saving ? "..." : "Создать"}
+            </Button>
           </div>
         </div>
       </DialogContent>
@@ -277,13 +354,18 @@ export function MoveAppointmentDialog({
     if (!appt) return;
     setDayKey(dayKeyInTz(appt.starts_at, tz));
     const parts = new Intl.DateTimeFormat("en-GB", {
-      timeZone: tz, hourCycle: "h23", hour: "2-digit", minute: "2-digit",
+      timeZone: tz,
+      hourCycle: "h23",
+      hour: "2-digit",
+      minute: "2-digit",
     }).formatToParts(new Date(appt.starts_at));
     const h = parts.find((p) => p.type === "hour")?.value ?? "10";
     const m = parts.find((p) => p.type === "minute")?.value ?? "00";
     // snap to 15-min
     const total = Number(h) * 60 + Math.round(Number(m) / 15) * 15;
-    setTime(`${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`);
+    setTime(
+      `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`,
+    );
   }, [appt, tz]);
 
   async function submit() {
@@ -291,7 +373,8 @@ export function MoveAppointmentDialog({
     const [hh, mm] = time.split(":").map(Number);
     const [y, mo, da] = dayKey.split("-").map(Number);
     const start = zonedTimeToUtc(y, mo, da, hh, mm, tz);
-    if (start.getTime() <= Date.now()) return toast.error("Нельзя перенести на уже прошедшее время");
+    if (start.getTime() <= Date.now())
+      return toast.error("Нельзя перенести на уже прошедшее время");
     setSaving(true);
     try {
       await onMoved(start);
@@ -304,12 +387,20 @@ export function MoveAppointmentDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm">
-        <DialogHeader><DialogTitle>Перенести запись</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>Перенести запись</DialogTitle>
+        </DialogHeader>
         {appt && initial && (
           <div className="space-y-4">
             <div className="text-sm text-muted-foreground">
-              Сейчас: <span className="font-medium text-foreground">
-                {formatInTz(initial, tz, { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}
+              Сейчас:{" "}
+              <span className="font-medium text-foreground">
+                {formatInTz(initial, tz, {
+                  day: "numeric",
+                  month: "long",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
               </span>
             </div>
             <div className="space-y-2">
@@ -321,8 +412,12 @@ export function MoveAppointmentDialog({
               <TimeScroller value={time} onChange={setTime} />
             </div>
             <div className="flex justify-end gap-2 pt-1">
-              <Button variant="outline" onClick={() => onOpenChange(false)}>Отмена</Button>
-              <Button onClick={submit} disabled={saving}>{saving ? "..." : "Перенести"}</Button>
+              <Button variant="outline" onClick={() => onOpenChange(false)}>
+                Отмена
+              </Button>
+              <Button onClick={submit} disabled={saving}>
+                {saving ? "..." : "Перенести"}
+              </Button>
             </div>
           </div>
         )}

@@ -1,0 +1,74 @@
+import { createServerFn } from "@tanstack/react-start";
+import { z } from "zod";
+
+// Verify that a phone number is registered on WhatsApp via the salon's Green-API
+// credentials (Green-API `checkWhatsapp`). Called from the public booking widget and the
+// admin appointment dialog BEFORE creating an appointment, so clients don't book with a
+// number that can't receive the WhatsApp confirmation.
+//
+// No auth middleware on purpose: the public booking widget is anonymous. Only the salon id
+// and phone come in; only a status enum goes out — Green-API credentials never leave the
+// server. "unavailable" (no creds / Green-API down / timeout) is treated as fail-open by
+// callers: better to accept a rare unverified booking than to block everyone.
+
+export type WaCheckStatus = "registered" | "not_registered" | "unavailable";
+
+// Per-server-instance cache — checkWhatsapp answers rarely change and Green-API is slow.
+const cache = new Map<string, { status: WaCheckStatus; exp: number }>();
+const CACHE_TTL_MS = 10 * 60 * 1000;
+const CACHE_MAX = 1000;
+
+export const checkPhoneWhatsapp = createServerFn({ method: "POST" })
+  .inputValidator((input) =>
+    z.object({ salonId: z.string().uuid(), phone: z.string().max(32) }).parse(input),
+  )
+  .handler(async ({ data }): Promise<{ status: WaCheckStatus }> => {
+    const digits = data.phone.replace(/\D/g, "");
+    if (digits.length < 11 || digits.length > 15) return { status: "not_registered" };
+
+    const key = `${data.salonId}:${digits}`;
+    const hit = cache.get(key);
+    if (hit && hit.exp > Date.now()) return { status: hit.status };
+
+    let secrets: { greenapi_instance: string | null; greenapi_token: string | null } | null = null;
+    try {
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      const { data: row } = await supabaseAdmin
+        .from("salon_secrets")
+        .select("greenapi_instance, greenapi_token")
+        .eq("salon_id", data.salonId)
+        .maybeSingle();
+      secrets = row;
+    } catch (e) {
+      // Missing service-role key (local dev) or DB hiccup — never block the booking on it.
+      console.error("[wa-check] secrets lookup failed:", e);
+      return { status: "unavailable" };
+    }
+
+    // Cloud-API-only salons have no way to check registration — fail open.
+    if (!secrets?.greenapi_instance || !secrets?.greenapi_token) return { status: "unavailable" };
+
+    let status: WaCheckStatus = "unavailable";
+    try {
+      const res = await fetch(
+        `https://api.green-api.com/waInstance${secrets.greenapi_instance}/checkWhatsapp/${secrets.greenapi_token}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ phoneNumber: Number(digits) }),
+          signal: AbortSignal.timeout(5000),
+        },
+      );
+      if (res.ok) {
+        const body: any = await res.json();
+        if (body?.existsWhatsapp === true) status = "registered";
+        else if (body?.existsWhatsapp === false) status = "not_registered";
+      }
+    } catch (e) {
+      console.error("[wa-check] checkWhatsapp failed:", e);
+    }
+
+    if (cache.size >= CACHE_MAX) cache.clear();
+    cache.set(key, { status, exp: Date.now() + CACHE_TTL_MS });
+    return { status };
+  });

@@ -30,6 +30,7 @@ import { ReviewsTab } from "@/components/admin/ReviewsTab";
 import { formatPrice } from "@/lib/price";
 import { BranchHoursEditor, defaultBranchHours, type BranchHours } from "@/components/admin/BranchHoursEditor";
 import { MasterDayOverrides } from "@/components/admin/MasterDayOverrides";
+import { SalonDayOverridesCard } from "@/components/admin/SalonDayOverridesCard";
 import { AiAssistantTab } from "@/components/admin/AiAssistantTab";
 // WaChatsTab tab hidden from UI by request; component kept for future use.
 
@@ -262,6 +263,7 @@ function SalonInfoTab({ salon, onSaved, onOpenBranchesTab }: { salon: any; onSav
       <Button onClick={save} disabled={saving}>{saving ? "..." : "Сохранить"}</Button>
     </Card>
     <SalonScheduleCard salonId={salon.id} onOpenBranchesTab={onOpenBranchesTab} />
+    <SalonDayOverridesCard salonId={salon.id} timezone={salon.timezone} />
     </div>
   );
 }

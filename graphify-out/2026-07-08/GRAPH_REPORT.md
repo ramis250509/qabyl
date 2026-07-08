@@ -1,11 +1,11 @@
 # Graph Report - Qabyl  (2026-07-08)
 
 ## Corpus Check
-- 217 files · ~144,150 words
+- 217 files · ~144,074 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1126 nodes · 1994 edges · 89 communities (74 shown, 15 thin omitted)
+- 1126 nodes · 1994 edges · 88 communities (73 shown, 15 thin omitted)
 - Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 29 edges (avg confidence: 0.86)
 - Token cost: 0 input · 0 output
 
@@ -94,7 +94,6 @@
 - [[_COMMUNITY_Community 82|Community 82]]
 - [[_COMMUNITY_Community 83|Community 83]]
 - [[_COMMUNITY_Community 84|Community 84]]
-- [[_COMMUNITY_Community 85|Community 85]]
 - [[_COMMUNITY_Community 87|Community 87]]
 - [[_COMMUNITY_Community 89|Community 89]]
 - [[_COMMUNITY_Community 90|Community 90]]
@@ -133,7 +132,7 @@
 - **Graphify Extraction Pipeline (AST + semantic + merge)** — graphify_skill_ast_extraction, graphify_skill_semantic_extraction, graphify_skill_extraction_cache [EXTRACTED 1.00]
 - **WA Agent NLP Improvements (fuzzy + intent + yes/no detection)** — wa_agent_improvements_fuzzy_matching, wa_agent_improvements_intent_promotion, wa_agent_improvements_yes_no_detection, wa_agent_improvements_master_name_matching [EXTRACTED 1.00]
 
-## Communities (89 total, 15 thin omitted)
+## Communities (88 total, 15 thin omitted)
 
 ### Community 0 - "Appointment Booking UI"
 Cohesion: 0.12
@@ -160,8 +159,8 @@ Cohesion: 0.11
 Nodes (20): AST Structural Extraction (Part A), Community Detection, Extraction Cache (check_semantic_cache), God Nodes Analysis, Interactive HTML Graph Output, GRAPH_REPORT.md Output, Graphify Full Pipeline Skill, Graphify Query (BFS/DFS traversal) (+12 more)
 
 ### Community 6 - "Notifications & Auth"
-Cohesion: 0.28
-Nodes (14): BUILD_VAPID_PUBLIC_KEY, debugLog(), disablePushSubscription(), EnsurePushOptions, ensurePushSubscription(), getOrRegisterSW(), getVapidPublicKey(), isIos() (+6 more)
+Cohesion: 0.25
+Nodes (17): NotificationsPage(), useNotifications(), BUILD_VAPID_PUBLIC_KEY, debugLog(), disablePushSubscription(), EnsurePushOptions, ensurePushSubscription(), getOrRegisterSW() (+9 more)
 
 ### Community 7 - "Build Tooling Config"
 Cohesion: 0.07
@@ -232,8 +231,8 @@ Cohesion: 0.17
 Nodes (10): AiServiceListEditor(), Override, ServiceRow, Kind, MasterDayOverrides(), Override, AppNotification, supabase (+2 more)
 
 ### Community 24 - "Date & Time Utils"
-Cohesion: 0.17
-Nodes (16): addDaysISO(), availablePartsToday(), buildDateMap(), clampLanguage(), confidentLanguage(), executeV2Tool(), fetchMergedSlots(), formatDateInTz() (+8 more)
+Cohesion: 0.14
+Nodes (20): addDaysISO(), availablePartsToday(), buildDateMap(), buildSystemPromptV2(), callGeminiTools(), clampLanguage(), confidentLanguage(), executeV2Tool() (+12 more)
 
 ### Community 25 - "Form Components"
 Cohesion: 0.17
@@ -252,8 +251,8 @@ Cohesion: 0.16
 Nodes (13): SalonShareCard(), Conversation, Message, needsHuman(), statusBadge(), WaChatsTab(), Card, CardContent (+5 more)
 
 ### Community 29 - "WA Agent Types & API"
-Cohesion: 0.16
-Nodes (14): CloudApiCreds, GreenApiCreds, greenApiSendButtons(), greenApiSendInteractiveButtons(), normalizeChatIdToPhone(), renderInteractiveAsText(), WaAgentInput, WaAgentState (+6 more)
+Cohesion: 0.11
+Nodes (22): callGeminiV3Faq(), callViaLovableGateway(), CloudApiCreds, downloadImageAsBase64(), GreenApiCreds, greenApiSendButtons(), greenApiSendFileByUrl(), greenApiSendInteractiveButtons() (+14 more)
 
 ### Community 30 - "Supabase DB Types"
 Cohesion: 0.13
@@ -388,12 +387,8 @@ Cohesion: 0.50
 Nodes (3): For --cluster-only, For --update (incremental re-extraction), graphify reference: incremental update and cluster-only
 
 ### Community 84 - "Community 84"
-Cohesion: 0.19
-Nodes (14): CalendarPage(), Dashboard(), NotificationsPage(), StatsPage(), AdminBranch, AdminSalon, useAdminFilters(), useNotifications() (+6 more)
-
-### Community 85 - "Community 85"
-Cohesion: 0.18
-Nodes (12): buildSystemPromptV2(), callGeminiTools(), callGeminiV3Faq(), callViaLovableGateway(), downloadImageAsBase64(), getAdmin(), greenApiSendFileByUrl(), greenApiSendListMessage() (+4 more)
+Cohesion: 0.22
+Nodes (11): CalendarPage(), Dashboard(), StatsPage(), AdminBranch, AdminSalon, useAdminFilters(), signOutFromApp(), useAuth() (+3 more)
 
 ### Community 87 - "Community 87"
 Cohesion: 0.40

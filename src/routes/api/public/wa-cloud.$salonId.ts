@@ -72,8 +72,10 @@ function parseCloudInbound(payload: any): ParsedInbound | null {
       return null;
     }
   } else if (t === "button") {
-    // Legacy quick-reply button (from a template) — treat its text as a reply.
-    textBody = msg.button?.text ?? null;
+    // Legacy quick-reply button (from a template) — keep both the payload (button id)
+    // and the visible text so the state machine can match either.
+    selectedId = msg.button?.payload ?? null;
+    textBody = msg.button?.text ?? selectedId;
   } else {
     // Unsupported (image/audio/location/…) — ack quietly for now.
     return null;
@@ -136,7 +138,9 @@ export const Route = createFileRoute("/api/public/wa-cloud/$salonId")({
             .maybeSingle(),
           supabaseAdmin
             .from("salon_ai_assistant")
-            .select("enabled, greeting, tone_instructions, pricing_rules, languages, manage_cutoff_hours")
+            .select(
+              "enabled, greeting, tone_instructions, pricing_rules, languages, manage_cutoff_hours",
+            )
             .eq("salon_id", salonId)
             .maybeSingle(),
         ]);
@@ -159,7 +163,8 @@ export const Route = createFileRoute("/api/public/wa-cloud/$salonId")({
         const creds: CloudApiCreds = { phoneNumberId, accessToken };
 
         // Assistant enabled? (missing assistant row defaults to enabled)
-        const assistantEnabled = (salon as any)?.ai_assistant_enabled !== false && ((assistant as any)?.enabled ?? true);
+        const assistantEnabled =
+          (salon as any)?.ai_assistant_enabled !== false && ((assistant as any)?.enabled ?? true);
         if (!assistantEnabled) return ack();
 
         const nowIso = new Date().toISOString();
@@ -167,14 +172,22 @@ export const Route = createFileRoute("/api/public/wa-cloud/$salonId")({
         // ---- Load previous conversation (for session-gap logic), then upsert.
         const { data: existingConv } = await supabaseAdmin
           .from("wa_conversations")
-          .select("id, session_started_at, last_appointment_at, last_message_at, state, ai_paused, ai_paused_at")
+          .select(
+            "id, session_started_at, last_appointment_at, last_message_at, state, ai_paused, ai_paused_at",
+          )
           .eq("salon_id", salonId)
           .eq("client_phone", phone)
           .maybeSingle();
 
-        const previousLastMessageAt = existingConv?.last_message_at ? new Date(existingConv.last_message_at).getTime() : 0;
-        const previousLastAppointmentAt = existingConv?.last_appointment_at ? new Date(existingConv.last_appointment_at).getTime() : 0;
-        const previousSessionStartedAt = existingConv?.session_started_at ? new Date(existingConv.session_started_at).getTime() : 0;
+        const previousLastMessageAt = existingConv?.last_message_at
+          ? new Date(existingConv.last_message_at).getTime()
+          : 0;
+        const previousLastAppointmentAt = existingConv?.last_appointment_at
+          ? new Date(existingConv.last_appointment_at).getTime()
+          : 0;
+        const previousSessionStartedAt = existingConv?.session_started_at
+          ? new Date(existingConv.session_started_at).getTime()
+          : 0;
         const previousState = (existingConv?.state ?? "idle") as string;
         const inProgress = previousState !== "idle" && previousState !== "done";
         const sessionGapMs = inProgress ? 12 * 60 * 60 * 1000 : 20 * 60 * 1000;
@@ -193,12 +206,21 @@ export const Route = createFileRoute("/api/public/wa-cloud/$salonId")({
               last_message_at: nowIso,
               last_message_preview: (textBody ?? "[сообщение]").slice(0, 200),
               ...(startsNewSession
-                ? { status: "active", appointment_id: null, selected_branch_id: null, session_started_at: nowIso, state: "idle", state_data: {} }
+                ? {
+                    status: "active",
+                    appointment_id: null,
+                    selected_branch_id: null,
+                    session_started_at: nowIso,
+                    state: "idle",
+                    state_data: {},
+                  }
                 : {}),
             },
             { onConflict: "salon_id,client_phone" },
           )
-          .select("id, client_name, status, selected_branch_id, session_started_at, last_appointment_at, last_message_at, state, state_data")
+          .select(
+            "id, client_name, status, selected_branch_id, session_started_at, last_appointment_at, last_message_at, state, state_data",
+          )
           .single();
 
         if (convErr || !conv) {
@@ -230,12 +252,17 @@ export const Route = createFileRoute("/api/public/wa-cloud/$salonId")({
 
         // ---- Respect the human-takeover pause (same mechanism as Green-API).
         const AI_PAUSE_MS = 60 * 60 * 1000;
-        const pausedAtMs = existingConv?.ai_paused_at ? new Date(existingConv.ai_paused_at as string).getTime() : 0;
+        const pausedAtMs = existingConv?.ai_paused_at
+          ? new Date(existingConv.ai_paused_at as string).getTime()
+          : 0;
         if (existingConv?.ai_paused && pausedAtMs > 0 && Date.now() - pausedAtMs < AI_PAUSE_MS) {
           return ack();
         }
         if (existingConv?.ai_paused) {
-          await supabaseAdmin.from("wa_conversations").update({ ai_paused: false, ai_paused_at: null }).eq("id", convId);
+          await supabaseAdmin
+            .from("wa_conversations")
+            .update({ ai_paused: false, ai_paused_at: null })
+            .eq("id", convId);
         }
 
         // Brief debounce so rapid follow-up messages batch into one turn.
@@ -248,7 +275,9 @@ export const Route = createFileRoute("/api/public/wa-cloud/$salonId")({
         try {
           const { data: lockedConv } = await supabaseAdmin
             .from("wa_conversations")
-            .select("id, client_name, status, selected_branch_id, session_started_at, last_appointment_at, last_message_at, state, state_data")
+            .select(
+              "id, client_name, status, selected_branch_id, session_started_at, last_appointment_at, last_message_at, state, state_data",
+            )
             .eq("id", convId)
             .maybeSingle();
           const convSnapshot: any = lockedConv ?? conv;
@@ -261,7 +290,11 @@ export const Route = createFileRoute("/api/public/wa-cloud/$salonId")({
             .eq("salon_id", salonId)
             .eq("is_active", true)
             .order("sort_order");
-          const branches: WaBranchInfo[] = (branchRows ?? []).map((b: any) => ({ id: b.id, name: b.name, address: b.address ?? null }));
+          const branches: WaBranchInfo[] = (branchRows ?? []).map((b: any) => ({
+            id: b.id,
+            name: b.name,
+            address: b.address ?? null,
+          }));
 
           let curState: WaAgentState = (convSnapshot.state ?? "idle") as WaAgentState;
           let curStateData = convSnapshot.state_data ?? {};
@@ -283,10 +316,20 @@ export const Route = createFileRoute("/api/public/wa-cloud/$salonId")({
 
             const STALE_MESSAGE_MS = 12 * 60 * 60 * 1000;
             const staleCutoff = Date.now() - STALE_MESSAGE_MS;
-            const stalePending = pending.filter((m: any) => new Date(m.created_at).getTime() < staleCutoff);
-            const freshPending = pending.filter((m: any) => new Date(m.created_at).getTime() >= staleCutoff);
+            const stalePending = pending.filter(
+              (m: any) => new Date(m.created_at).getTime() < staleCutoff,
+            );
+            const freshPending = pending.filter(
+              (m: any) => new Date(m.created_at).getTime() >= staleCutoff,
+            );
             if (stalePending.length > 0) {
-              await supabaseAdmin.from("wa_messages").update({ processed_at: new Date().toISOString() }).in("id", stalePending.map((m: any) => m.id));
+              await supabaseAdmin
+                .from("wa_messages")
+                .update({ processed_at: new Date().toISOString() })
+                .in(
+                  "id",
+                  stalePending.map((m: any) => m.id),
+                );
             }
             if (freshPending.length === 0) continue;
 
@@ -310,10 +353,20 @@ export const Route = createFileRoute("/api/public/wa-cloud/$salonId")({
               .limit(30);
             const history: WaIncomingMessage[] = ((histRows ?? []) as any[])
               .reverse()
-              .map((m) => ({ id: m.id, direction: m.direction, kind: m.kind, text_body: m.text_body, created_at: m.created_at }));
+              .map((m) => ({
+                id: m.id,
+                direction: m.direction,
+                kind: m.kind,
+                text_body: m.text_body,
+                created_at: m.created_at,
+              }));
 
             const input: WaAgentInput = {
-              salon: { salonId, salonName: (salon as any).name, timezone: (salon as any).timezone ?? "UTC" },
+              salon: {
+                salonId,
+                salonName: (salon as any).name,
+                timezone: (salon as any).timezone ?? "UTC",
+              },
               config: runtime.assistantConfig,
               client: { phone, name: senderName },
               history,
@@ -322,7 +375,10 @@ export const Route = createFileRoute("/api/public/wa-cloud/$salonId")({
               selectedBranchId: curSelectedBranch,
               state: curState,
               stateData: curStateData,
-              salonInfo: { working_hours: (salon as any).working_hours ?? null, address: (salon as any).address ?? null },
+              salonInfo: {
+                working_hours: (salon as any).working_hours ?? null,
+                address: (salon as any).address ?? null,
+              },
             };
 
             let result;
@@ -330,10 +386,20 @@ export const Route = createFileRoute("/api/public/wa-cloud/$salonId")({
               result = await runWaAgentV3(input);
             } catch (e: any) {
               console.error("[wa-cloud] runWaAgent threw", e?.message ?? e);
-              const reply = "Извините, не получилось обработать запрос. Попробуйте, пожалуйста, ещё раз.";
+              const reply =
+                "Извините, не получилось обработать запрос. Попробуйте, пожалуйста, ещё раз.";
               await cloudApiSendText(creds, phone, reply);
-              await supabaseAdmin.from("wa_messages").update({ processed_at: new Date().toISOString() }).in("id", freshPending.map((m: any) => m.id));
-              await supabaseAdmin.from("wa_conversations").update({ state: "idle", state_data: {} }).eq("id", convId);
+              await supabaseAdmin
+                .from("wa_messages")
+                .update({ processed_at: new Date().toISOString() })
+                .in(
+                  "id",
+                  freshPending.map((m: any) => m.id),
+                );
+              await supabaseAdmin
+                .from("wa_conversations")
+                .update({ state: "idle", state_data: {} })
+                .eq("id", convId);
               break;
             }
 
@@ -341,7 +407,11 @@ export const Route = createFileRoute("/api/public/wa-cloud/$salonId")({
             // numbered-text menu only if the interactive send fails.
             const im = result.interactiveMessage;
             let sentText = im
-              ? renderInteractiveAsText(result.reply, im, ((result.nextStateData as any)?.language as "ru" | "ky" | "en") ?? "ru")
+              ? renderInteractiveAsText(
+                  result.reply,
+                  im,
+                  ((result.nextStateData as any)?.language as "ru" | "ky" | "en") ?? "ru",
+                )
               : result.reply;
             const dedupKey = (im ? `interactive:${result.reply}` : result.reply).trim();
             const isDuplicate = dedupKey === (lastSentReply ?? "").trim();
@@ -353,7 +423,10 @@ export const Route = createFileRoute("/api/public/wa-cloud/$salonId")({
                   sentIdMessage = res.idMessage;
                   sentText = result.reply;
                 } else {
-                  console.error("[wa-cloud] interactive send failed, falling back to text", res.error);
+                  console.error(
+                    "[wa-cloud] interactive send failed, falling back to text",
+                    res.error,
+                  );
                   const fb = await cloudApiSendText(creds, phone, sentText);
                   sentIdMessage = fb.ok ? fb.idMessage : undefined;
                 }
@@ -381,7 +454,13 @@ export const Route = createFileRoute("/api/public/wa-cloud/$salonId")({
               } as any,
             });
 
-            await supabaseAdmin.from("wa_messages").update({ processed_at: new Date().toISOString() }).in("id", freshPending.map((m: any) => m.id));
+            await supabaseAdmin
+              .from("wa_messages")
+              .update({ processed_at: new Date().toISOString() })
+              .in(
+                "id",
+                freshPending.map((m: any) => m.id),
+              );
 
             const updates: Record<string, any> = {
               last_message_at: new Date().toISOString(),
@@ -394,8 +473,12 @@ export const Route = createFileRoute("/api/public/wa-cloud/$salonId")({
               updates.appointment_id = result.appointmentId;
               updates.last_appointment_at = new Date().toISOString();
             }
-            if (result.selectedBranchId !== curSelectedBranch) updates.selected_branch_id = result.selectedBranchId;
-            await supabaseAdmin.from("wa_conversations").update(updates as any).eq("id", convId);
+            if (result.selectedBranchId !== curSelectedBranch)
+              updates.selected_branch_id = result.selectedBranchId;
+            await supabaseAdmin
+              .from("wa_conversations")
+              .update(updates as any)
+              .eq("id", convId);
 
             curState = result.nextState;
             curStateData = result.nextStateData ?? {};
@@ -403,7 +486,10 @@ export const Route = createFileRoute("/api/public/wa-cloud/$salonId")({
           }
         } finally {
           try {
-            await supabaseAdmin.rpc("wa_release_lock" as any, { _conversation_id: convId, _lock_id: lockId });
+            await supabaseAdmin.rpc("wa_release_lock" as any, {
+              _conversation_id: convId,
+              _lock_id: lockId,
+            });
           } catch (e) {
             console.error("[wa-cloud] lock release failed", e);
           }
@@ -418,7 +504,11 @@ export const Route = createFileRoute("/api/public/wa-cloud/$salonId")({
 async function tryAcquireLockWithWait(db: any, convId: string, lockId: string): Promise<boolean> {
   const deadline = Date.now() + LOCK_WAIT_TIMEOUT_MS;
   while (true) {
-    const { data, error } = await db.rpc("wa_try_acquire_lock", { _conversation_id: convId, _lock_id: lockId, _ttl_seconds: LOCK_TTL_SECONDS });
+    const { data, error } = await db.rpc("wa_try_acquire_lock", {
+      _conversation_id: convId,
+      _lock_id: lockId,
+      _ttl_seconds: LOCK_TTL_SECONDS,
+    });
     if (error) {
       console.error("[wa-cloud] lock rpc error", error);
       return false;
