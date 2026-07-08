@@ -282,6 +282,49 @@ test("V3: a greeting WITH content mixed in does NOT restart (keeps the flow)", a
   expect(res.debug.actions).not.toContain("greeting_restart");
 });
 
+test("V3: slot list is grouped by part of day with a section header", async () => {
+  (globalThis as any).__WA_DB__ = makeDb({
+    services: [SERVICE],
+    masters: [{ id: "m1", name: "Анна", branch_id: null, sort_order: 0, service_ids: ["svc1"] }],
+  });
+  const res = await runWaAgentV3({
+    salon: SALON, config: CONFIG,
+    client: { phone: "996700000000", name: "Аяна" },
+    history: [], lastMessages: msg("", { selectedId: "date_2099-01-01" }),
+    branches: [], selectedBranchId: null,
+    state: "awaiting_date_choice",
+    stateData: { language: "ru", v3: { service_id: "svc1", service_name: "Маникюр", price_type: "fixed" } },
+  } as any);
+  expect(res.nextState).toBe("awaiting_slot_choice");
+  expect(res.interactiveMessage?.kind).toBe("list");
+  const sections = (res.interactiveMessage as any).sections;
+  // 04:00 UTC = 10:00 Asia/Bishkek → grouped under the "Утром" header, rowId maps to slots_cache[0].
+  expect(sections[0].title).toBe("Утром");
+  expect(sections[0].rows[0].rowId).toBe("slot_0");
+});
+
+test("V3: a slot that has since passed is rejected and fresh times are shown", async () => {
+  (globalThis as any).__WA_DB__ = makeDb({
+    services: [SERVICE],
+    masters: [{ id: "m1", name: "Анна", branch_id: null, sort_order: 0, service_ids: ["svc1"] }],
+  });
+  const res = await runWaAgentV3({
+    salon: SALON, config: CONFIG,
+    client: { phone: "996700000000", name: "Аяна" },
+    history: [], lastMessages: msg("", { selectedId: "slot_0" }),
+    branches: [], selectedBranchId: null,
+    state: "awaiting_slot_choice",
+    stateData: { language: "ru", v3: {
+      service_id: "svc1", service_name: "Маникюр", date: "2099-01-01",
+      // A stale cached slot in the past — must not be bookable.
+      slots_cache: [{ start: "2020-01-01T04:00:00.000Z", end: "2020-01-01T05:00:00.000Z", masterIds: ["m1"] }],
+    } },
+  } as any);
+  // Past slot rejected → stays on slot choice with fresh future times, NOT advancing to the name step.
+  expect(res.nextState).toBe("awaiting_slot_choice");
+  expect(res.reply).toContain("прошло");
+});
+
 test("cleanup: restore fetch", () => {
   globalThis.fetch = origFetch;
   expect(true).toBe(true);

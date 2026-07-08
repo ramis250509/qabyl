@@ -14,6 +14,11 @@ const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const MODEL_TEXT = "gemini-2.5-flash";
 const MODEL_VISION = "gemini-2.5-flash";
 
+// How many free slots we offer for a chosen day. High enough to show a full working day
+// (grouped into Утром/День/Вечер), since the client explicitly wants every free time — the
+// numbered-text menu has no WhatsApp 10-row cap, unlike a native interactive list.
+const MAX_SLOTS_SHOWN = 48;
+
 // ============================================================
 // Public types
 // ============================================================
@@ -3572,12 +3577,37 @@ function buildSlotListMsg(
   masterNames?: Map<string, string>, // when slots belong to different masters, show whose slot it is
 ): WaInteractiveMessage {
   const question = language === "ky" ? "Убакытты тандаңыз:" : "Выберите время:";
-  const rows = slots.map((s, i) => ({
-    rowId: `slot_${i}`,
-    title: formatTimeInTz(s.start, tz),
-    description: masterNames ? masterNames.get(s.master_ids[0] ?? "")?.slice(0, 72) : undefined,
-  }));
-  return { kind: "list", text: question, buttonText: "Выбрать время", sections: [{ rows }] };
+  const L = (ru: string, ky: string) => (language === "ky" ? ky : ru);
+  const partTitles = {
+    morning: L("Утром", "Эртең менен"),
+    afternoon: L("Днём", "Түштө"),
+    evening: L("Вечером", "Кечинде"),
+  };
+  // slots arrive already time-sorted; keep the ORIGINAL index in rowId (`slot_i`) so it maps
+  // straight back to slots_cache[i] regardless of how we bucket them for display.
+  const buckets: Record<"morning" | "afternoon" | "evening", any[]> = {
+    morning: [],
+    afternoon: [],
+    evening: [],
+  };
+  slots.forEach((s, i) => {
+    const h = parseInt(formatTimeInTz(s.start, tz).split(":")[0], 10);
+    const part = h < 12 ? "morning" : h < 17 ? "afternoon" : "evening";
+    buckets[part].push({
+      rowId: `slot_${i}`,
+      title: formatTimeInTz(s.start, tz),
+      description: masterNames ? masterNames.get(s.master_ids[0] ?? "")?.slice(0, 72) : undefined,
+    });
+  });
+  const sections = (["morning", "afternoon", "evening"] as const)
+    .filter((p) => buckets[p].length > 0)
+    .map((p) => ({ title: partTitles[p], rows: buckets[p] }));
+  return {
+    kind: "list",
+    text: question,
+    buttonText: L("Выбрать время", "Убакыт"),
+    sections,
+  };
 }
 
 function buildMasterListMsg(
@@ -4056,7 +4086,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       day: dateIso,
       tz,
       minStartTime: minStart,
-      limit: 8,
+      limit: MAX_SLOTS_SHOWN,
     });
     const dateLabel = formatDateInTz(`${dateIso}T12:00:00Z`, tz);
 
@@ -4112,7 +4142,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
             day: dateIso,
             tz,
             minStartTime: minStart,
-            limit: 8,
+            limit: MAX_SLOTS_SHOWN,
           })
         : [];
     if (otherSlots.length > 0) {
@@ -4666,7 +4696,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       day: dateIso,
       tz,
       minStartTime: minStart,
-      limit: 8,
+      limit: MAX_SLOTS_SHOWN,
     });
 
     if (slots.length === 0) {
@@ -4727,6 +4757,49 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         if (first && slotsCache[0]) slot = slotsCache[0];
         else if (second && slotsCache[1]) slot = slotsCache[1];
       }
+    }
+
+    // Stale-cache guard: the list was future-only when shown, but if the client took a while to
+    // answer, a slot may have passed. Never let a now-past time through — re-fetch fresh slots.
+    if (slot && new Date(slot.start).getTime() <= Date.now() && v3.date) {
+      debug.actions.push(`slot_now_past:${slot.start}`);
+      const all = await loadMastersForService(
+        db,
+        input.salon.salonId,
+        v3.service_id!,
+        v3.branch_id ?? null,
+      );
+      const kept = v3.master_id ? all.filter((m) => m.id === v3.master_id) : all;
+      const fresh = await fetchMergedSlots({
+        db,
+        masters: kept.length > 0 ? kept : all,
+        serviceId: v3.service_id!,
+        day: v3.date,
+        tz,
+        minStartTime: new Date(),
+        limit: MAX_SLOTS_SHOWN,
+      });
+      if (fresh.length === 0) {
+        const msg =
+          language === "ky"
+            ? "Бул күнгө бош убакыт калган жок. Башка күн тандаңыз:"
+            : "На эту дату свободного времени не осталось. Выберите другую дату:";
+        return finish(
+          msg,
+          "awaiting_date_choice",
+          { ...v3, slots_cache: undefined },
+          buildDateListMsg(buildDateMap(tz, 7), language),
+        );
+      }
+      const newV3: V3BookingState = {
+        ...v3,
+        slots_cache: fresh.map((s) => ({ start: s.start, end: s.end, masterIds: s.master_ids })),
+      };
+      const msg =
+        language === "ky"
+          ? "Бул убакыт өтүп кетти. Актуалдуу бош убакыттар:"
+          : "Это время уже прошло. Вот актуальное свободное время:";
+      return finish(msg, "awaiting_slot_choice", newV3, buildSlotListMsg(fresh, tz, language));
     }
 
     const mockSlots: MergedSlot[] = slotsCache.map((s) => ({
@@ -5131,6 +5204,11 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         v3,
         buildSlotListMsg(mockSlots, tz, language, byId),
       );
+    }
+    // Stale-cache guard (same as new bookings): a slot that has since passed must not go through.
+    if (new Date(slot.start).getTime() <= Date.now()) {
+      debug.actions.push(`reschedule_slot_now_past:${slot.start}`);
+      return offerRescheduleSlots(v3, isoDateInTz(slot.start, tz), null);
     }
     const dateLabel = formatDateInTz(slot.start, tz);
     const timeLabel = formatTimeInTz(slot.start, tz);
