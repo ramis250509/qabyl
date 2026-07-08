@@ -166,7 +166,7 @@ test("V3: first message always shows the full service menu, even naming a servic
   expect(titles.length).toBe(2);
 });
 
-test("V3: cancel intent with one upcoming appointment jumps straight to manage-action", async () => {
+test("V3: cancel intent with one upcoming appointment jumps straight to cancel-confirm", async () => {
   const appt = { id: "appt1", starts_at: "2099-01-01T04:00:00.000Z", service_id: "svc1", master_id: "m1", salon_id: "salon1", client_phone: "996700000000", status: "confirmed", serviceName: "Маникюр" };
   (globalThis as any).__WA_DB__ = makeDb({ services: [SERVICE], appointments: [appt] });
   const res = await runWaAgentV3({
@@ -176,8 +176,10 @@ test("V3: cancel intent with one upcoming appointment jumps straight to manage-a
     branches: [], selectedBranchId: null,
     state: "idle", stateData: {},
   } as any);
-  expect(res.nextState).toBe("awaiting_manage_action");
+  // "отменить" is explicit → skip the action menu, go straight to the yes/no confirm.
+  expect(res.nextState).toBe("awaiting_manage_confirm");
   expect((res.nextStateData as any).v3.managing_appointment_id).toBe("appt1");
+  expect((res.nextStateData as any).v3.managing_action).toBe("cancel");
 });
 
 test("V3: confirming cancel marks the appointment cancelled", async () => {
@@ -233,6 +235,51 @@ test("V3: low-confidence photo asks for a retry, then escalates to admin on the 
   } as any);
   expect(second.nextState).toBe("done");
   expect(second.notifyAdmin?.mediaUrl).toBe("http://img/x.jpg");
+});
+
+test("V3: a bare greeting mid-dialog restarts the conversation with a fresh menu", async () => {
+  (globalThis as any).__WA_DB__ = makeDb({ services: [SERVICE, { ...SERVICE, id: "svc2", name: "Педикюр" }] });
+  const midState: any = { language: "ru", v3: { service_id: "svc1", service_name: "Маникюр", date: "2099-01-02" } };
+  const res = await runWaAgentV3({
+    salon: SALON, config: CONFIG,
+    client: { phone: "996700000000", name: "Аяна" },
+    history: [], lastMessages: msg("Здравствуйте"),
+    branches: [], selectedBranchId: null,
+    state: "awaiting_date_choice", stateData: midState,
+  } as any);
+  expect(res.debug.actions).toContain("greeting_restart");
+  // Draft wiped — no stale service/date carried into the restarted dialog.
+  expect((res.nextStateData as any).v3.service_id).toBeUndefined();
+  expect((res.nextStateData as any).v3.date).toBeUndefined();
+  // Fresh service menu shown again.
+  expect(res.interactiveMessage?.kind).toBe("list");
+});
+
+test("V3: a Kyrgyz greeting mid-dialog also restarts the conversation", async () => {
+  (globalThis as any).__WA_DB__ = makeDb({ services: [SERVICE] });
+  const midState: any = { language: "ru", v3: { service_id: "svc1", service_name: "Маникюр", date: "2099-01-02" } };
+  const res = await runWaAgentV3({
+    salon: SALON, config: CONFIG,
+    client: { phone: "996700000000", name: "Аяна" },
+    history: [], lastMessages: msg("Ассалам алейкум"),
+    branches: [], selectedBranchId: null,
+    state: "awaiting_slot_choice", stateData: midState,
+  } as any);
+  expect(res.debug.actions).toContain("greeting_restart");
+  expect((res.nextStateData as any).v3.service_id).toBeUndefined();
+});
+
+test("V3: a greeting WITH content mixed in does NOT restart (keeps the flow)", async () => {
+  (globalThis as any).__WA_DB__ = makeDb({ services: [SERVICE] });
+  const midState: any = { language: "ru", v3: { service_id: "svc1", service_name: "Маникюр" } };
+  const res = await runWaAgentV3({
+    salon: SALON, config: CONFIG,
+    client: { phone: "996700000000", name: "Аяна" },
+    history: [], lastMessages: msg("Здравствуйте, хочу маникюр"),
+    branches: [], selectedBranchId: null,
+    state: "awaiting_date_choice", stateData: midState,
+  } as any);
+  expect(res.debug.actions).not.toContain("greeting_restart");
 });
 
 test("cleanup: restore fetch", () => {

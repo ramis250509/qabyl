@@ -351,6 +351,43 @@ function clampLanguage(lang: string | undefined, allowed: string[]): "ru" | "ky"
   return "ru";
 }
 
+// A message that is PURELY a greeting (ru/ky/en), with no service/date/name/other content
+// mixed in. Used to restart the dialog when a client says hello again mid-flow — the salon
+// wants a fresh greeting + menu, not a failed parse of "Здравствуйте" as a date. "Softer" words
+// (добрый/день/эже/как дела) are only accepted alongside a strong greeting core, so a bare
+// "день" or "как дела" never counts as a greeting on its own.
+const GREETING_STRONG_RE =
+  /(привет|здравству|здрав|здрас|здаров|здоров|салам|ассал|алейк|алекум|кандайс|саламат|hello|\bhi\b|\bhey\b|hallo)/i;
+const GREETING_SOFT_WORDS = new Set([
+  "добрый",
+  "доброе",
+  "доброго",
+  "утро",
+  "утра",
+  "день",
+  "дня",
+  "денек",
+  "вечер",
+  "ночи",
+  "как",
+  "дела",
+  "эже",
+  "эжеке",
+  "байке",
+  "байкеке",
+  "аке",
+  "агай",
+  "иним",
+]);
+function isPureGreeting(text: string): boolean {
+  const norm = normalizeForMatch(text);
+  if (!norm) return false;
+  if (!GREETING_STRONG_RE.test(norm)) return false;
+  const toks = norm.split(/\s+/).filter(Boolean);
+  if (toks.length === 0 || toks.length > 5) return false;
+  return toks.every((t) => GREETING_SOFT_WORDS.has(t) || GREETING_STRONG_RE.test(t));
+}
+
 // ============================================================
 // Gemini REST wrapper (no SDK — stays Worker-safe)
 // ============================================================
@@ -3847,6 +3884,22 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     v3.branch_id = input.branches[0].id;
   }
 
+  // A bare greeting ("Здравствуйте", "Салам", "Ассалам алейкум") sent mid-dialog restarts the
+  // conversation: drop the in-progress draft and fall through to the idle greet + menu block
+  // below. Only when the message is PURELY a greeting (no button tap, no service/date mixed in),
+  // so a client who types "привет, хочу стрижку" keeps their content instead of losing it.
+  if (
+    !selectedId &&
+    input.state !== "idle" &&
+    input.state !== "done" &&
+    isPureGreeting(combinedText)
+  ) {
+    debug.actions.push("greeting_restart");
+    for (const k of Object.keys(v3)) delete (v3 as any)[k];
+    if (singleBranch && input.branches.length === 1) v3.branch_id = input.branches[0].id;
+    input.state = "idle";
+  }
+
   function finish(
     reply: string,
     nextState: WaAgentState,
@@ -4121,7 +4174,8 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     !manageFlowStates.includes(state) &&
     !selectedId &&
     !!combinedText &&
-    !looksLikeConfirmButtonTitle;
+    !looksLikeConfirmButtonTitle &&
+    !isPureGreeting(combinedText);
   // "cancel"/"reschedule" when the wording is explicit (incl. fuzzy match for typos like
   // "пенеренести"), "ambiguous" for phrases like "не смогу прийти" that could mean either —
   // those still get the Отменить/Перенести buttons.
