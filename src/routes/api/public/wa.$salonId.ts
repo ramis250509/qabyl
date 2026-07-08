@@ -4,7 +4,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
   greenApiSendMessage,
-  greenApiSendInteractiveButtons,
   greenApiSendFileByUrl,
   normalizeChatIdToPhone,
   renderInteractiveAsText,
@@ -494,13 +493,15 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             }
 
             // 5) Send reply — skip network if byte-for-byte identical to previous in this pass.
-            // Interactive LISTS don't render on regular WhatsApp accounts (Green-API marks
-            // sendListMessage as non-working), so lists go out as a plain-text numbered menu
-            // and the agent maps a numeric reply back to the row. Short BUTTON choices go out
-            // as real tappable reply buttons (sendInteractiveButtons, works on regular
-            // accounts), falling back to the same numbered text if that call fails.
+            // BOTH lists AND buttons go out as a plain-text numbered menu, and the agent maps a
+            // numeric reply back to the row/button id. We used to send buttons as native tappable
+            // reply buttons (sendInteractiveButtons), but on regular Green-API accounts the tap
+            // reply does NOT round-trip into a shape the webhook can map to a button id — which
+            // silently stalled the FINAL booking confirmation ("✅ Да, записать" was tapped but no
+            // appointment was ever created). Numbered text — which the client answers with a digit,
+            // the same proven path date/slot selection uses — works reliably on every account.
             const im = result.interactiveMessage;
-            let sentText = im
+            const sentText = im
               ? renderInteractiveAsText(
                   result.reply,
                   im,
@@ -510,19 +511,8 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             const isDuplicateReply = sentText.trim() === (lastSentReply ?? "").trim();
             let sentIdMessage: string | undefined;
             if (!isDuplicateReply) {
-              let sentInteractive = false;
-              if (im?.kind === "buttons") {
-                const res = await greenApiSendInteractiveButtons(creds, chatId, result.reply, im.buttons);
-                if (res.ok) {
-                  sentIdMessage = res.idMessage;
-                  sentText = result.reply;
-                  sentInteractive = true;
-                }
-              }
-              if (!sentInteractive) {
-                const res = await greenApiSendMessage(creds, chatId, sentText);
-                sentIdMessage = res.ok ? res.idMessage : undefined;
-              }
+              const res = await greenApiSendMessage(creds, chatId, sentText);
+              sentIdMessage = res.ok ? res.idMessage : undefined;
               lastSentReply = sentText;
             }
             await supabaseAdmin.from("wa_messages").insert({
