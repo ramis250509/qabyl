@@ -217,6 +217,34 @@ export async function greenApiSendFileByUrl(
   }
 }
 
+// Fetch a fresh, downloadable URL for an inbound media message. Green-API's incoming webhook
+// often omits fileMessageData.downloadUrl (or it has already expired by the time we process),
+// which left the assistant unable to "see" a client's photo. downloadFile returns a working URL
+// on demand from the message's own idMessage, so we can still download and price the photo.
+export async function greenApiDownloadFile(
+  creds: GreenApiCreds,
+  chatId: string,
+  idMessage: string,
+): Promise<{ ok: boolean; downloadUrl?: string; error?: string }> {
+  try {
+    const url = `https://api.green-api.com/waInstance${creds.instance}/downloadFile/${creds.token}`;
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chatId, idMessage }),
+    });
+    const txt = await r.text();
+    let json: any = null;
+    try {
+      json = JSON.parse(txt);
+    } catch {}
+    if (!r.ok) return { ok: false, error: `green-api downloadFile ${r.status}: ${txt.slice(0, 200)}` };
+    return { ok: true, downloadUrl: json?.downloadUrl };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? String(e) };
+  }
+}
+
 // ============================================================
 // Time / language helpers
 // ============================================================
@@ -3546,15 +3574,16 @@ function buildCategoryListMsg(services: any[], language: "ru" | "ky" | "en"): Wa
   return { kind: "list", text: question, buttonText: btnText, sections: [{ rows }] };
 }
 
-// Choose the first booking menu: a flat service list for small salons, or a category list
-// (→ awaiting_category) when the services don't fit one 10-row list.
+// Choose the first booking menu. We ALWAYS show the full service list (grouped under category
+// headers) rather than a category-only picker: salon owners want every service visible up front
+// so a client who doesn't recognise a category name still finds what they need. The old category
+// gating existed only for WhatsApp's native 10-row list cap, but we render menus as numbered text
+// (no cap) — and even on Cloud API a >10-row list simply falls back to that same numbered text.
 function initialServiceMenu(
   services: any[],
   language: "ru" | "ky" | "en",
 ): { state: WaAgentState; msg: WaInteractiveMessage } {
-  return services.length > SERVICE_LIST_ROW_LIMIT
-    ? { state: "awaiting_category", msg: buildCategoryListMsg(services, language) }
-    : { state: "awaiting_service", msg: buildServiceListMsg(services, language) };
+  return { state: "awaiting_service", msg: buildServiceListMsg(services, language) };
 }
 
 function buildDateListMsg(
@@ -3845,27 +3874,24 @@ async function translateGreetingV3(
   if (!apiKey || !text.trim()) return "";
   const langName = targetLang === "ky" ? "кыргызский" : "английский";
   const sys = `Переведи текст приветствия администратора салона красоты на ${langName} язык. Сохрани тон, эмодзи и форматирование (переносы строк). Верни только перевод, без кавычек и пояснений.`;
-  const url = `${GEMINI_BASE}/${MODEL_TEXT}:generateContent?key=${apiKey}`;
-  try {
-    const r = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: sys }] },
-        contents: [{ role: "user", parts: [{ text }] }],
-        toolConfig: { functionCallingConfig: { mode: "NONE" } },
-        generationConfig: {
-          temperature: 0.3,
-          maxOutputTokens: 400,
-          thinkingConfig: { thinkingBudget: 0 },
-        },
-      }),
-    });
-    const json: any = await r.json();
-    return json?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? "";
-  } catch {
+  // Route through callGemini so we get its retry-on-5xx/network + MAX_TOKENS handling. The old
+  // single-shot fetch with a 400-token cap intermittently returned empty (or truncated on the
+  // salon's long promo greeting), which dropped the client to a generic "Чем помочь?" instead of
+  // the admin-configured greeting. thinkingBudget:0 sends the whole budget to the actual output.
+  const res = await callGemini({
+    model: MODEL_TEXT,
+    apiKey,
+    systemInstruction: sys,
+    parts: [{ text }],
+    temperature: 0.3,
+    maxOutputTokens: 1024,
+    thinkingBudget: 0,
+  });
+  if (!res.ok || !res.text) {
+    console.error("[wa-agent] greeting translate failed:", res.error);
     return "";
   }
+  return res.text.replace(/^```[a-z]*|```$/gi, "").trim();
 }
 
 export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> {
@@ -4334,7 +4360,10 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       greet += baseGreeting;
     } else {
       const translated = await translateGreetingV3(apiKey, baseGreeting, language);
-      greet += translated || NATIVE_FALLBACK_GREETING[language];
+      // If translation still fails, show the admin's actual greeting (in Russian) rather than a
+      // bare "Чем помочь?" — the client at least sees the salon's promo/instructions. Only fall
+      // back to the tiny native line when the salon never set a custom greeting.
+      greet += translated || (input.config.greeting?.trim() ?? "") || NATIVE_FALLBACK_GREETING[language];
     }
 
     if (!singleBranch) {

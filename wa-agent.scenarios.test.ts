@@ -1843,40 +1843,36 @@ function bigMenuSalon(): SalonCfg {
 const catRowIds = (r: any): string[] =>
   (r.interactiveMessage?.sections ?? []).flatMap((s: any) => s.rows.map((x: any) => x.rowId));
 
-test("V3-cat-1. >10 services → categories first, then that category's services (by tap)", async () => {
+test("V3-cat-1. >10 services → full service list up front, grouped by category headers", async () => {
   const c = convoV3(bigMenuSalon());
   const r1 = await c.say("Здравствуйте");
-  expect(r1.nextState).toBe("awaiting_category");
-  const cats = catRowIds(r1);
-  expect(cats).toContain("cat_Волосы");
-  expect(cats).toContain("cat_Ногти");
-  expect(cats.length).toBeLessThanOrEqual(10);
-
-  const r2 = await c.say("", { selectedId: "cat_Ногти" });
-  expect(r2.nextState).toBe("awaiting_service");
-  const svcs = catRowIds(r2);
+  // No more category-only gating: the whole service list is shown at once.
+  expect(r1.nextState).toBe("awaiting_service");
+  const svcs = catRowIds(r1);
   expect(svcs).toContain("svc_s_nail1");
-  expect(svcs).not.toContain("svc_s_hair1"); // only the chosen category
+  expect(svcs).toContain("svc_s_hair1"); // services from multiple categories are all present
+  // Grouped under category section headers so it stays scannable.
+  const titles = (r1.interactiveMessage?.sections ?? []).map((s: any) => s.title);
+  expect(titles).toContain("Волосы");
+  expect(titles).toContain("Ногти");
 
   const r3 = await c.say("", { selectedId: "svc_s_nail1" });
   expect(r3.nextState).toBe("awaiting_date_choice");
   expect((r3.nextStateData as any).v3?.service_id).toBe("s_nail1");
 });
 
-test("V3-cat-2. category and service pickable by number (Green-API numbered menu)", async () => {
+test("V3-cat-2. any service pickable by number from the flat list (Green-API numbered menu)", async () => {
   const c = convoV3(bigMenuSalon());
   await c.say("Здравствуйте");
-  const r2 = await c.say("2"); // 2nd category = Ногти
-  expect(r2.nextState).toBe("awaiting_service");
-  expect(catRowIds(r2)).toContain("svc_s_nail1");
-  const r3 = await c.say("1"); // 1st service in Ногти = Маникюр
-  expect(r3.nextState).toBe("awaiting_date_choice");
-  expect((r3.nextStateData as any).v3?.service_id).toBe("s_nail1");
+  // Flat order groups by category: Волосы(1-4), Ногти(5-8)… so #5 = Маникюр (s_nail1).
+  const r = await c.say("5");
+  expect(r.nextState).toBe("awaiting_date_choice");
+  expect((r.nextStateData as any).v3?.service_id).toBe("s_nail1");
 });
 
 test("V3-cat-3. typing a service name skips the category step", async () => {
   const c = convoV3(bigMenuSalon());
-  await c.say("Здравствуйте"); // awaiting_category
+  await c.say("Здравствуйте"); // full service list
   const r = await c.say("хочу маникюр");
   expect(r.nextState).toBe("awaiting_date_choice");
   expect((r.nextStateData as any).v3?.service_id).toBe("s_nail1");

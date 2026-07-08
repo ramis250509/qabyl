@@ -5,6 +5,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import {
   greenApiSendMessage,
   greenApiSendFileByUrl,
+  greenApiDownloadFile,
   normalizeChatIdToPhone,
   renderInteractiveAsText,
   runWaAgentV3,
@@ -246,28 +247,48 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
           if (dup) return ack();
         }
 
-        // ---- Download image (private bucket)
+        // ---- Download image (private bucket). Green-API frequently omits downloadUrl in the
+        // webhook (or it has expired by the time we process), which left the assistant blind to a
+        // client's photo and it replied "Фото не получили". If the webhook URL is missing or the
+        // fetch fails, we ask Green-API for a fresh URL via downloadFile using this idMessage.
         let mediaPath: string | null = null;
-        if (imageDownloadUrl) {
-          try {
-            const r = await fetch(imageDownloadUrl);
-            if (r.ok) {
+        if (mt === "imageMessage") {
+          const dlCreds: GreenApiCreds = {
+            instance: secrets.greenapi_instance ?? "",
+            token: secrets.greenapi_token ?? "",
+          };
+          const tryStore = async (u: string): Promise<boolean> => {
+            try {
+              const r = await fetch(u);
+              if (!r.ok) return false;
               const ab = await r.arrayBuffer();
               const ext = (imageMime?.split("/")[1] || "jpg").replace(/[^a-z0-9]/gi, "") || "jpg";
-              mediaPath = `${salonId}/${convId}/${Date.now()}.${ext}`;
+              const path = `${salonId}/${convId}/${Date.now()}.${ext}`;
               const { error: upErr } = await supabaseAdmin.storage
                 .from("wa-media")
-                .upload(mediaPath, new Uint8Array(ab), {
+                .upload(path, new Uint8Array(ab), {
                   contentType: imageMime ?? "image/jpeg",
                   upsert: false,
                 });
               if (upErr) {
                 console.error("[wa] media upload failed", upErr);
-                mediaPath = null;
+                return false;
               }
+              mediaPath = path;
+              return true;
+            } catch (e) {
+              console.error("[wa] media download failed", e);
+              return false;
             }
-          } catch (e) {
-            console.error("[wa] media download failed", e);
+          };
+          let stored = imageDownloadUrl ? await tryStore(imageDownloadUrl) : false;
+          if (!stored && greenIdMessage && dlCreds.instance && dlCreds.token) {
+            const fresh = await greenApiDownloadFile(dlCreds, chatId, greenIdMessage);
+            if (fresh.ok && fresh.downloadUrl) {
+              stored = await tryStore(fresh.downloadUrl);
+            } else if (!fresh.ok) {
+              console.error("[wa] downloadFile fallback failed", fresh.error);
+            }
           }
         }
 
