@@ -421,6 +421,21 @@ function isPureGreeting(text: string): boolean {
   return toks.every((t) => GREETING_SOFT_WORDS.has(t) || GREETING_STRONG_RE.test(t));
 }
 
+// Vague "tell me more" wording with no concrete request. Ad leads click through from a targeted
+// post with a prefilled "Здравствуйте, можно узнать об этом поподробнее" — those should get the
+// salon's greeting + menu, not a confused parse. Deliberately excludes a named service/date/time.
+const GENERIC_INQUIRY_RE =
+  /(поподробн|подробн|расскаж|можно узнать|хочу узнать|хотел[аи]?\s*бы\s*узнать|интересует|об этом|про это|про акци|по акци|узнать больше|информаци|подскаж|көбүрөөк|кабарлаш|билсем болобу|маалымат)/i;
+
+// Should this message reset the dialog to the salon's greeting + service menu? True for a pure
+// greeting, or a greeting followed only by a generic inquiry (the ad-lead case). A greeting
+// followed by a concrete request (service/date/time) is NOT reset — the normal flow handles it.
+function shouldGreetRestart(text: string): boolean {
+  if (isPureGreeting(text)) return true;
+  if (!GREETING_STRONG_RE.test(normalizeForMatch(text))) return false;
+  return GENERIC_INQUIRY_RE.test(text);
+}
+
 // ============================================================
 // Gemini REST wrapper (no SDK — stays Worker-safe)
 // ============================================================
@@ -3948,7 +3963,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     !selectedId &&
     input.state !== "idle" &&
     input.state !== "done" &&
-    isPureGreeting(combinedText)
+    shouldGreetRestart(combinedText)
   ) {
     debug.actions.push("greeting_restart");
     for (const k of Object.keys(v3)) delete (v3 as any)[k];
@@ -4231,7 +4246,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     !selectedId &&
     !!combinedText &&
     !looksLikeConfirmButtonTitle &&
-    !isPureGreeting(combinedText);
+    !shouldGreetRestart(combinedText);
   // "cancel"/"reschedule" when the wording is explicit (incl. fuzzy match for typos like
   // "пенеренести"), "ambiguous" for phrases like "не смогу прийти" that could mean either —
   // those still get the Отменить/Перенести buttons.

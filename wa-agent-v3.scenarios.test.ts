@@ -325,6 +325,52 @@ test("V3: a slot that has since passed is rejected and fresh times are shown", a
   expect(res.reply).toContain("прошло");
 });
 
+test("V3: ad lead (greeting + vague inquiry) gets the configured greeting + full service list", async () => {
+  (globalThis as any).__WA_DB__ = makeDb({ services: [SERVICE, { ...SERVICE, id: "svc2", name: "Педикюр" }] });
+  const res = await runWaAgentV3({
+    salon: SALON,
+    config: { ...CONFIG, greeting: "Добро пожаловать в наш салон! Сейчас акция." },
+    client: { phone: "996700000000", name: "Аяна" },
+    history: [], lastMessages: msg("Здравствуйте, можно узнать об этом поподробнее"),
+    branches: [], selectedBranchId: null,
+    state: "idle", stateData: {},
+  } as any);
+  // Always the admin-configured greeting up front, then the full service list.
+  expect(res.reply).toContain("Добро пожаловать");
+  expect(res.nextState).toBe("awaiting_service");
+  expect(res.interactiveMessage?.kind).toBe("list");
+});
+
+test("V3: greeting + vague inquiry MID-FLOW restarts to greeting + menu", async () => {
+  (globalThis as any).__WA_DB__ = makeDb({ services: [SERVICE] });
+  const res = await runWaAgentV3({
+    salon: SALON,
+    config: { ...CONFIG, greeting: "Добро пожаловать!" },
+    client: { phone: "996700000000", name: "Аяна" },
+    history: [], lastMessages: msg("Здравствуйте, расскажите поподробнее"),
+    branches: [], selectedBranchId: null,
+    state: "awaiting_date_choice",
+    stateData: { language: "ru", v3: { service_id: "svc1", service_name: "Маникюр", date: "2099-01-02" } },
+  } as any);
+  expect(res.debug.actions).toContain("greeting_restart");
+  expect(res.reply).toContain("Добро пожаловать");
+  expect((res.nextStateData as any).v3.service_id).toBeUndefined();
+});
+
+test("V3: greeting + a CONCRETE service request does NOT restart (keeps the request)", async () => {
+  (globalThis as any).__WA_DB__ = makeDb({ services: [SERVICE] });
+  const res = await runWaAgentV3({
+    salon: SALON,
+    config: { ...CONFIG, greeting: "Добро пожаловать!" },
+    client: { phone: "996700000000", name: "Аяна" },
+    history: [], lastMessages: msg("Здравствуйте, хочу записаться на маникюр 15 числа"),
+    branches: [], selectedBranchId: null,
+    state: "awaiting_date_choice",
+    stateData: { language: "ru", v3: { service_id: "svc1", service_name: "Маникюр" } },
+  } as any);
+  expect(res.debug.actions).not.toContain("greeting_restart");
+});
+
 test("cleanup: restore fetch", () => {
   globalThis.fetch = origFetch;
   expect(true).toBe(true);
