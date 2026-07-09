@@ -6,6 +6,7 @@ import {
   greenApiSendMessage,
   greenApiSendFileByUrl,
   greenApiDownloadFile,
+  isLikelyNativeGreetingRace,
   normalizeChatIdToPhone,
   renderInteractiveAsText,
   runWaAgentV3,
@@ -139,7 +140,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         if (webhookType === "outgoingMessageReceived") {
           const { data: convForPause } = await supabaseAdmin
             .from("wa_conversations")
-            .select("id")
+            .select("id, session_started_at")
             .eq("salon_id", salonId)
             .eq("client_phone", phone)
             .maybeSingle();
@@ -153,10 +154,35 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
                 .maybeSingle();
               if (dup) return ack();
             }
-            await supabaseAdmin
-              .from("wa_conversations")
-              .update({ ai_paused: true, ai_paused_at: nowIso })
-              .eq("id", convForPause.id);
+            // WhatsApp Business App's own NATIVE greeting/away-message auto-reply is sent by the
+            // device itself (not via our API), so Green-API reports it exactly like a human typing
+            // manually — outgoingMessageReceived. It fires near-instantly on the client's first
+            // message, before our own bot's reply lands (700ms debounce + up to 8s lock-wait +
+            // Gemini), so treating EVERY such event as human takeover paused the assistant on
+            // literally the first message of every new conversation. Only suppress the pause when
+            // this looks like that race (no bot reply yet this session, session just started) —
+            // a later outgoing event (bot already replied, or session stale) still pauses as before.
+            const { data: priorBotReply } = await supabaseAdmin
+              .from("wa_messages")
+              .select("id")
+              .eq("conversation_id", convForPause.id)
+              .eq("direction", "out")
+              .eq("kind", "text")
+              .gte("created_at", (convForPause as any).session_started_at)
+              .limit(1)
+              .maybeSingle();
+            const sessionAgeMs =
+              Date.now() - new Date((convForPause as any).session_started_at).getTime();
+            const suppressPause = isLikelyNativeGreetingRace({
+              hasBotReplyThisSession: Boolean(priorBotReply),
+              sessionAgeMs,
+            });
+            if (!suppressPause) {
+              await supabaseAdmin
+                .from("wa_conversations")
+                .update({ ai_paused: true, ai_paused_at: nowIso })
+                .eq("id", convForPause.id);
+            }
             await supabaseAdmin.from("wa_messages").insert({
               conversation_id: convForPause.id,
               salon_id: salonId,
@@ -164,6 +190,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
               kind: "system",
               text_body: textBody,
               green_api_message_id: greenIdMessage ?? null,
+              ...(suppressPause ? { meta: { suppressedAutoPause: true, sessionAgeMs } } : {}),
             });
           }
           return ack();

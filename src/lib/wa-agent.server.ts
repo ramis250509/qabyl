@@ -436,6 +436,28 @@ function shouldGreetRestart(text: string): boolean {
   return GENERIC_INQUIRY_RE.test(text);
 }
 
+// How long after a fresh session starts we still treat an "outgoingMessageReceived" event as a
+// possible race with WhatsApp Business App's own NATIVE greeting/away-message auto-reply (fired by
+// the device itself, not via our API — Green-API reports it identically to a human typing manually)
+// rather than genuine staff takeover. Derived from worst-case latency before our own bot's reply
+// lands: 700ms debounce + up to 8s LOCK_WAIT_TIMEOUT_MS + Gemini latency (~1-5s) + margin.
+const NATIVE_GREETING_RACE_WINDOW_MS = 20_000;
+
+// Should a Green-API "outgoingMessageReceived" event be treated as the native auto-greeting racing
+// the client's first message, rather than a human manually taking over? True only when the bot
+// hasn't sent its own reply yet THIS session AND the session just started — an outgoing event later
+// in a stale/broken session (bot never replied, staff steps in minutes later) must still pause.
+export function isLikelyNativeGreetingRace(opts: {
+  hasBotReplyThisSession: boolean;
+  sessionAgeMs: number;
+}): boolean {
+  return (
+    !opts.hasBotReplyThisSession &&
+    opts.sessionAgeMs >= 0 &&
+    opts.sessionAgeMs < NATIVE_GREETING_RACE_WINDOW_MS
+  );
+}
+
 // ============================================================
 // Gemini REST wrapper (no SDK — stays Worker-safe)
 // ============================================================
