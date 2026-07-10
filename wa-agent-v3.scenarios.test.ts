@@ -159,6 +159,20 @@ function msg(text: string, opts: { selectedId?: string; image?: boolean } = {}) 
 
 const SERVICE = { id: "svc1", name: "Маникюр", category: "Ногти", price: 1000, price_max: null, price_type: "fixed", duration_min: 60 };
 
+test("V3: service list shows the full price range (от X–Y сом) for range-priced services", async () => {
+  const rangeService = { id: "svc_range", name: "Кератиновое выпрямление", category: "Волосы", price: 2500, price_max: 7500, price_type: "range", duration_min: 180 };
+  (globalThis as any).__WA_DB__ = makeDb({ services: [rangeService] });
+  const res = await runWaAgentV3({
+    salon: SALON, config: CONFIG,
+    client: { phone: "996700000000", name: "Аяна" },
+    history: [], lastMessages: msg("Здравствуйте"),
+    branches: [], selectedBranchId: null,
+    state: "idle", stateData: {},
+  } as any);
+  const rows = (res.interactiveMessage as any)?.sections?.flatMap((s: any) => s.rows) ?? [];
+  expect(rows[0].description).toContain("от 2500–7500 сом");
+});
+
 test("V3: first message always shows the full service menu, even naming a service", async () => {
   (globalThis as any).__WA_DB__ = makeDb({ services: [SERVICE, { ...SERVICE, id: "svc2", name: "Педикюр" }] });
   const res = await runWaAgentV3({

@@ -3559,7 +3559,8 @@ function buildServiceListMsg(services: any[], language: "ru" | "ky" | "en"): WaI
   const sections = Array.from(grouped.entries()).map(([title, rows]) => ({
     title,
     rows: rows.map((s: any) => {
-      const priceStr = s.price_type === "range" ? `от ${s.price} сом` : `${s.price} сом`;
+      const priceStr =
+        s.price_type === "range" ? `от ${s.price}–${s.price_max} сом` : `${s.price} сом`;
       const durationStr = formatDurationV3(s.duration_min, language);
       const description = durationStr ? `${priceStr} · ${durationStr}` : priceStr;
       return {
