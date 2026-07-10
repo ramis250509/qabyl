@@ -4121,10 +4121,16 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
           ? `\n💰 Болжолдуу баа: ${nextV3.price_override} сом`
           : `\n💰 Ориентировочная стоимость: ${nextV3.price_override} сом`
         : "";
+    // Prefer the specific branch's address (multi-branch salon) over the salon-wide one.
+    const branchAddress = nextV3.branch_id
+      ? input.branches.find((b) => b.id === nextV3.branch_id)?.address
+      : null;
+    const address = branchAddress ?? input.salonInfo?.address ?? null;
+    const addressLine = address ? `\n📍 ${address}` : "";
     const details =
       language === "ky"
-        ? `✅ Жазылуу маалыматы:\n\n💇 ${nextV3.service_name}\n📅 ${dateLabel}\n⏰ ${timeLabel}\n👤 Мастер: ${masterLabel}\n🙍 Ат: ${nextV3.client_name}${priceStr}\n\nРастайсызбы?`
-        : `✅ Данные записи:\n\n💇 ${nextV3.service_name}\n📅 ${dateLabel}\n⏰ ${timeLabel}\n👤 Мастер: ${masterLabel}\n🙍 Имя: ${nextV3.client_name}${priceStr}\n\nПодтверждаете?`;
+        ? `✅ Жазылуу маалыматы:\n\n💇 ${nextV3.service_name}\n📅 ${dateLabel}\n⏰ ${timeLabel}\n👤 Мастер: ${masterLabel}\n🙍 Ат: ${nextV3.client_name}${priceStr}${addressLine}\n\nРастайсызбы?`
+        : `✅ Данные записи:\n\n💇 ${nextV3.service_name}\n📅 ${dateLabel}\n⏰ ${timeLabel}\n👤 Мастер: ${masterLabel}\n🙍 Имя: ${nextV3.client_name}${priceStr}${addressLine}\n\nПодтверждаете?`;
     return finish(
       details,
       "awaiting_final_confirm",
@@ -5106,7 +5112,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       // Name already collected earlier (e.g. re-selection after "Нет, перенести") → straight to confirm.
       if (newV3.client_name) return confirmBooking(newV3);
       const msg = language === "ky" ? "Атыңызды жазыңыз:" : "Введите ваше имя:";
-      return finish(msg, "awaiting_name", newV3, backOnlyMsg(language));
+      return finish(msg, "awaiting_name", newV3);
     }
 
     const msg = language === "ky" ? "Мастерди тандаңыз:" : "Выберите мастера:";
@@ -5159,7 +5165,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     const newV3 = { ...v3, master_id: masterId, master_name: master?.name ?? "" };
     if (newV3.client_name) return confirmBooking(newV3);
     const msg = language === "ky" ? "Атыңызды жазыңыз:" : "Введите ваше имя:";
-    return finish(msg, "awaiting_name", newV3, backOnlyMsg(language));
+    return finish(msg, "awaiting_name", newV3);
   }
 
   // ===== awaiting_name =====
@@ -5167,7 +5173,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     const name = combinedText.trim().slice(0, 80);
     if (name.length < 2) {
       const msg = language === "ky" ? "Атыңызды жазыңыз:" : "Пожалуйста, введите ваше имя:";
-      return finish(msg, "awaiting_name", v3, backOnlyMsg(language));
+      return finish(msg, "awaiting_name", v3);
     }
 
     return confirmBooking({ ...v3, client_name: name });

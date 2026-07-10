@@ -428,6 +428,48 @@ test("V3: booking success includes the salon/branch address", async () => {
   expect(res.reply).toContain("ул. Киевская, 95");
 });
 
+test("V3: 'Подтверждаете?' confirmation message includes the branch address", async () => {
+  (globalThis as any).__WA_DB__ = makeDb({
+    services: [SERVICE],
+    masters: [{ id: "m1", name: "Анна", branch_id: null, sort_order: 0, service_ids: ["svc1"] }],
+  });
+  const res = await runWaAgentV3({
+    salon: SALON, config: CONFIG,
+    client: { phone: "996700000000", name: "Аяна" },
+    history: [], lastMessages: msg("Аяна"),
+    branches: [{ id: "b1", name: "Центр", address: "ул. Киевская, 95" }],
+    selectedBranchId: "b1",
+    state: "awaiting_name",
+    stateData: { language: "ru", v3: {
+      service_id: "svc1", service_name: "Маникюр", date: "2099-01-01",
+      slot_start: "2099-01-01T04:00:00.000Z", slot_end: "2099-01-01T04:30:00.000Z",
+      master_id: "m1", master_name: "Анна", branch_id: "b1",
+    } },
+  } as any);
+  expect(res.nextState).toBe("awaiting_final_confirm");
+  expect(res.reply).toContain("ул. Киевская, 95");
+});
+
+test("V3: 'Введите ваше имя' no longer offers a back button (clients got confused)", async () => {
+  (globalThis as any).__WA_DB__ = makeDb({
+    services: [SERVICE],
+    masters: [{ id: "m1", name: "Анна", branch_id: null, sort_order: 0, service_ids: ["svc1"] }],
+  });
+  const res = await runWaAgentV3({
+    salon: SALON, config: CONFIG,
+    client: { phone: "996700000000", name: "Аяна" },
+    history: [], lastMessages: msg("", { selectedId: "slot_0" }),
+    branches: [], selectedBranchId: null,
+    state: "awaiting_slot_choice",
+    stateData: { language: "ru", v3: {
+      service_id: "svc1", service_name: "Маникюр", date: "2099-01-01",
+      slots_cache: [{ start: "2099-01-01T04:00:00.000Z", end: "2099-01-01T04:30:00.000Z", masterIds: ["m1"] }],
+    } },
+  } as any);
+  expect(res.nextState).toBe("awaiting_name");
+  expect(res.interactiveMessage).toBeUndefined();
+});
+
 test("V3: tapping 'Отменить запись' after booking goes straight to cancel-confirm", async () => {
   (globalThis as any).__WA_DB__ = makeDb({ services: [SERVICE] });
   const res = await runWaAgentV3({
