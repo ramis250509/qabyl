@@ -6,6 +6,7 @@ import {
   greenApiSendMessage,
   greenApiSendFileByUrl,
   greenApiDownloadFile,
+  greenApiSendInteractiveButtons,
   isLikelyNativeGreetingRace,
   normalizeChatIdToPhone,
   renderInteractiveAsText,
@@ -194,8 +195,13 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         } else if (mt === "listResponseMessage") {
           selectedId = md?.listResponseMessage?.listResponseRow?.rowId ?? null;
           textBody = md?.listResponseMessage?.listResponseRow?.title ?? selectedId;
-        } else if (mt === "interactiveButtonsReply") {
-          // Tap on a reply button sent via sendInteractiveButtons.
+        } else if (mt === "templateButtonsReplyMessage") {
+          // Tap on a reply button sent via sendInteractiveButtons. Verified against Green-API's
+          // own docs (receiving/notifications-format/incoming-message/InteractiveButtonsReply):
+          // typeMessage is "templateButtonsReplyMessage" (plural "Buttons") — the previous check
+          // for "interactiveButtonsReply" never matched anything Green-API actually sends, so
+          // EVERY button tap fell into the "unsupported type" branch below and was silently
+          // ack()'d with no reply — this is why tapping "✅ Да, записать" never created a booking.
           selectedId = md?.templateButtonReplyMessage?.selectedId ?? null;
           textBody = md?.templateButtonReplyMessage?.selectedDisplayText ?? selectedId;
         } else {
@@ -216,12 +222,6 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         const previousLastMessageAt = existingConv?.last_message_at
           ? new Date(existingConv.last_message_at).getTime()
           : 0;
-        const previousLastAppointmentAt = existingConv?.last_appointment_at
-          ? new Date(existingConv.last_appointment_at).getTime()
-          : 0;
-        const previousSessionStartedAt = existingConv?.session_started_at
-          ? new Date(existingConv.session_started_at).getTime()
-          : 0;
         const previousState = (existingConv?.state ?? "idle") as string;
         // A booking that is mid-flow (the client hasn't finished or cancelled) must NOT be wiped
         // just because they paused. Previously a >20-min gap reset state/state_data, so a client
@@ -231,10 +231,14 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         const inProgress = previousState !== "idle" && previousState !== "done";
         const sessionGapMs = inProgress ? 12 * 60 * 60 * 1000 : 20 * 60 * 1000;
         const gapMs = previousLastMessageAt ? Date.now() - previousLastMessageAt : 0;
-        const startsNewSession =
-          !existingConv ||
-          gapMs > sessionGapMs ||
-          (previousLastAppointmentAt > 0 && previousLastAppointmentAt >= previousSessionStartedAt);
+        // NOTE: previously also force-reset whenever an appointment already existed in this
+        // session (previousLastAppointmentAt >= previousSessionStartedAt), regardless of the time
+        // gap — that wiped state_data (including the "Перенести/Отменить" menu attached to the
+        // booking-success message) on the very NEXT reply, before the client could ever use it.
+        // Dropped: state === "done" already routes to a fresh greeting+menu on its own (see
+        // runWaAgentV3's idle/done handler), so the "returning client gets a clean start" goal is
+        // met either way — the 20-minute gap below is what should decide a genuinely new session.
+        const startsNewSession = !existingConv || gapMs > sessionGapMs;
 
         // ---- Upsert conversation
         const { data: conv, error: convErr } = await supabaseAdmin
@@ -548,15 +552,19 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             }
 
             // 5) Send reply — skip network if byte-for-byte identical to previous in this pass.
-            // BOTH lists AND buttons go out as a plain-text numbered menu, and the agent maps a
-            // numeric reply back to the row/button id. We used to send buttons as native tappable
-            // reply buttons (sendInteractiveButtons), but on regular Green-API accounts the tap
-            // reply does NOT round-trip into a shape the webhook can map to a button id — which
-            // silently stalled the FINAL booking confirmation ("✅ Да, записать" was tapped but no
-            // appointment was ever created). Numbered text — which the client answers with a digit,
-            // the same proven path date/slot selection uses — works reliably on every account.
+            // Interactive LISTS don't render on regular WhatsApp accounts (Green-API marks
+            // sendListMessage as non-working), so lists go out as a plain-text numbered menu and
+            // the agent maps a numeric reply back to the row. BUTTON messages go out as real
+            // tappable reply buttons via sendInteractiveButtons — this used to silently fail
+            // (tapping "✅ Да, записать" never created a booking) because the reply-parsing switch
+            // above checked for typeMessage "interactiveButtonsReply", which Green-API never
+            // actually sends; the real value, per Green-API's own docs, is
+            // "templateButtonsReplyMessage". Every tap was falling into "unsupported → ack()" and
+            // getting silently dropped. Now that the parser recognizes the real type, native
+            // buttons work — falling back to the same numbered text only if the send call itself
+            // fails.
             const im = result.interactiveMessage;
-            const sentText = im
+            let sentText = im
               ? renderInteractiveAsText(
                   result.reply,
                   im,
@@ -566,8 +574,19 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             const isDuplicateReply = sentText.trim() === (lastSentReply ?? "").trim();
             let sentIdMessage: string | undefined;
             if (!isDuplicateReply) {
-              const res = await greenApiSendMessage(creds, chatId, sentText);
-              sentIdMessage = res.ok ? res.idMessage : undefined;
+              let sentInteractive = false;
+              if (im?.kind === "buttons") {
+                const res = await greenApiSendInteractiveButtons(creds, chatId, result.reply, im.buttons);
+                if (res.ok) {
+                  sentIdMessage = res.idMessage;
+                  sentText = result.reply;
+                  sentInteractive = true;
+                }
+              }
+              if (!sentInteractive) {
+                const res = await greenApiSendMessage(creds, chatId, sentText);
+                sentIdMessage = res.ok ? res.idMessage : undefined;
+              }
               lastSentReply = sentText;
             }
             await supabaseAdmin.from("wa_messages").insert({

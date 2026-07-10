@@ -3482,7 +3482,10 @@ type V3BookingState = {
   // Set only right after THIS turn created the appointment, so the "Перенести/Отменить" buttons
   // attached to the success message can jump straight into the manage flow without a DB lookup.
   managing_appointment_starts_at?: string;
-  managing_action?: "cancel" | "reschedule";
+  // "cancel_and_rebook" is the post-booking "Изменить" option: cancels the just-created
+  // appointment, same as "cancel", but then routes straight into the service menu instead of
+  // ending at "done" — for a client who realizes they picked the wrong service/master entirely.
+  managing_action?: "cancel" | "reschedule" | "cancel_and_rebook";
   managing_request_text?: string; // original free-text ("перенесите на 19:00") carried past the choice step
   managing_new_slot_start?: string;
   managing_new_slot_end?: string;
@@ -3630,9 +3633,29 @@ function initialServiceMenu(
   return { state: "awaiting_service", msg: buildServiceListMsg(services, language) };
 }
 
+// Appended as a trailing section on a list-type booking-flow message, so the client can return
+// to the previous step instead of only ever being able to move forward. rowId is always "back" —
+// handled by a dedicated check (right after selectedId is resolved) that routes to the previous
+// step based on the CURRENT state. Only used in the NEW-BOOKING flow, not reschedule/manage
+// (those don't have a comparable "previous step" to walk back through).
+function backRow(language: "ru" | "ky" | "en") {
+  return { rowId: "back", title: language === "ky" ? "◀️ Артка" : "◀️ Назад" };
+}
+
+// For free-text steps (photo request, name entry) that have no list to attach a back ROW to —
+// a single tappable button alongside the prompt. The client can still just type normally.
+function backOnlyMsg(language: "ru" | "ky" | "en"): WaInteractiveMessage {
+  return {
+    kind: "buttons",
+    text: "",
+    buttons: [{ id: "back", text: language === "ky" ? "◀️ Артка" : "◀️ Назад" }],
+  };
+}
+
 function buildDateListMsg(
   dateMap: Array<{ iso: string; label: string; relative: string }>,
   language: "ru" | "ky" | "en",
+  opts?: { back?: boolean },
 ): WaInteractiveMessage {
   const question = language === "ky" ? "Кайсы күнгө жазыласыз?" : "На какую дату запишем?";
   const rows = dateMap.slice(0, 7).map((d) => ({
@@ -3640,7 +3663,8 @@ function buildDateListMsg(
     title: (d.relative.startsWith("+") ? d.label : d.relative).slice(0, 24),
     description: d.label.slice(0, 72),
   }));
-  return { kind: "list", text: question, buttonText: "Выбрать дату", sections: [{ rows }] };
+  const sections = [{ rows }, ...(opts?.back ? [{ rows: [backRow(language)] }] : [])];
+  return { kind: "list", text: question, buttonText: "Выбрать дату", sections };
 }
 
 function buildSlotListMsg(
@@ -3648,6 +3672,7 @@ function buildSlotListMsg(
   tz: string,
   language: "ru" | "ky" | "en",
   masterNames?: Map<string, string>, // when slots belong to different masters, show whose slot it is
+  opts?: { back?: boolean },
 ): WaInteractiveMessage {
   const question = language === "ky" ? "Убакытты тандаңыз:" : "Выберите время:";
   const L = (ru: string, ky: string) => (language === "ky" ? ky : ru);
@@ -3675,6 +3700,7 @@ function buildSlotListMsg(
   const sections = (["morning", "afternoon", "evening"] as const)
     .filter((p) => buckets[p].length > 0)
     .map((p) => ({ title: partTitles[p], rows: buckets[p] }));
+  if (opts?.back) sections.push({ title: undefined, rows: [backRow(language)] });
   return {
     kind: "list",
     text: question,
@@ -3686,10 +3712,12 @@ function buildSlotListMsg(
 function buildMasterListMsg(
   masters: DbMaster[],
   language: "ru" | "ky" | "en",
+  opts?: { back?: boolean },
 ): WaInteractiveMessage {
   const question = language === "ky" ? "Мастерди тандаңыз:" : "Выберите мастера:";
   const rows = masters.map((m) => ({ rowId: `master_${m.id}`, title: m.name.slice(0, 24) }));
-  return { kind: "list", text: question, buttonText: "Выбрать мастера", sections: [{ rows }] };
+  const sections = [{ rows }, ...(opts?.back ? [{ rows: [backRow(language)] }] : [])];
+  return { kind: "list", text: question, buttonText: "Выбрать мастера", sections };
 }
 
 // A tapped button may reach the state machine as the button TITLE ("✅ Да, записать") when
@@ -3722,9 +3750,9 @@ function buildConfirmMsg(
   };
 }
 
-// Attached to the booking-success message so the client can reschedule/cancel the record they
-// JUST created without having to guess free-text wording. Handled by the "postbook_" selectedId
-// branch right before the idle/done greet block.
+// Attached to the booking-success message so the client can reschedule/cancel/change the record
+// they JUST created without having to guess free-text wording. Handled by the "postbook_"
+// selectedId branch right before the idle/done greet block. Green-API caps reply buttons at 3.
 function buildPostBookingMsg(language: "ru" | "ky" | "en"): WaInteractiveMessage {
   const text =
     language === "ky" ? "Дагы бир нерсе керекпи?" : "Нужно перенести или отменить запись?";
@@ -3737,6 +3765,7 @@ function buildPostBookingMsg(language: "ru" | "ky" | "en"): WaInteractiveMessage
         text: language === "ky" ? "🔄 Убакытты которуу" : "🔄 Перенести запись",
       },
       { id: "postbook_cancel", text: language === "ky" ? "❌ Жокко чыгаруу" : "❌ Отменить запись" },
+      { id: "postbook_change", text: language === "ky" ? "✏️ Кызматты которуу" : "✏️ Изменить запись" },
     ],
   };
 }
@@ -4062,14 +4091,14 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         language === "ky"
           ? `«${svcRow.name}» — баасы ${svcRow.price}–${svcRow.price_max} сом. Так баасын аныктоо үчүн фото жиберсеңиз болот же "жоксуз фото" деп жазыңыз.`
           : `Услуга «${svcRow.name}» — цена от ${svcRow.price} до ${svcRow.price_max} сом. Пришлите фото для точной оценки стоимости или напишите "без фото".`;
-      return finish(ask, "awaiting_photo", newV3);
+      return finish(ask, "awaiting_photo", newV3, backOnlyMsg(language));
     }
     const dateMap = buildDateMap(tz, 7);
     const q =
       language === "ky"
         ? `*${svcRow.name}* — кайсы күнгө жазыласыз?`
         : `*${svcRow.name}* — выберите дату:`;
-    return finish(q, "awaiting_date_choice", newV3, buildDateListMsg(dateMap, language));
+    return finish(q, "awaiting_date_choice", newV3, buildDateListMsg(dateMap, language, { back: true }));
   }
 
   // Re-show the service menu after an unrecognized reply, honoring the category-first gating
@@ -4405,12 +4434,15 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     debug.actions.push("manage_intent:none_found");
   }
 
-  // ===== post-booking quick actions ("Перенести/Отменить" attached to the success message) =====
-  // Only for the exact rowIds from buildPostBookingMsg, tapped/numbered right after THIS turn's
-  // booking — typed free text ("хочу перенести") is already handled by manageAction above.
+  // ===== post-booking quick actions ("Перенести/Отменить/Изменить" attached to the success
+  // message) — only for the exact rowIds from buildPostBookingMsg, tapped/numbered right after
+  // THIS turn's booking; typed free text ("хочу перенести") is already handled by manageAction
+  // above. =====
+  const postBookingIds = ["postbook_reschedule", "postbook_cancel", "postbook_change"];
   if (
     (state === "idle" || state === "done") &&
-    (selectedId === "postbook_reschedule" || selectedId === "postbook_cancel") &&
+    selectedId &&
+    postBookingIds.includes(selectedId) &&
     v3.managing_appointment_id &&
     v3.managing_appointment_starts_at
   ) {
@@ -4418,7 +4450,8 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     if (isWithinManageCutoff(v3.managing_appointment_starts_at)) {
       return finish(manageCutoffMsg(), "done", {});
     }
-    if (selectedId === "postbook_cancel") {
+    if (selectedId === "postbook_cancel" || selectedId === "postbook_change") {
+      const action = selectedId === "postbook_change" ? "cancel_and_rebook" : "cancel";
       const details =
         language === "ky"
           ? `Чын эле бул жазылууну жокко чыгарабызбы?\n${v3.managing_appointment_label}`
@@ -4426,11 +4459,52 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       return finish(
         details,
         "awaiting_manage_confirm",
-        { ...v3, managing_action: "cancel" },
+        { ...v3, managing_action: action },
         buildConfirmMsg(details, language),
       );
     }
     return startRescheduleV3(v3, "", v3.managing_appointment_starts_at);
+  }
+
+  // ===== "Назад" — step back through the NEW-BOOKING flow (service → date → slot → master/name).
+  // Not offered in reschedule/manage states (manageFlowStates), which don't have a comparable
+  // step-by-step draft to walk back through. Checked BEFORE any state-specific handler below, so
+  // it always intercepts regardless of which step the client is currently on.
+  if (selectedId === "back" && !manageFlowStates.includes(state)) {
+    if (state === "awaiting_photo" || state === "awaiting_date_choice") {
+      debug.actions.push("back:service");
+      const services = await loadAiVisibleServicesForSalon(db, input.salon.salonId);
+      const msg = language === "ky" ? "Кызматты кайра тандаңыз:" : "Выберите услугу заново:";
+      return reaskServiceMenu(msg, { branch_id: v3.branch_id, client_name: v3.client_name }, services);
+    }
+    if (state === "awaiting_slot_choice") {
+      debug.actions.push("back:date");
+      const msg = language === "ky" ? "Кайсы күнгө жазыласыз?" : "Выберите дату:";
+      return finish(
+        msg,
+        "awaiting_date_choice",
+        { ...v3, date: undefined, slots_cache: undefined },
+        buildDateListMsg(buildDateMap(tz, 7), language, { back: true }),
+      );
+    }
+    if (state === "awaiting_master_choice" || state === "awaiting_name") {
+      debug.actions.push("back:slot");
+      const cache = v3.slots_cache ?? [];
+      const mockSlots: MergedSlot[] = cache.map((s) => ({
+        start: s.start,
+        end: s.end,
+        master_ids: s.masterIds,
+      }));
+      const msg = language === "ky" ? "Убакытты тандаңыз:" : "Выберите время:";
+      return finish(
+        msg,
+        "awaiting_slot_choice",
+        { ...v3, slot_start: undefined, slot_end: undefined, master_id: undefined, master_name: undefined },
+        buildSlotListMsg(mockSlots, tz, language, undefined, { back: true }),
+      );
+    }
+    // Unhandled state (e.g. idle/done, or a stale "back" from an expired menu) — fall through
+    // to normal handling below; "back" just won't match anything and is treated as plain text.
   }
 
   // ===== idle / done → greet + first menu =====
@@ -4666,7 +4740,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
           language === "ky"
             ? "Фото ачылган жок. Кайра жиберип коруңуз 📷 же «жоксуз фото» деп жазыңыз."
             : "Не удалось открыть фото. Попробуйте ещё раз 📷 или напишите «без фото».";
-        return finish(msg, "awaiting_photo", v3);
+        return finish(msg, "awaiting_photo", v3, backOnlyMsg(language));
       }
       const priced = await priceFromPhoto({
         apiKey,
@@ -4690,7 +4764,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
           msg + dateQ,
           "awaiting_date_choice",
           { ...v3, price_skipped: true },
-          buildDateListMsg(dateMap, language),
+          buildDateListMsg(dateMap, language, { back: true }),
         );
       }
 
@@ -4702,7 +4776,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
             language === "ky"
               ? "Сүрөттөн так айырмалоо кыйын болду 🙏 Жарыгы жакшы жерде, жакыныраак дагы бир сүрөт жиберип көрүңүзчү."
               : "По этому фото сложно точно оценить 🙏 Пришлите, пожалуйста, ещё одно фото — при хорошем освещении и поближе.";
-          return finish(msg, "awaiting_photo", { ...v3, photo_attempts: attempts });
+          return finish(msg, "awaiting_photo", { ...v3, photo_attempts: attempts }, backOnlyMsg(language));
         }
         // Second low-confidence attempt in a row — hand off to a human instead of guessing.
         debug.actions.push("photo_low_confidence_escalate");
@@ -4732,7 +4806,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         msg + dateQ,
         "awaiting_date_choice",
         { ...v3, price_override: priced.price },
-        buildDateListMsg(dateMap, language),
+        buildDateListMsg(dateMap, language, { back: true }),
       );
     }
 
@@ -4743,7 +4817,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         msg,
         "awaiting_date_choice",
         { ...v3, price_skipped: true },
-        buildDateListMsg(dateMap, language),
+        buildDateListMsg(dateMap, language, { back: true }),
       );
     }
 
@@ -4751,7 +4825,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       language === "ky"
         ? "Фото алынган жок. 📷 иконкасы аркылуу фото жиберип же «жоксуз фото» деп жазыңыз."
         : "Фото не получили. Отправьте фото через иконку 📷 или напишите «без фото».";
-    return finish(msg, "awaiting_photo", v3);
+    return finish(msg, "awaiting_photo", v3, backOnlyMsg(language));
   }
 
   // ===== awaiting_date_choice =====
@@ -4783,7 +4857,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         faqReply ? `${faqReply}\n\n${reask}` : reask,
         "awaiting_date_choice",
         v3,
-        buildDateListMsg(dateMap, language),
+        buildDateListMsg(dateMap, language, { back: true }),
       );
     }
 
@@ -4804,7 +4878,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         language === "ky"
           ? "Бул күнгө мастер жок. Башка күн тандаңыз:"
           : "На эту дату мастеров нет. Выберите другую дату:";
-      return finish(msg, "awaiting_date_choice", v3, buildDateListMsg(dateMap, language));
+      return finish(msg, "awaiting_date_choice", v3, buildDateListMsg(dateMap, language, { back: true }));
     }
 
     const { isoLocalDate } = nowInTz(tz);
@@ -4824,7 +4898,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         language === "ky"
           ? "Бул күнгө бош убакыт жок. Башка күн тандаңыз:"
           : "На эту дату нет свободных слотов. Выберите другую дату:";
-      return finish(msg, "awaiting_date_choice", v3, buildDateListMsg(dateMap, language));
+      return finish(msg, "awaiting_date_choice", v3, buildDateListMsg(dateMap, language, { back: true }));
     }
 
     const newV3: V3BookingState = {
@@ -4836,7 +4910,12 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     const dateLabel = formatDateInTz(`${dateIso}T12:00:00Z`, tz);
     const msg =
       language === "ky" ? `${dateLabel} — убакытты тандаңыз:` : `${dateLabel} — выберите время:`;
-    return finish(msg, "awaiting_slot_choice", newV3, buildSlotListMsg(slots, tz, language));
+    return finish(
+      msg,
+      "awaiting_slot_choice",
+      newV3,
+      buildSlotListMsg(slots, tz, language, undefined, { back: true }),
+    );
   }
 
   function detectPartOfDayV3(text: string): "morning" | "afternoon" | "evening" | null {
@@ -4908,7 +4987,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
           msg,
           "awaiting_date_choice",
           { ...v3, slots_cache: undefined },
-          buildDateListMsg(buildDateMap(tz, 7), language),
+          buildDateListMsg(buildDateMap(tz, 7), language, { back: true }),
         );
       }
       const newV3: V3BookingState = {
@@ -4919,7 +4998,12 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         language === "ky"
           ? "Бул убакыт өтүп кетти. Актуалдуу бош убакыттар:"
           : "Это время уже прошло. Вот актуальное свободное время:";
-      return finish(msg, "awaiting_slot_choice", newV3, buildSlotListMsg(fresh, tz, language));
+      return finish(
+        msg,
+        "awaiting_slot_choice",
+        newV3,
+        buildSlotListMsg(fresh, tz, language, undefined, { back: true }),
+      );
     }
 
     const mockSlots: MergedSlot[] = slotsCache.map((s) => ({
@@ -4954,23 +5038,38 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
                 : "вечером";
         if (filtered.length > 0) {
           const msg = language === "ky" ? `Бош убакыттар ${label}:` : `Свободное время ${label}:`;
-          return finish(msg, "awaiting_slot_choice", v3, buildSlotListMsg(filtered, tz, language));
+          return finish(
+            msg,
+            "awaiting_slot_choice",
+            v3,
+            buildSlotListMsg(filtered, tz, language, undefined, { back: true }),
+          );
         }
         const msg =
           language === "ky"
             ? `${label.charAt(0).toUpperCase() + label.slice(1)} бош орун жок. Башка убакытты тандаңыз:`
             : `${label.charAt(0).toUpperCase() + label.slice(1)} свободных окон нет. Выберите другое время:`;
-        return finish(msg, "awaiting_slot_choice", v3, buildSlotListMsg(mockSlots, tz, language));
+        return finish(
+          msg,
+          "awaiting_slot_choice",
+          v3,
+          buildSlotListMsg(mockSlots, tz, language, undefined, { back: true }),
+        );
       }
       const msg = language === "ky" ? "Убакытты тандаңыз:" : "Пожалуйста, выберите время:";
       if (slotsCache.length > 0)
-        return finish(msg, "awaiting_slot_choice", v3, buildSlotListMsg(mockSlots, tz, language));
+        return finish(
+          msg,
+          "awaiting_slot_choice",
+          v3,
+          buildSlotListMsg(mockSlots, tz, language, undefined, { back: true }),
+        );
       const dateMap = buildDateMap(tz, 7);
       return finish(
         msg,
         "awaiting_date_choice",
         { ...v3, date: undefined, slots_cache: undefined },
-        buildDateListMsg(dateMap, language),
+        buildDateListMsg(dateMap, language, { back: true }),
       );
     }
 
@@ -4990,7 +5089,12 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         language === "ky"
           ? "Мастер табылган жок. Башка убакытты тандаңыз:"
           : "Мастер не найден. Выберите другое время:";
-      return finish(msg, "awaiting_slot_choice", v3, buildSlotListMsg(mockSlots, tz, language));
+      return finish(
+        msg,
+        "awaiting_slot_choice",
+        v3,
+        buildSlotListMsg(mockSlots, tz, language, undefined, { back: true }),
+      );
     }
 
     const newV3: V3BookingState = { ...v3, slot_start: slot.start, slot_end: slot.end };
@@ -5002,11 +5106,16 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       // Name already collected earlier (e.g. re-selection after "Нет, перенести") → straight to confirm.
       if (newV3.client_name) return confirmBooking(newV3);
       const msg = language === "ky" ? "Атыңызды жазыңыз:" : "Введите ваше имя:";
-      return finish(msg, "awaiting_name", newV3);
+      return finish(msg, "awaiting_name", newV3, backOnlyMsg(language));
     }
 
     const msg = language === "ky" ? "Мастерди тандаңыз:" : "Выберите мастера:";
-    return finish(msg, "awaiting_master_choice", newV3, buildMasterListMsg(eligible, language));
+    return finish(
+      msg,
+      "awaiting_master_choice",
+      newV3,
+      buildMasterListMsg(eligible, language, { back: true }),
+    );
   }
 
   // ===== awaiting_master_choice =====
@@ -5038,14 +5147,19 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     );
     if (!masterId) {
       const msg = language === "ky" ? "Мастерди тандаңыз:" : "Выберите мастера:";
-      return finish(msg, "awaiting_master_choice", v3, buildMasterListMsg(masters, language));
+      return finish(
+        msg,
+        "awaiting_master_choice",
+        v3,
+        buildMasterListMsg(masters, language, { back: true }),
+      );
     }
 
     const master = masters.find((m) => m.id === masterId);
     const newV3 = { ...v3, master_id: masterId, master_name: master?.name ?? "" };
     if (newV3.client_name) return confirmBooking(newV3);
     const msg = language === "ky" ? "Атыңызды жазыңыз:" : "Введите ваше имя:";
-    return finish(msg, "awaiting_name", newV3);
+    return finish(msg, "awaiting_name", newV3, backOnlyMsg(language));
   }
 
   // ===== awaiting_name =====
@@ -5053,7 +5167,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     const name = combinedText.trim().slice(0, 80);
     if (name.length < 2) {
       const msg = language === "ky" ? "Атыңызды жазыңыз:" : "Пожалуйста, введите ваше имя:";
-      return finish(msg, "awaiting_name", v3);
+      return finish(msg, "awaiting_name", v3, backOnlyMsg(language));
     }
 
     return confirmBooking({ ...v3, client_name: name });
@@ -5395,7 +5509,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         return finish(manageCutoffMsg(), "done", {});
     }
 
-    if (v3.managing_action === "cancel") {
+    if (v3.managing_action === "cancel" || v3.managing_action === "cancel_and_rebook") {
       const { error } = await db
         .from("appointments")
         .update({ status: "cancelled" })
@@ -5408,6 +5522,14 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
             ? "Жокко чыгаруу мүмкүн болгон жок. Салонго кайрылыңыз."
             : "Не удалось отменить. Свяжитесь с салоном напрямую.";
         return finish(msg, "done", {});
+      }
+      if (v3.managing_action === "cancel_and_rebook") {
+        const services = await loadAiVisibleServicesForSalon(db, input.salon.salonId);
+        const msg =
+          language === "ky"
+            ? "✅ Мурунку жазылуу жокко чыгарылды. Кызматты кайра тандаңыз:"
+            : "✅ Прежняя запись отменена. Выберите услугу заново:";
+        return reaskServiceMenu(msg, { branch_id: v3.branch_id }, services);
       }
       const msg =
         language === "ky"

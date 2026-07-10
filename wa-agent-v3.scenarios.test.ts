@@ -401,7 +401,7 @@ test("V3: booking success attaches Перенести/Отменить buttons f
   expect(res.appointmentId).toBeTruthy();
   expect(res.interactiveMessage?.kind).toBe("buttons");
   const ids = (res.interactiveMessage as any).buttons.map((b: any) => b.id);
-  expect(ids).toEqual(["postbook_reschedule", "postbook_cancel"]);
+  expect(ids).toEqual(["postbook_reschedule", "postbook_cancel", "postbook_change"]);
   const v3 = (res.nextStateData as any).v3;
   expect(v3.managing_appointment_id).toBe(res.appointmentId);
   expect(v3.managing_appointment_starts_at).toBe("2099-01-01T04:00:00.000Z");
@@ -445,6 +445,89 @@ test("V3: tapping 'Перенести запись' after booking starts the res
     } },
   } as any);
   expect(res.nextState).toBe("awaiting_reschedule_date");
+});
+
+test("V3: tapping 'Изменить запись' cancels then re-shows the service menu", async () => {
+  const appt = { id: "appt_1", starts_at: "2099-01-01T04:00:00.000Z", service_id: "svc1", master_id: "m1", salon_id: "salon1", client_phone: "996700000000", status: "confirmed", serviceName: "Маникюр" };
+  (globalThis as any).__WA_DB__ = makeDb({ services: [SERVICE, { ...SERVICE, id: "svc2", name: "Педикюр" }], appointments: [appt] });
+  const afterTap = await runWaAgentV3({
+    salon: SALON, config: CONFIG,
+    client: { phone: "996700000000", name: "Аяна" },
+    history: [], lastMessages: msg("", { selectedId: "postbook_change" }),
+    branches: [], selectedBranchId: null,
+    state: "done",
+    stateData: { language: "ru", v3: {
+      managing_appointment_id: "appt_1",
+      managing_appointment_label: "Маникюр — 1 января, 10:00",
+      managing_service_id: "svc1", managing_master_id: "m1",
+      managing_appointment_starts_at: "2099-01-01T04:00:00.000Z",
+    } },
+  } as any);
+  expect(afterTap.nextState).toBe("awaiting_manage_confirm");
+  expect((afterTap.nextStateData as any).v3.managing_action).toBe("cancel_and_rebook");
+
+  const afterConfirm = await runWaAgentV3({
+    salon: SALON, config: CONFIG,
+    client: { phone: "996700000000", name: "Аяна" },
+    history: [], lastMessages: msg("да", { selectedId: "confirm_yes" }),
+    branches: [], selectedBranchId: null,
+    state: "awaiting_manage_confirm", stateData: afterTap.nextStateData,
+  } as any);
+  expect(appt.status).toBe("cancelled");
+  expect(afterConfirm.nextState).toBe("awaiting_service");
+  expect(afterConfirm.interactiveMessage?.kind).toBe("list");
+});
+
+test("V3: 'Назад' from date-choice returns to the full service list", async () => {
+  (globalThis as any).__WA_DB__ = makeDb({ services: [SERVICE, { ...SERVICE, id: "svc2", name: "Педикюр" }] });
+  const res = await runWaAgentV3({
+    salon: SALON, config: CONFIG,
+    client: { phone: "996700000000", name: "Аяна" },
+    history: [], lastMessages: msg("", { selectedId: "back" }),
+    branches: [], selectedBranchId: null,
+    state: "awaiting_date_choice",
+    stateData: { language: "ru", v3: { service_id: "svc1", service_name: "Маникюр", date: "2099-01-02" } },
+  } as any);
+  expect(res.nextState).toBe("awaiting_service");
+  expect((res.nextStateData as any).v3.service_id).toBeUndefined();
+});
+
+test("V3: 'Назад' from slot-choice returns to date-choice, clearing the chosen date", async () => {
+  (globalThis as any).__WA_DB__ = makeDb({ services: [SERVICE] });
+  const res = await runWaAgentV3({
+    salon: SALON, config: CONFIG,
+    client: { phone: "996700000000", name: "Аяна" },
+    history: [], lastMessages: msg("", { selectedId: "back" }),
+    branches: [], selectedBranchId: null,
+    state: "awaiting_slot_choice",
+    stateData: { language: "ru", v3: {
+      service_id: "svc1", service_name: "Маникюр", date: "2099-01-02",
+      slots_cache: [{ start: "2099-01-02T04:00:00.000Z", end: "2099-01-02T04:30:00.000Z", masterIds: ["m1"] }],
+    } },
+  } as any);
+  expect(res.nextState).toBe("awaiting_date_choice");
+  expect((res.nextStateData as any).v3.date).toBeUndefined();
+  expect((res.nextStateData as any).v3.service_id).toBe("svc1"); // service kept, only date cleared
+});
+
+test("V3: 'Назад' from name-entry returns to slot-choice using the cached slots", async () => {
+  (globalThis as any).__WA_DB__ = makeDb({ services: [SERVICE] });
+  const res = await runWaAgentV3({
+    salon: SALON, config: CONFIG,
+    client: { phone: "996700000000", name: "Аяна" },
+    history: [], lastMessages: msg("", { selectedId: "back" }),
+    branches: [], selectedBranchId: null,
+    state: "awaiting_name",
+    stateData: { language: "ru", v3: {
+      service_id: "svc1", service_name: "Маникюр", date: "2099-01-02",
+      slot_start: "2099-01-02T04:00:00.000Z", slot_end: "2099-01-02T04:30:00.000Z",
+      master_id: "m1", master_name: "Анна",
+      slots_cache: [{ start: "2099-01-02T04:00:00.000Z", end: "2099-01-02T04:30:00.000Z", masterIds: ["m1"] }],
+    } },
+  } as any);
+  expect(res.nextState).toBe("awaiting_slot_choice");
+  expect((res.nextStateData as any).v3.master_id).toBeUndefined();
+  expect(res.interactiveMessage?.kind).toBe("list");
 });
 
 test("cleanup: restore fetch", () => {

@@ -63,12 +63,19 @@ export const checkPhoneWhatsapp = createServerFn({ method: "POST" })
         const body: any = await res.json();
         if (body?.existsWhatsapp === true) status = "registered";
         else if (body?.existsWhatsapp === false) status = "not_registered";
+        else console.error("[wa-check] unexpected checkWhatsapp response shape:", body);
+      } else {
+        console.error("[wa-check] checkWhatsapp HTTP", res.status, await res.text().catch(() => ""));
       }
     } catch (e) {
       console.error("[wa-check] checkWhatsapp failed:", e);
     }
 
     if (cache.size >= CACHE_MAX) cache.clear();
-    cache.set(key, { status, exp: Date.now() + CACHE_TTL_MS });
+    // Only cache a CONFIRMED answer. "unavailable" is by definition transient (a timeout, a
+    // 5xx, a malformed response) — caching it for 10 minutes turned one bad Green-API blip into
+    // 10 minutes of every booking on that phone number silently skipping the check entirely.
+    // Leaving it uncached means the next attempt just retries for real.
+    if (status !== "unavailable") cache.set(key, { status, exp: Date.now() + CACHE_TTL_MS });
     return { status };
   });

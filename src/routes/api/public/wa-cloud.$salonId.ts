@@ -182,19 +182,14 @@ export const Route = createFileRoute("/api/public/wa-cloud/$salonId")({
         const previousLastMessageAt = existingConv?.last_message_at
           ? new Date(existingConv.last_message_at).getTime()
           : 0;
-        const previousLastAppointmentAt = existingConv?.last_appointment_at
-          ? new Date(existingConv.last_appointment_at).getTime()
-          : 0;
-        const previousSessionStartedAt = existingConv?.session_started_at
-          ? new Date(existingConv.session_started_at).getTime()
-          : 0;
         const previousState = (existingConv?.state ?? "idle") as string;
         const inProgress = previousState !== "idle" && previousState !== "done";
         const sessionGapMs = inProgress ? 12 * 60 * 60 * 1000 : 20 * 60 * 1000;
+        // See wa.$salonId.ts for why the old "already booked → force reset" condition was
+        // dropped: it wiped state_data (incl. the post-booking Перенести/Отменить menu) on the
+        // very next reply. state === "done" already routes to a fresh greeting on its own.
         const startsNewSession =
-          !existingConv ||
-          (previousLastMessageAt ? Date.now() - previousLastMessageAt : 0) > sessionGapMs ||
-          (previousLastAppointmentAt > 0 && previousLastAppointmentAt >= previousSessionStartedAt);
+          !existingConv || (previousLastMessageAt ? Date.now() - previousLastMessageAt : 0) > sessionGapMs;
 
         const { data: conv, error: convErr } = await supabaseAdmin
           .from("wa_conversations")
