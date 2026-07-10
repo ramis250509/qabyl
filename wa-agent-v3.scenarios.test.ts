@@ -470,6 +470,21 @@ test("V3: 'Введите ваше имя' no longer offers a back button (clien
   expect(res.interactiveMessage).toBeUndefined();
 });
 
+test("V3: photo request no longer offers a back button (clients got confused)", async () => {
+  (globalThis as any).__WA_DB__ = makeDb({
+    services: [{ ...SERVICE, price_type: "range", price: 500, price_max: 1500 }],
+  });
+  const res = await runWaAgentV3({
+    salon: SALON, config: CONFIG,
+    client: { phone: "996700000000", name: "Аяна" },
+    history: [], lastMessages: msg("", { selectedId: "svc_svc1" }),
+    branches: [], selectedBranchId: null,
+    state: "awaiting_service", stateData: { language: "ru", v3: {} },
+  } as any);
+  expect(res.nextState).toBe("awaiting_photo");
+  expect(res.interactiveMessage).toBeUndefined();
+});
+
 test("V3: tapping 'Отменить запись' after booking goes straight to cancel-confirm", async () => {
   (globalThis as any).__WA_DB__ = makeDb({ services: [SERVICE] });
   const res = await runWaAgentV3({

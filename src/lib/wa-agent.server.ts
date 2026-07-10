@@ -3642,16 +3642,6 @@ function backRow(language: "ru" | "ky" | "en") {
   return { rowId: "back", title: language === "ky" ? "◀️ Артка" : "◀️ Назад" };
 }
 
-// For free-text steps (photo request, name entry) that have no list to attach a back ROW to —
-// a single tappable button alongside the prompt. The client can still just type normally.
-function backOnlyMsg(language: "ru" | "ky" | "en"): WaInteractiveMessage {
-  return {
-    kind: "buttons",
-    text: "",
-    buttons: [{ id: "back", text: language === "ky" ? "◀️ Артка" : "◀️ Назад" }],
-  };
-}
-
 function buildDateListMsg(
   dateMap: Array<{ iso: string; label: string; relative: string }>,
   language: "ru" | "ky" | "en",
@@ -4091,7 +4081,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         language === "ky"
           ? `«${svcRow.name}» — баасы ${svcRow.price}–${svcRow.price_max} сом. Так баасын аныктоо үчүн фото жиберсеңиз болот же "жоксуз фото" деп жазыңыз.`
           : `Услуга «${svcRow.name}» — цена от ${svcRow.price} до ${svcRow.price_max} сом. Пришлите фото для точной оценки стоимости или напишите "без фото".`;
-      return finish(ask, "awaiting_photo", newV3, backOnlyMsg(language));
+      return finish(ask, "awaiting_photo", newV3);
     }
     const dateMap = buildDateMap(tz, 7);
     const q =
@@ -4746,7 +4736,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
           language === "ky"
             ? "Фото ачылган жок. Кайра жиберип коруңуз 📷 же «жоксуз фото» деп жазыңыз."
             : "Не удалось открыть фото. Попробуйте ещё раз 📷 или напишите «без фото».";
-        return finish(msg, "awaiting_photo", v3, backOnlyMsg(language));
+        return finish(msg, "awaiting_photo", v3);
       }
       const priced = await priceFromPhoto({
         apiKey,
@@ -4782,7 +4772,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
             language === "ky"
               ? "Сүрөттөн так айырмалоо кыйын болду 🙏 Жарыгы жакшы жерде, жакыныраак дагы бир сүрөт жиберип көрүңүзчү."
               : "По этому фото сложно точно оценить 🙏 Пришлите, пожалуйста, ещё одно фото — при хорошем освещении и поближе.";
-          return finish(msg, "awaiting_photo", { ...v3, photo_attempts: attempts }, backOnlyMsg(language));
+          return finish(msg, "awaiting_photo", { ...v3, photo_attempts: attempts });
         }
         // Second low-confidence attempt in a row — hand off to a human instead of guessing.
         debug.actions.push("photo_low_confidence_escalate");
@@ -4831,7 +4821,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       language === "ky"
         ? "Фото алынган жок. 📷 иконкасы аркылуу фото жиберип же «жоксуз фото» деп жазыңыз."
         : "Фото не получили. Отправьте фото через иконку 📷 или напишите «без фото».";
-    return finish(msg, "awaiting_photo", v3, backOnlyMsg(language));
+    return finish(msg, "awaiting_photo", v3);
   }
 
   // ===== awaiting_date_choice =====
