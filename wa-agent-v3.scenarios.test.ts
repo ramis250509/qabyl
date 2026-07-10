@@ -115,6 +115,15 @@ function makeDb(opts: {
         if (row) { row.starts_at = args._new_starts_at; }
         return { data: args._appointment_id, error: null };
       }
+      if (name === "create_appointment") {
+        const id = `appt_${appointments.length + 1}`;
+        appointments.push({
+          id, starts_at: args._starts_at, service_id: args._service_id, master_id: args._master_id,
+          salon_id: SALON.salonId, client_phone: args._client_phone, status: "confirmed",
+          serviceName: services.find((s) => s.id === args._service_id)?.name ?? "?",
+        });
+        return { data: id, error: null };
+      }
       return { data: null, error: null };
     },
     storage: { from: () => ({ createSignedUrl: async () => ({ data: { signedUrl: "http://img/x.jpg" } }) }) },
@@ -369,6 +378,73 @@ test("V3: greeting + a CONCRETE service request does NOT restart (keeps the requ
     stateData: { language: "ru", v3: { service_id: "svc1", service_name: "Маникюр" } },
   } as any);
   expect(res.debug.actions).not.toContain("greeting_restart");
+});
+
+test("V3: booking success attaches Перенести/Отменить buttons for the just-created appointment", async () => {
+  (globalThis as any).__WA_DB__ = makeDb({
+    services: [SERVICE],
+    masters: [{ id: "m1", name: "Анна", branch_id: null, sort_order: 0, service_ids: ["svc1"] }],
+  });
+  const res = await runWaAgentV3({
+    salon: SALON, config: CONFIG,
+    client: { phone: "996700000000", name: "Аяна" },
+    history: [], lastMessages: msg("да", { selectedId: "confirm_yes" }),
+    branches: [], selectedBranchId: null,
+    state: "awaiting_final_confirm",
+    stateData: { language: "ru", v3: {
+      service_id: "svc1", service_name: "Маникюр", date: "2099-01-01",
+      slot_start: "2099-01-01T04:00:00.000Z", slot_end: "2099-01-01T04:30:00.000Z",
+      master_id: "m1", master_name: "Анна", client_name: "Аяна",
+    } },
+  } as any);
+  expect(res.nextState).toBe("done");
+  expect(res.appointmentId).toBeTruthy();
+  expect(res.interactiveMessage?.kind).toBe("buttons");
+  const ids = (res.interactiveMessage as any).buttons.map((b: any) => b.id);
+  expect(ids).toEqual(["postbook_reschedule", "postbook_cancel"]);
+  const v3 = (res.nextStateData as any).v3;
+  expect(v3.managing_appointment_id).toBe(res.appointmentId);
+  expect(v3.managing_appointment_starts_at).toBe("2099-01-01T04:00:00.000Z");
+});
+
+test("V3: tapping 'Отменить запись' after booking goes straight to cancel-confirm", async () => {
+  (globalThis as any).__WA_DB__ = makeDb({ services: [SERVICE] });
+  const res = await runWaAgentV3({
+    salon: SALON, config: CONFIG,
+    client: { phone: "996700000000", name: "Аяна" },
+    history: [], lastMessages: msg("", { selectedId: "postbook_cancel" }),
+    branches: [], selectedBranchId: null,
+    state: "done",
+    stateData: { language: "ru", v3: {
+      managing_appointment_id: "appt_1",
+      managing_appointment_label: "Маникюр — 1 января, 10:00",
+      managing_service_id: "svc1", managing_master_id: "m1",
+      managing_appointment_starts_at: "2099-01-01T04:00:00.000Z",
+    } },
+  } as any);
+  expect(res.nextState).toBe("awaiting_manage_confirm");
+  expect((res.nextStateData as any).v3.managing_action).toBe("cancel");
+});
+
+test("V3: tapping 'Перенести запись' after booking starts the reschedule date flow", async () => {
+  (globalThis as any).__WA_DB__ = makeDb({
+    services: [SERVICE],
+    masters: [{ id: "m1", name: "Анна", branch_id: null, sort_order: 0, service_ids: ["svc1"] }],
+  });
+  const res = await runWaAgentV3({
+    salon: SALON, config: CONFIG,
+    client: { phone: "996700000000", name: "Аяна" },
+    history: [], lastMessages: msg("", { selectedId: "postbook_reschedule" }),
+    branches: [], selectedBranchId: null,
+    state: "done",
+    stateData: { language: "ru", v3: {
+      managing_appointment_id: "appt_1",
+      managing_appointment_label: "Маникюр — 1 января, 10:00",
+      managing_service_id: "svc1", managing_master_id: "m1",
+      managing_appointment_starts_at: "2099-01-01T04:00:00.000Z",
+    } },
+  } as any);
+  expect(res.nextState).toBe("awaiting_reschedule_date");
 });
 
 test("cleanup: restore fetch", () => {

@@ -1843,6 +1843,8 @@ async function priceFromPhoto(opts: {
 }): Promise<
   { price: number; explanation: string; confidence: "high" | "medium" | "low" } | { error: string }
 > {
+  const langName =
+    opts.language === "ky" ? "кыргызском" : opts.language === "en" ? "английском" : "русском";
   const sys = `Ты оцениваешь стоимость услуги «${opts.serviceName}» по фото клиента.
 Цена ОБЯЗАНА быть числом в диапазоне [${opts.priceMin}, ${opts.priceMax}] сом, не выходи за границы.
 ${opts.pricingRules ? `Правила оценки от салона: ${opts.pricingRules}` : ""}
@@ -1851,7 +1853,9 @@ ${opts.pricingRules ? `Правила оценки от салона: ${opts.pri
 в этих случаях НЕ придумывай цену наугад, ставь low и объясни в explanation, что именно не видно.
 "medium" — видно достаточно для примерной оценки, но есть сомнения. "high" — фото ясно показывает
 всё нужное для оценки.
-Верни строго JSON: {"price": число, "explanation": "1 короткое предложение", "confidence": "high"|"medium"|"low"}.`;
+Поле "explanation" ОБЯЗАТЕЛЬНО пиши на ${langName} языке — клиент пишет боту именно на нём, смешение
+языков в одном сообщении недопустимо.
+Верни строго JSON: {"price": число, "explanation": "1 короткое предложение на ${langName} языке", "confidence": "high"|"medium"|"low"}.`;
   const res = await callGemini({
     model: MODEL_VISION,
     apiKey: opts.apiKey,
@@ -3475,6 +3479,9 @@ type V3BookingState = {
   managing_appointment_label?: string;
   managing_service_id?: string;
   managing_master_id?: string;
+  // Set only right after THIS turn created the appointment, so the "Перенести/Отменить" buttons
+  // attached to the success message can jump straight into the manage flow without a DB lookup.
+  managing_appointment_starts_at?: string;
   managing_action?: "cancel" | "reschedule";
   managing_request_text?: string; // original free-text ("перенесите на 19:00") carried past the choice step
   managing_new_slot_start?: string;
@@ -3711,6 +3718,25 @@ function buildConfirmMsg(
           ]
         : []),
       { id: "confirm_no", text: language === "ky" ? "❌ Жок, өзгөртөм" : "❌ Нет, изменить" },
+    ],
+  };
+}
+
+// Attached to the booking-success message so the client can reschedule/cancel the record they
+// JUST created without having to guess free-text wording. Handled by the "postbook_" selectedId
+// branch right before the idle/done greet block.
+function buildPostBookingMsg(language: "ru" | "ky" | "en"): WaInteractiveMessage {
+  const text =
+    language === "ky" ? "Дагы бир нерсе керекпи?" : "Нужно перенести или отменить запись?";
+  return {
+    kind: "buttons",
+    text,
+    buttons: [
+      {
+        id: "postbook_reschedule",
+        text: language === "ky" ? "🔄 Убакытты которуу" : "🔄 Перенести запись",
+      },
+      { id: "postbook_cancel", text: language === "ky" ? "❌ Жокко чыгаруу" : "❌ Отменить запись" },
     ],
   };
 }
@@ -4379,6 +4405,34 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     debug.actions.push("manage_intent:none_found");
   }
 
+  // ===== post-booking quick actions ("Перенести/Отменить" attached to the success message) =====
+  // Only for the exact rowIds from buildPostBookingMsg, tapped/numbered right after THIS turn's
+  // booking — typed free text ("хочу перенести") is already handled by manageAction above.
+  if (
+    (state === "idle" || state === "done") &&
+    (selectedId === "postbook_reschedule" || selectedId === "postbook_cancel") &&
+    v3.managing_appointment_id &&
+    v3.managing_appointment_starts_at
+  ) {
+    debug.actions.push(`postbook_action:${selectedId}`);
+    if (isWithinManageCutoff(v3.managing_appointment_starts_at)) {
+      return finish(manageCutoffMsg(), "done", {});
+    }
+    if (selectedId === "postbook_cancel") {
+      const details =
+        language === "ky"
+          ? `Чын эле бул жазылууну жокко чыгарабызбы?\n${v3.managing_appointment_label}`
+          : `Точно отменяем эту запись?\n${v3.managing_appointment_label}`;
+      return finish(
+        details,
+        "awaiting_manage_confirm",
+        { ...v3, managing_action: "cancel" },
+        buildConfirmMsg(details, language),
+      );
+    }
+    return startRescheduleV3(v3, "", v3.managing_appointment_starts_at);
+  }
+
   // ===== idle / done → greet + first menu =====
   if (state === "idle" || state === "done") {
     const islamicGreeting = /ассаламу?\s*а?лейку?м|ассалму|салам\s+а?ллейку?м/i.test(combinedText);
@@ -4671,8 +4725,8 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
 
       const msg =
         language === "ky"
-          ? `Болжолдуу баа: ${priced.price} сом (${priced.explanation}). Так баасын мастер айтат.`
-          : `Ориентировочная стоимость: ${priced.price} сом (${priced.explanation}). Точную сумму мастер уточнит на месте.`;
+          ? `💰 *Болжолдуу баа: ${priced.price} сом*\n${priced.explanation}\n\nТак баасын мастер жерде тактайт.`
+          : `💰 *Ориентировочная стоимость: ${priced.price} сом*\n${priced.explanation}\n\nТочную сумму мастер уточнит на месте.`;
       const dateQ = language === "ky" ? "\n\nКайсы күнгө жазыласыз?" : "\n\nНа какую дату?";
       return finish(
         msg + dateQ,
@@ -5095,14 +5149,23 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         language === "ky"
           ? `🎉 Жазылуу ырасталды!\n\n📅 ${dateLabel}, ⏰ ${timeLabel}\n💇 ${v3.service_name}\n\nКүтөбүз! ❤️`
           : `🎉 Запись подтверждена!\n\n📅 ${dateLabel}, ⏰ ${timeLabel}\n💇 ${v3.service_name}\n\nДо встречи! ❤️`;
-      return {
-        reply: successMsg,
-        nextState: "done",
-        nextStateData: { language, v3: {} } as any,
-        appointmentId: newId as string,
-        selectedBranchId: v3.branch_id ?? input.selectedBranchId,
-        debug,
+      // Keep enough of the just-created appointment in state so the "Перенести/Отменить" buttons
+      // attached below can jump straight into the manage flow without a DB lookup.
+      const postBookingV3: V3BookingState = {
+        branch_id: v3.branch_id,
+        managing_appointment_id: newId as string,
+        managing_appointment_label: `${v3.service_name} — ${dateLabel}, ${timeLabel}`,
+        managing_service_id: v3.service_id,
+        managing_master_id: v3.master_id,
+        managing_appointment_starts_at: v3.slot_start,
       };
+      return finish(
+        successMsg,
+        "done",
+        postBookingV3,
+        buildPostBookingMsg(language),
+        newId as string,
+      );
     } catch (e: any) {
       debug.errors.push(`create_appointment:${e?.message ?? e}`);
       const msg =

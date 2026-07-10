@@ -98,37 +98,6 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         const senderName: string | null = sd?.senderName ?? sd?.chatName ?? null;
         const phone = normalizeChatIdToPhone(chatId);
         const greenIdMessage: string | undefined = payload?.idMessage;
-
-        // ---- Extract content
-        let textBody: string | null = null;
-        let imageDownloadUrl: string | null = null;
-        let imageMime: string | null = null;
-        let selectedId: string | null = null; // V3: button/list selection
-        const mt = md?.typeMessage;
-        if (mt === "textMessage" || mt === "extendedTextMessage") {
-          textBody =
-            md?.textMessageData?.textMessage ??
-            md?.extendedTextMessageData?.text ??
-            null;
-        } else if (mt === "imageMessage") {
-          imageDownloadUrl = md?.fileMessageData?.downloadUrl ?? null;
-          imageMime = md?.fileMessageData?.mimeType ?? "image/jpeg";
-          textBody = md?.fileMessageData?.caption ?? null;
-        } else if (mt === "buttonsResponseMessage") {
-          selectedId = md?.buttonsResponseMessage?.selectedButtonId ?? null;
-          textBody = md?.buttonsResponseMessage?.selectedButtonBody ?? selectedId;
-        } else if (mt === "listResponseMessage") {
-          selectedId = md?.listResponseMessage?.listResponseRow?.rowId ?? null;
-          textBody = md?.listResponseMessage?.listResponseRow?.title ?? selectedId;
-        } else if (mt === "interactiveButtonsReply") {
-          // Tap on a reply button sent via sendInteractiveButtons.
-          selectedId = md?.templateButtonReplyMessage?.selectedId ?? null;
-          textBody = md?.templateButtonReplyMessage?.selectedDisplayText ?? selectedId;
-        } else {
-          // Unsupported types — just ack quietly.
-          return ack();
-        }
-
         const nowIso = new Date().toISOString();
 
         // ---- Human admin took over: a message sent manually from the phone connected
@@ -137,6 +106,11 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         // own bot replies, a type we never subscribe to). So every event reaching this
         // branch is a genuine manual message from salon staff — pause the AI for this
         // conversation instead of letting it keep replying alongside a human.
+        // MUST run before the content-type switch below: a voice note, sticker, location etc.
+        // sent by staff has no handler in that switch and used to hit "unsupported → ack()"
+        // and return BEFORE ever reaching this check — so the assistant never paused for
+        // anything except text/image/button replies. Any outgoingMessageReceived event needs
+        // checking regardless of its content type.
         if (webhookType === "outgoingMessageReceived") {
           const { data: convForPause } = await supabaseAdmin
             .from("wa_conversations")
@@ -188,11 +162,44 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
               salon_id: salonId,
               direction: "out",
               kind: "system",
-              text_body: textBody,
+              // Best-effort text for the audit log only — a voice note/sticker/location has no
+              // text, so this stays null for those, which is fine (nothing else depends on it).
+              text_body:
+                md?.textMessageData?.textMessage ?? md?.extendedTextMessageData?.text ?? null,
               green_api_message_id: greenIdMessage ?? null,
               ...(suppressPause ? { meta: { suppressedAutoPause: true, sessionAgeMs } } : {}),
             });
           }
+          return ack();
+        }
+
+        // ---- Extract content (incomingMessageReceived only — outgoing already returned above)
+        let textBody: string | null = null;
+        let imageDownloadUrl: string | null = null;
+        let imageMime: string | null = null;
+        let selectedId: string | null = null; // V3: button/list selection
+        const mt = md?.typeMessage;
+        if (mt === "textMessage" || mt === "extendedTextMessage") {
+          textBody =
+            md?.textMessageData?.textMessage ??
+            md?.extendedTextMessageData?.text ??
+            null;
+        } else if (mt === "imageMessage") {
+          imageDownloadUrl = md?.fileMessageData?.downloadUrl ?? null;
+          imageMime = md?.fileMessageData?.mimeType ?? "image/jpeg";
+          textBody = md?.fileMessageData?.caption ?? null;
+        } else if (mt === "buttonsResponseMessage") {
+          selectedId = md?.buttonsResponseMessage?.selectedButtonId ?? null;
+          textBody = md?.buttonsResponseMessage?.selectedButtonBody ?? selectedId;
+        } else if (mt === "listResponseMessage") {
+          selectedId = md?.listResponseMessage?.listResponseRow?.rowId ?? null;
+          textBody = md?.listResponseMessage?.listResponseRow?.title ?? selectedId;
+        } else if (mt === "interactiveButtonsReply") {
+          // Tap on a reply button sent via sendInteractiveButtons.
+          selectedId = md?.templateButtonReplyMessage?.selectedId ?? null;
+          textBody = md?.templateButtonReplyMessage?.selectedDisplayText ?? selectedId;
+        } else {
+          // Unsupported types — just ack quietly.
           return ack();
         }
 
