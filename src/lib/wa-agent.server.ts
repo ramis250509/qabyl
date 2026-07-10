@@ -5259,10 +5259,16 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
 
       const dateLabel = v3.date ? formatDateInTz(`${v3.date}T12:00:00Z`, tz) : "";
       const timeLabel = v3.slot_start ? formatTimeInTz(v3.slot_start, tz) : "";
+      // Prefer the specific branch's address (multi-branch salon) over the salon-wide one.
+      const branchAddress = v3.branch_id
+        ? input.branches.find((b) => b.id === v3.branch_id)?.address
+        : null;
+      const address = branchAddress ?? input.salonInfo?.address ?? null;
+      const addressLine = address ? `\n📍 ${address}` : "";
       const successMsg =
         language === "ky"
-          ? `🎉 Жазылуу ырасталды!\n\n📅 ${dateLabel}, ⏰ ${timeLabel}\n💇 ${v3.service_name}\n\nКүтөбүз! ❤️`
-          : `🎉 Запись подтверждена!\n\n📅 ${dateLabel}, ⏰ ${timeLabel}\n💇 ${v3.service_name}\n\nДо встречи! ❤️`;
+          ? `🎉 Жазылуу ырасталды!\n\n📅 ${dateLabel}, ⏰ ${timeLabel}\n💇 ${v3.service_name}${addressLine}\n\nКүтөбүз! ❤️`
+          : `🎉 Запись подтверждена!\n\n📅 ${dateLabel}, ⏰ ${timeLabel}\n💇 ${v3.service_name}${addressLine}\n\nДо встречи! ❤️`;
       // Keep enough of the just-created appointment in state so the "Перенести/Отменить" buttons
       // attached below can jump straight into the manage flow without a DB lookup.
       const postBookingV3: V3BookingState = {

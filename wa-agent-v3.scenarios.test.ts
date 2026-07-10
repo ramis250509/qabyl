@@ -407,6 +407,27 @@ test("V3: booking success attaches Перенести/Отменить buttons f
   expect(v3.managing_appointment_starts_at).toBe("2099-01-01T04:00:00.000Z");
 });
 
+test("V3: booking success includes the salon/branch address", async () => {
+  (globalThis as any).__WA_DB__ = makeDb({
+    services: [SERVICE],
+    masters: [{ id: "m1", name: "Анна", branch_id: null, sort_order: 0, service_ids: ["svc1"] }],
+  });
+  const res = await runWaAgentV3({
+    salon: SALON, config: CONFIG,
+    client: { phone: "996700000000", name: "Аяна" },
+    history: [], lastMessages: msg("да", { selectedId: "confirm_yes" }),
+    branches: [{ id: "b1", name: "Центр", address: "ул. Киевская, 95" }],
+    selectedBranchId: "b1",
+    state: "awaiting_final_confirm",
+    stateData: { language: "ru", v3: {
+      service_id: "svc1", service_name: "Маникюр", date: "2099-01-01",
+      slot_start: "2099-01-01T04:00:00.000Z", slot_end: "2099-01-01T04:30:00.000Z",
+      master_id: "m1", master_name: "Анна", client_name: "Аяна", branch_id: "b1",
+    } },
+  } as any);
+  expect(res.reply).toContain("ул. Киевская, 95");
+});
+
 test("V3: tapping 'Отменить запись' after booking goes straight to cancel-confirm", async () => {
   (globalThis as any).__WA_DB__ = makeDb({ services: [SERVICE] });
   const res = await runWaAgentV3({

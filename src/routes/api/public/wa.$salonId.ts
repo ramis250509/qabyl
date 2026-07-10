@@ -6,7 +6,6 @@ import {
   greenApiSendMessage,
   greenApiSendFileByUrl,
   greenApiDownloadFile,
-  greenApiSendInteractiveButtons,
   isLikelyNativeGreetingRace,
   normalizeChatIdToPhone,
   renderInteractiveAsText,
@@ -552,19 +551,16 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             }
 
             // 5) Send reply — skip network if byte-for-byte identical to previous in this pass.
-            // Interactive LISTS don't render on regular WhatsApp accounts (Green-API marks
-            // sendListMessage as non-working), so lists go out as a plain-text numbered menu and
-            // the agent maps a numeric reply back to the row. BUTTON messages go out as real
-            // tappable reply buttons via sendInteractiveButtons — this used to silently fail
-            // (tapping "✅ Да, записать" never created a booking) because the reply-parsing switch
-            // above checked for typeMessage "interactiveButtonsReply", which Green-API never
-            // actually sends; the real value, per Green-API's own docs, is
-            // "templateButtonsReplyMessage". Every tap was falling into "unsupported → ack()" and
-            // getting silently dropped. Now that the parser recognizes the real type, native
-            // buttons work — falling back to the same numbered text only if the send call itself
-            // fails.
+            // BOTH lists AND buttons go out as a plain-text numbered menu, and the agent maps a
+            // numeric reply back to the row/button id. Native sendInteractiveButtons taps were
+            // fixed to parse correctly (typeMessage "templateButtonsReplyMessage", verified
+            // against Green-API's own docs — the previous "interactiveButtonsReply" check never
+            // matched anything real), but a live test on the salon's actual account still didn't
+            // reliably deliver the tap end-to-end (Green-API's own docs mark this beta/unstable).
+            // Reverted to numbered text — the same proven path date/slot selection already uses
+            // reliably on every account. The parser fix is harmless to keep either way.
             const im = result.interactiveMessage;
-            let sentText = im
+            const sentText = im
               ? renderInteractiveAsText(
                   result.reply,
                   im,
@@ -574,19 +570,8 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             const isDuplicateReply = sentText.trim() === (lastSentReply ?? "").trim();
             let sentIdMessage: string | undefined;
             if (!isDuplicateReply) {
-              let sentInteractive = false;
-              if (im?.kind === "buttons") {
-                const res = await greenApiSendInteractiveButtons(creds, chatId, result.reply, im.buttons);
-                if (res.ok) {
-                  sentIdMessage = res.idMessage;
-                  sentText = result.reply;
-                  sentInteractive = true;
-                }
-              }
-              if (!sentInteractive) {
-                const res = await greenApiSendMessage(creds, chatId, sentText);
-                sentIdMessage = res.ok ? res.idMessage : undefined;
-              }
+              const res = await greenApiSendMessage(creds, chatId, sentText);
+              sentIdMessage = res.ok ? res.idMessage : undefined;
               lastSentReply = sentText;
             }
             await supabaseAdmin.from("wa_messages").insert({
