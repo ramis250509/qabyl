@@ -73,11 +73,9 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     await assertSalonAccess(context.supabase, context.userId, data.salonId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { runWaAgentV3: runWaAgent } = await import("@/lib/wa-agent.server");
-
     const [salonResult, assistantResult, branchResult] = await Promise.all([
       supabaseAdmin.from("salons").select("id, name, timezone, working_hours, address").eq("id", data.salonId).maybeSingle(),
-      supabaseAdmin.from("salon_ai_assistant").select("greeting, tone_instructions, pricing_rules, languages, manage_cutoff_hours").eq("salon_id", data.salonId).maybeSingle(),
+      supabaseAdmin.from("salon_ai_assistant").select("greeting, tone_instructions, pricing_rules, languages, manage_cutoff_hours, engine, knowledge_base").eq("salon_id", data.salonId).maybeSingle(),
       supabaseAdmin.from("branches").select("id, name, address").eq("salon_id", data.salonId).eq("is_active", true).order("sort_order"),
     ]);
 
@@ -86,6 +84,13 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
     const salon = salonResult.data;
     const assistant = assistantResult.data;
     const branchRows = branchResult.data;
+
+    // The simulator runs the same engine the live webhook would use for this salon.
+    const engine = (assistant as any)?.engine === "v4" ? "v4" : "v3";
+    const runWaAgent =
+      engine === "v4"
+        ? (await import("@/lib/wa-agent-v4.server")).runWaAgentV4
+        : (await import("@/lib/wa-agent.server")).runWaAgentV3;
 
     // For the simulator, pass the image as a data URL directly — no Supabase upload needed.
     // downloadImageAsBase64() in the agent handles data: URLs by extracting the base64 inline.
@@ -116,6 +121,7 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
         pricing_rules: (assistant as any)?.pricing_rules ?? null,
         languages: (assistant as any)?.languages?.length ? (assistant as any).languages : ["ru"],
         manage_cutoff_hours: (assistant as any)?.manage_cutoff_hours ?? 0,
+        knowledge_base: (assistant as any)?.knowledge_base ?? null,
       },
       client: { phone: "simulator_test", name: "Тест" },
       history: data.history as WaIncomingMessage[],

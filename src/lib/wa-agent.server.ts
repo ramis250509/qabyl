@@ -40,6 +40,9 @@ export type WaAssistantConfig = {
   tone_instructions: string | null;
   pricing_rules: string | null;
   languages: string[];
+  // V4: free-text salon facts (parking, payment, promos…) injected into the agent's
+  // system prompt so it can answer arbitrary questions about the salon.
+  knowledge_base?: string | null;
   // Salon-configured deadline: cancel/reschedule via the bot is refused when the visit
   // starts in less than this many hours (0 / null = no limit, client asked to call the salon).
   manage_cutoff_hours?: number | null;
@@ -249,7 +252,7 @@ export async function greenApiDownloadFile(
 // Time / language helpers
 // ============================================================
 
-function nowInTz(tz: string): {
+export function nowInTz(tz: string): {
   isoLocalDate: string;
   humanDate: string;
   hour: number;
@@ -295,7 +298,7 @@ function addDaysISO(isoDate: string, days: number): string {
   return dt.toISOString().slice(0, 10);
 }
 
-function buildDateMap(
+export function buildDateMap(
   tz: string,
   days = 14,
 ): Array<{ iso: string; label: string; relative: string }> {
@@ -339,7 +342,7 @@ function availablePartsToday(nowHour: number): Array<"morning" | "afternoon" | "
 const KY_WORD_RE =
   /(?<![\p{L}])(алейкум|ассалму|байке|эже|аке|иним|кандайс[\p{L}]*|сала?мат[\p{L}]*|салам(атсызбы|атчылык)?|жакшы|кандай|канча|ооба|жок|макул|бүгүн|бугун|эртең|эртен|эртеси|кеч(инде|ке|ки)?|таңда|түш(тө|кү)?|менин|жаз[\p{L}]*|куну|күнү|кереги|керек|рахмат|тушун[\p{L}]*|түшүн[\p{L}]*|саат|болот|кайра|кызмат[\p{L}]*)(?![\p{L}])/iu;
 
-function detectLanguage(text: string): "ru" | "ky" | "en" {
+export function detectLanguage(text: string): "ru" | "ky" | "en" {
   if (!text) return "ru";
   const lower = text.toLowerCase();
   const hasKyrgyzLetters = /[ңүөҢҮӨ]/.test(text);
@@ -1650,7 +1653,7 @@ function instructionFallbackReply(
 // Slot loading / merging
 // ============================================================
 
-type DbMaster = {
+export type DbMaster = {
   id: string;
   name: string;
   branch_id: string | null;
@@ -1664,7 +1667,7 @@ type MergedSlot = {
   master_ids: string[];
 };
 
-async function loadServicesForSalon(db: AdminClient, salonId: string) {
+export async function loadServicesForSalon(db: AdminClient, salonId: string) {
   const { data } = await db
     .from("services")
     .select("id, name, category, price, price_max, price_type, duration_min")
@@ -1680,7 +1683,7 @@ async function loadServicesForSalon(db: AdminClient, salonId: string) {
 // (ai_service_overrides). Absence of any override = identical to the regular services list.
 // Used everywhere V3 builds or searches the service menu so a service hidden from the AI
 // can't be booked by typing its name either — hiding stays consistent either way.
-async function loadAiVisibleServicesForSalon(db: AdminClient, salonId: string) {
+export async function loadAiVisibleServicesForSalon(db: AdminClient, salonId: string) {
   const [services, assistantRes, overridesRes] = await Promise.all([
     loadServicesForSalon(db, salonId),
     db
@@ -1732,7 +1735,7 @@ async function loadAiVisibleServicesForSalon(db: AdminClient, salonId: string) {
     .map((x) => x.s);
 }
 
-async function loadMastersForService(
+export async function loadMastersForService(
   db: AdminClient,
   salonId: string,
   serviceId: string,
@@ -1776,7 +1779,7 @@ function isInPart(iso: string, tz: string, part: "morning" | "afternoon" | "even
   return h >= 17;
 }
 
-function formatTimeInTz(iso: string, tz: string): string {
+export function formatTimeInTz(iso: string, tz: string): string {
   return new Intl.DateTimeFormat("ru-RU", {
     timeZone: tz,
     hour: "2-digit",
@@ -1785,7 +1788,7 @@ function formatTimeInTz(iso: string, tz: string): string {
   }).format(new Date(iso));
 }
 
-function formatDateInTz(iso: string, tz: string): string {
+export function formatDateInTz(iso: string, tz: string): string {
   return new Intl.DateTimeFormat("ru-RU", {
     timeZone: tz,
     weekday: "long",
@@ -1794,7 +1797,7 @@ function formatDateInTz(iso: string, tz: string): string {
   }).format(new Date(iso));
 }
 
-async function fetchMergedSlots(opts: {
+export async function fetchMergedSlots(opts: {
   db: AdminClient;
   masters: DbMaster[];
   serviceId: string;
@@ -1941,6 +1944,39 @@ async function downloadImageAsBase64(
   } finally {
     clearTimeout(timer);
   }
+}
+
+// ============================================================
+// Voice message transcription (V4)
+// ============================================================
+
+// Transcribe a WhatsApp voice note (opus/ogg) with Gemini Flash — audio is a native input,
+// no separate STT service needed. Returns plain text in the language actually spoken
+// (ru/ky mixed speech is common in KG). Used by the V4 webhook path only.
+export async function transcribeAudio(opts: {
+  apiKey: string;
+  audioBase64: string;
+  mime: string; // e.g. "audio/ogg; codecs=opus"
+}): Promise<{ ok: boolean; text?: string; error?: string }> {
+  const res = await callGemini({
+    model: MODEL_TEXT,
+    apiKey: opts.apiKey,
+    systemInstruction:
+      "Ты — транскрибатор голосовых сообщений WhatsApp. Верни ТОЛЬКО дословный текст сообщения " +
+      "на языке говорящего (русский или кыргызский, без перевода). Без комментариев, без кавычек. " +
+      "Если запись пустая или неразборчива — верни ровно [неразборчиво].",
+    parts: [
+      { inline_data: { mime_type: opts.mime.split(";")[0].trim(), data: opts.audioBase64 } },
+      { text: "Транскрибируй это голосовое сообщение." },
+    ],
+    temperature: 0,
+    maxOutputTokens: 1024,
+    thinkingBudget: 0,
+  });
+  if (!res.ok || !res.text) return { ok: false, error: res.error ?? "transcribe failed" };
+  const text = res.text.trim();
+  if (!text || /^\[неразборчиво\]$/i.test(text)) return { ok: false, error: "unintelligible" };
+  return { ok: true, text };
 }
 
 // ============================================================
@@ -2795,9 +2831,9 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
 // V2: Gemini Function Calling Agent (replaces the state machine)
 // ============================================================
 
-type GeminiV2Content = { role: "user" | "model"; parts: any[] };
+export type GeminiV2Content = { role: "user" | "model"; parts: any[] };
 
-async function callGeminiTools(opts: {
+export async function callGeminiTools(opts: {
   apiKey: string;
   systemInstruction: string;
   contents: GeminiV2Content[];

@@ -10,12 +10,14 @@ import {
   normalizeChatIdToPhone,
   renderInteractiveAsText,
   runWaAgentV3,
+  transcribeAudio,
   type GreenApiCreds,
   type WaAgentInput,
   type WaAgentState,
   type WaBranchInfo,
   type WaIncomingMessage,
 } from "@/lib/wa-agent.server";
+import { runWaAgentV4 } from "@/lib/wa-agent-v4.server";
 
 const LOCK_TTL_SECONDS = 25;
 const MAX_LOOP_ITERATIONS = 3;
@@ -28,12 +30,15 @@ export function resolveAssistantRuntimeConfig(salon: any, assistant: any, secret
   return {
     assistantEnabled,
     hasGreenApiCreds,
+    // V4 rollout flag: 'v3' (default, legacy state machine) | 'v4' (LLM tool-calling agent).
+    engine: assistant?.engine === "v4" ? ("v4" as const) : ("v3" as const),
     assistantConfig: {
       greeting: assistant?.greeting ?? null,
       tone_instructions: assistant?.tone_instructions ?? null,
       pricing_rules: assistant?.pricing_rules ?? null,
       languages: assistant?.languages?.length ? assistant.languages : ["ru"],
       manage_cutoff_hours: assistant?.manage_cutoff_hours ?? 0,
+      knowledge_base: assistant?.knowledge_base ?? null,
     },
   };
 }
@@ -75,7 +80,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             .maybeSingle(),
           supabaseAdmin
             .from("salon_ai_assistant")
-            .select("enabled, greeting, tone_instructions, pricing_rules, languages, manage_cutoff_hours")
+            .select("enabled, greeting, tone_instructions, pricing_rules, languages, manage_cutoff_hours, engine, knowledge_base")
             .eq("salon_id", salonId)
             .maybeSingle(),
         ]);
@@ -84,6 +89,10 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
           return new Response("Forbidden", { status: 403 });
         }
         if (!salon) return ack();
+
+        // V4 rollout flag — needed before the content-type switch (voice notes are only
+        // supported on the V4 engine; V3 salons keep the old "unsupported → ack" behavior).
+        const waEngine: "v3" | "v4" = (assistant as any)?.engine === "v4" ? "v4" : "v3";
 
         const webhookType = payload?.typeWebhook;
         if (webhookType !== "incomingMessageReceived" && webhookType !== "outgoingMessageReceived") {
@@ -178,6 +187,8 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         let imageDownloadUrl: string | null = null;
         let imageMime: string | null = null;
         let selectedId: string | null = null; // V3: button/list selection
+        let audioDownloadUrl: string | null = null; // V4: voice note → transcription
+        let audioMime: string | null = null;
         const mt = md?.typeMessage;
         if (mt === "textMessage" || mt === "extendedTextMessage") {
           textBody =
@@ -203,6 +214,12 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
           // ack()'d with no reply — this is why tapping "✅ Да, записать" never created a booking.
           selectedId = md?.templateButtonReplyMessage?.selectedId ?? null;
           textBody = md?.templateButtonReplyMessage?.selectedDisplayText ?? selectedId;
+        } else if (mt === "audioMessage" && waEngine === "v4") {
+          // WhatsApp voice note. Transcribed with Gemini further below (after webhook dedup,
+          // so a Green-API retry doesn't pay for a second transcription). V3 salons fall
+          // through to "unsupported" — their behavior is unchanged.
+          audioDownloadUrl = md?.fileMessageData?.downloadUrl ?? null;
+          audioMime = md?.fileMessageData?.mimeType ?? "audio/ogg";
         } else {
           // Unsupported types — just ack quietly.
           return ack();
@@ -284,6 +301,76 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
           if (dup) return ack();
         }
 
+        // ---- V4: transcribe a voice note into textBody. Runs after webhook dedup so a
+        // Green-API retry never pays for a second Gemini transcription. On success the
+        // transcript flows through the normal text pipeline (history, agent, admin panel);
+        // the admin also benefits — they see what was said even when the AI is paused.
+        if (mt === "audioMessage" && waEngine === "v4") {
+          const dlCreds: GreenApiCreds = {
+            instance: secrets.greenapi_instance ?? "",
+            token: secrets.greenapi_token ?? "",
+          };
+          const fetchAudio = async (
+            u: string,
+          ): Promise<{ base64: string; mime: string } | null> => {
+            try {
+              const r = await fetch(u);
+              if (!r.ok) return null;
+              const ab = await r.arrayBuffer();
+              if (ab.byteLength > 8 * 1024 * 1024) return null; // voice notes are tiny; 8MB = abuse
+              return {
+                base64: Buffer.from(ab).toString("base64"),
+                mime: r.headers.get("content-type") ?? audioMime ?? "audio/ogg",
+              };
+            } catch {
+              return null;
+            }
+          };
+          let audio = audioDownloadUrl ? await fetchAudio(audioDownloadUrl) : null;
+          if (!audio && greenIdMessage && dlCreds.instance && dlCreds.token) {
+            // Webhook often omits/expires downloadUrl — same fallback as images below.
+            const fresh = await greenApiDownloadFile(dlCreds, chatId, greenIdMessage);
+            if (fresh.ok && fresh.downloadUrl) audio = await fetchAudio(fresh.downloadUrl);
+          }
+          const tr = audio
+            ? await transcribeAudio({
+                apiKey: process.env.GEMINI_API_KEY ?? "",
+                audioBase64: audio.base64,
+                mime: audio.mime,
+              })
+            : ({ ok: false, error: "audio download failed" } as const);
+          if (tr.ok && tr.text) {
+            textBody = tr.text;
+          } else {
+            console.error("[wa] voice transcription failed:", (tr as any).error);
+            // Store an audit row (already processed — the agent must not pick it up) and
+            // ask the client to type instead, unless a human admin is currently handling.
+            await supabaseAdmin.from("wa_messages").insert({
+              conversation_id: convId,
+              salon_id: salonId,
+              direction: "in",
+              kind: "text",
+              text_body: null,
+              green_api_message_id: greenIdMessage ?? null,
+              processed_at: new Date().toISOString(),
+              meta: { voice: true, transcription_failed: true },
+            });
+            const pausedNow =
+              Boolean(existingConv?.ai_paused) &&
+              existingConv?.ai_paused_at &&
+              Date.now() - new Date(existingConv.ai_paused_at as string).getTime() <
+                60 * 60 * 1000;
+            if (!pausedNow && dlCreds.instance && dlCreds.token) {
+              await greenApiSendMessage(
+                dlCreds,
+                chatId,
+                "Извините, не получилось разобрать голосовое сообщение 🙏 Напишите, пожалуйста, текстом.",
+              );
+            }
+            return ack();
+          }
+        }
+
         // ---- Download image (private bucket). Green-API frequently omits downloadUrl in the
         // webhook (or it has expired by the time we process), which left the assistant blind to a
         // client's photo and it replied "Фото не получили". If the webhook URL is missing or the
@@ -340,7 +427,14 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             text_body: textBody,
             media_path: mediaPath,
             green_api_message_id: greenIdMessage ?? null,
-            ...(selectedId ? { meta: { selected_id: selectedId } } : {}),
+            ...(selectedId || mt === "audioMessage"
+              ? {
+                  meta: {
+                    ...(selectedId ? { selected_id: selectedId } : {}),
+                    ...(mt === "audioMessage" ? { voice: true } : {}),
+                  },
+                }
+              : {}),
           })
           .select("id")
           .single();
@@ -522,7 +616,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
 
             let result;
             try {
-              result = await runWaAgentV3(input);
+              result = waEngine === "v4" ? await runWaAgentV4(input) : await runWaAgentV3(input);
             } catch (e: any) {
               console.error("[wa] runWaAgent threw", e?.message ?? e);
               const reply =
@@ -624,6 +718,13 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
               state: result.nextState,
               state_data: result.nextStateData ?? {},
             };
+            // V4 escalation: the agent called escalate_to_human — hand the conversation to
+            // a live admin the same way a manual takeover does (bot stays quiet for the
+            // ai_paused window). V3 keeps its own needs_human handling untouched.
+            if (waEngine === "v4" && (result.nextStateData as any)?.needs_human) {
+              updates.ai_paused = true;
+              updates.ai_paused_at = new Date().toISOString();
+            }
             if (result.appointmentId) {
               updates.status = "booked";
               updates.appointment_id = result.appointmentId;

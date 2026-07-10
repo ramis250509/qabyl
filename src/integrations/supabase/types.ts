@@ -627,7 +627,9 @@ export type Database = {
           ai_hidden_categories: string[]
           created_at: string
           enabled: boolean
+          engine: string
           greeting: string | null
+          knowledge_base: string | null
           languages: string[]
           manage_cutoff_hours: number
           pricing_rules: string | null
@@ -641,7 +643,9 @@ export type Database = {
           ai_hidden_categories?: string[]
           created_at?: string
           enabled?: boolean
+          engine?: string
           greeting?: string | null
+          knowledge_base?: string | null
           languages?: string[]
           manage_cutoff_hours?: number
           pricing_rules?: string | null
@@ -655,7 +659,9 @@ export type Database = {
           ai_hidden_categories?: string[]
           created_at?: string
           enabled?: boolean
+          engine?: string
           greeting?: string | null
+          knowledge_base?: string | null
           languages?: string[]
           manage_cutoff_hours?: number
           pricing_rules?: string | null

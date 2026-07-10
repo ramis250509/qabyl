@@ -23,6 +23,8 @@ type Assistant = {
   pricing_rules: string | null;
   languages: string[];
   manage_cutoff_hours: number;
+  engine: "v3" | "v4";
+  knowledge_base: string | null;
 };
 
 const DEFAULT_GREETING =
@@ -50,6 +52,8 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
     pricing_rules: DEFAULT_PRICING,
     languages: ["ru", "ky"],
     manage_cutoff_hours: 0,
+    engine: "v3",
+    knowledge_base: "",
   });
 
   useEffect(() => {
@@ -72,6 +76,8 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
           pricing_rules: row.pricing_rules ?? DEFAULT_PRICING,
           languages: row.languages?.length ? row.languages : ["ru", "ky"],
           manage_cutoff_hours: (row as any).manage_cutoff_hours ?? 0,
+          engine: (row as any).engine === "v4" ? "v4" : "v3",
+          knowledge_base: (row as any).knowledge_base ?? "",
         });
       }
       setLoading(false);
@@ -146,7 +152,9 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
         pricing_rules: data.pricing_rules || null,
         languages: data.languages,
         manage_cutoff_hours: data.manage_cutoff_hours,
-      },
+        engine: data.engine,
+        knowledge_base: data.knowledge_base || null,
+      } as any,
       { onConflict: "salon_id" },
     );
     setSaving(false);
@@ -318,6 +326,33 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
         </div>
 
         <div className="space-y-2">
+          <Label>Режим работы ассистента</Label>
+          <div className="flex flex-wrap gap-2">
+            {(
+              [
+                { code: "v3", label: "Классический (пошаговое меню)" },
+                { code: "v4", label: "Живой диалог (бета)" },
+              ] as const
+            ).map((m) => (
+              <Button
+                key={m.code}
+                type="button"
+                variant={data.engine === m.code ? "default" : "outline"}
+                size="sm"
+                onClick={() => setData({ ...data, engine: m.code })}
+              >
+                {m.label}
+              </Button>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            «Живой диалог» — ассистент общается свободным текстом, как человек: понимает
+            голосовые сообщения, отвечает на вопросы о салоне и записывает без нумерованных
+            меню. Переключение действует сразу, откат — в один клик.
+          </p>
+        </div>
+
+        <div className="space-y-2">
           <Label>Приветствие</Label>
           <Textarea
             rows={3}
@@ -357,6 +392,24 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
             цену всегда подтверждает мастер.»
           </p>
         </div>
+
+        {data.engine === "v4" && (
+          <div className="space-y-2">
+            <Label>Знания о салоне</Label>
+            <Textarea
+              rows={5}
+              placeholder={
+                "Например: Парковка бесплатная во дворе. Оплата наличными, картой и QR. По вторникам скидка 10% на маникюр. Работаем на материалах CND и OPI."
+              }
+              value={data.knowledge_base ?? ""}
+              onChange={(e) => setData({ ...data, knowledge_base: e.target.value })}
+            />
+            <p className="text-xs text-muted-foreground">
+              Свободный текст о салоне: парковка, оплата, акции, бренды, что угодно.
+              Ассистент использует эти факты, отвечая на вопросы клиентов.
+            </p>
+          </div>
+        )}
 
         <div className="space-y-2">
           <Label>Ограничение на отмену и перенос</Label>
