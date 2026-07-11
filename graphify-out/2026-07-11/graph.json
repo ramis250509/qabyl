@@ -3733,7 +3733,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "ui_loading_state",
-      "community": 84,
+      "community": 6,
       "norm_label": "loading-state.tsx"
     },
     {
@@ -3743,7 +3743,7 @@
       "source_location": "L4",
       "_origin": "ast",
       "id": "ui_loading_state_loadingstate",
-      "community": 84,
+      "community": 6,
       "norm_label": "loadingstate()"
     },
     {
@@ -3753,7 +3753,7 @@
       "source_location": "L26",
       "_origin": "ast",
       "id": "ui_loading_state_fullscreenloader",
-      "community": 84,
+      "community": 6,
       "norm_label": "fullscreenloader()"
     },
     {
@@ -5103,7 +5103,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "hooks_use_branch_filter",
-      "community": 6,
+      "community": 13,
       "norm_label": "use-branch-filter.ts"
     },
     {
@@ -5113,7 +5113,7 @@
       "source_location": "L8",
       "_origin": "ast",
       "id": "hooks_use_branch_filter_adminsalon",
-      "community": 6,
+      "community": 13,
       "norm_label": "adminsalon"
     },
     {
@@ -5123,7 +5123,7 @@
       "source_location": "L9",
       "_origin": "ast",
       "id": "hooks_use_branch_filter_adminbranch",
-      "community": 6,
+      "community": 13,
       "norm_label": "adminbranch"
     },
     {
@@ -5133,7 +5133,7 @@
       "source_location": "L11",
       "_origin": "ast",
       "id": "hooks_use_branch_filter_read",
-      "community": 6,
+      "community": 13,
       "norm_label": "read()"
     },
     {
@@ -5143,7 +5143,7 @@
       "source_location": "L15",
       "_origin": "ast",
       "id": "hooks_use_branch_filter_write",
-      "community": 6,
+      "community": 13,
       "norm_label": "write()"
     },
     {
@@ -5153,7 +5153,7 @@
       "source_location": "L21",
       "_origin": "ast",
       "id": "hooks_use_branch_filter_useadminfilters",
-      "community": 6,
+      "community": 13,
       "norm_label": "useadminfilters()"
     },
     {
@@ -5973,7 +5973,7 @@
       "source_location": "L48",
       "_origin": "ast",
       "id": "lib_refresh_context_useregisterrefresh",
-      "community": 6,
+      "community": 13,
       "norm_label": "useregisterrefresh()"
     },
     {
@@ -6253,7 +6253,7 @@
       "source_location": "L96",
       "_origin": "ast",
       "id": "lib_tz_usesalontimezone",
-      "community": 6,
+      "community": 13,
       "norm_label": "usesalontimezone()"
     },
     {
@@ -6340,7 +6340,7 @@
       "label": "V4_TOOL_DECLARATIONS",
       "file_type": "code",
       "source_file": "src/lib/wa-agent-v4.server.ts",
-      "source_location": "L168",
+      "source_location": "L171",
       "_origin": "ast",
       "id": "lib_wa_agent_v4_server_v4_tool_declarations",
       "community": 24,
@@ -6350,7 +6350,7 @@
       "label": "V4RunFlags",
       "file_type": "code",
       "source_file": "src/lib/wa-agent-v4.server.ts",
-      "source_location": "L288",
+      "source_location": "L291",
       "_origin": "ast",
       "id": "lib_wa_agent_v4_server_v4runflags",
       "community": 24,
@@ -6360,7 +6360,7 @@
       "label": "isSlotStillFree()",
       "file_type": "code",
       "source_file": "src/lib/wa-agent-v4.server.ts",
-      "source_location": "L297",
+      "source_location": "L300",
       "_origin": "ast",
       "id": "lib_wa_agent_v4_server_isslotstillfree",
       "community": 24,
@@ -6370,7 +6370,7 @@
       "label": "loadFreeSlotsForDay()",
       "file_type": "code",
       "source_file": "src/lib/wa-agent-v4.server.ts",
-      "source_location": "L316",
+      "source_location": "L319",
       "_origin": "ast",
       "id": "lib_wa_agent_v4_server_loadfreeslotsforday",
       "community": 24,
@@ -6380,7 +6380,7 @@
       "label": "executeV4Tool()",
       "file_type": "code",
       "source_file": "src/lib/wa-agent-v4.server.ts",
-      "source_location": "L352",
+      "source_location": "L355",
       "_origin": "ast",
       "id": "lib_wa_agent_v4_server_executev4tool",
       "community": 24,
@@ -6390,7 +6390,7 @@
       "label": "humanizeReply()",
       "file_type": "code",
       "source_file": "src/lib/wa-agent-v4.server.ts",
-      "source_location": "L571",
+      "source_location": "L574",
       "_origin": "ast",
       "id": "lib_wa_agent_v4_server_humanizereply",
       "community": 24,
@@ -6400,7 +6400,7 @@
       "label": "runWaAgentV4()",
       "file_type": "code",
       "source_file": "src/lib/wa-agent-v4.server.ts",
-      "source_location": "L605",
+      "source_location": "L608",
       "_origin": "ast",
       "id": "lib_wa_agent_v4_server_runwaagentv4",
       "community": 24,
@@ -8083,7 +8083,7 @@
       "source_location": "L43",
       "_origin": "ast",
       "id": "admin_calendar_calendarpage",
-      "community": 6,
+      "community": 13,
       "norm_label": "calendarpage()"
     },
     {
@@ -8163,7 +8163,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "admin_index",
-      "community": 6,
+      "community": 13,
       "norm_label": "index.tsx"
     },
     {
@@ -8183,7 +8183,7 @@
       "source_location": "L16",
       "_origin": "ast",
       "id": "admin_index_dashboard",
-      "community": 6,
+      "community": 13,
       "norm_label": "dashboard()"
     },
     {
@@ -8523,7 +8523,7 @@
       "source_location": "L25",
       "_origin": "ast",
       "id": "salons_index_salonslist",
-      "community": 6,
+      "community": 13,
       "norm_label": "salonslist()"
     },
     {
@@ -8553,7 +8553,7 @@
       "source_location": "L16",
       "_origin": "ast",
       "id": "admin_stats_statspage",
-      "community": 6,
+      "community": 13,
       "norm_label": "statspage()"
     },
     {
@@ -26088,9 +26088,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L316",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server",
-      "target": "lib_wa_agent_v4_server_loadfreeslotsforday",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_v4_server_loadfreeslotsforday"
     },
     {
       "relation": "contains",
@@ -26238,9 +26238,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L392",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server_executev4tool",
-      "target": "lib_wa_agent_v4_server_loadfreeslotsforday",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_v4_server_loadfreeslotsforday"
     },
     {
       "relation": "calls",
@@ -26249,9 +26249,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L340",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server_loadfreeslotsforday",
-      "target": "lib_wa_agent_server_fetchmergedslots",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_fetchmergedslots"
     },
     {
       "relation": "calls",
@@ -26260,9 +26260,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L332",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server_loadfreeslotsforday",
-      "target": "lib_wa_agent_server_loadmastersforservice",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_loadmastersforservice"
     },
     {
       "relation": "calls",
@@ -26271,9 +26271,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L326",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server_loadfreeslotsforday",
-      "target": "lib_wa_agent_server_nowintz",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_nowintz"
     },
     {
       "relation": "calls",
@@ -31481,9 +31481,9 @@
       "source_file": "wa-agent-v4.scenarios.test.ts",
       "source_location": "L520",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "wa_agent_v4_scenarios_test",
-      "target": "wa_agent_v4_scenarios_test_funcresp",
-      "confidence_score": 1.0
+      "target": "wa_agent_v4_scenarios_test_funcresp"
     },
     {
       "relation": "contains",
@@ -33798,5 +33798,5 @@
       "source_file": "WA_AGENT_IMPROVEMENTS.md"
     }
   ],
-  "built_at_commit": "76bfe517b290da9ecb9e09f866e2488d540cb01f"
+  "built_at_commit": "ffee41f45bb3972edb526b7db539e7799322d0e1"
 }

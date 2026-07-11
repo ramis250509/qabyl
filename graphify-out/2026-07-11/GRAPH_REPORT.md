@@ -1,7 +1,7 @@
 # Graph Report - Qabyl  (2026-07-11)
 
 ## Corpus Check
-- 225 files · ~158,711 words
+- 225 files · ~159,010 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
@@ -10,7 +10,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `76bfe517`
+- Built from commit: `ffee41f4`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -164,8 +164,8 @@ Cohesion: 0.11
 Nodes (20): AST Structural Extraction (Part A), Community Detection, Extraction Cache (check_semantic_cache), God Nodes Analysis, Interactive HTML Graph Output, GRAPH_REPORT.md Output, Graphify Full Pipeline Skill, Graphify Query (BFS/DFS traversal) (+12 more)
 
 ### Community 6 - "Community 6"
-Cohesion: 0.15
-Nodes (18): BranchFilterBar(), Filters, CalendarPage(), Dashboard(), StatsPage(), AdminBranch, AdminSalon, useAdminFilters() (+10 more)
+Cohesion: 0.22
+Nodes (11): BranchFilterBar(), Filters, FullScreenLoader(), LoadingState(), SelectContent, SelectItem, SelectLabel, SelectScrollDownButton (+3 more)
 
 ### Community 7 - "Build Tooling Config"
 Cohesion: 0.11
@@ -192,8 +192,8 @@ Cohesion: 0.09
 Nodes (22): bigMenuSalon(), BRANCHES, branchSalon(), composeSystemInstructions, CONFIG, confirmDraft(), convo(), convoV3() (+14 more)
 
 ### Community 13 - "Salon Site & Reviews"
-Cohesion: 0.18
-Nodes (12): AiAssistantTab(), useNotifications(), signOutFromApp(), useAuth(), RefreshContext, RefreshContextValue, RefreshFn, RefreshProvider() (+4 more)
+Cohesion: 0.12
+Nodes (21): AiAssistantTab(), CalendarPage(), Dashboard(), StatsPage(), AdminBranch, AdminSalon, useAdminFilters(), useNotifications() (+13 more)
 
 ### Community 14 - "Core UI Primitives"
 Cohesion: 0.13
@@ -388,8 +388,8 @@ Cohesion: 0.50
 Nodes (3): For --cluster-only, For --update (incremental re-extraction), graphify reference: incremental update and cluster-only
 
 ### Community 84 - "Community 84"
-Cohesion: 0.19
-Nodes (12): ConflictInfo, RestoreTarget, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter(), AlertDialogHeader() (+4 more)
+Cohesion: 0.24
+Nodes (10): ConflictInfo, RestoreTarget, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter(), AlertDialogHeader() (+2 more)
 
 ### Community 85 - "Community 85"
 Cohesion: 0.28

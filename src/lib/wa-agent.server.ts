@@ -368,7 +368,7 @@ export function detectLanguage(text: string): "ru" | "ky" | "en" {
 // A message carries a "confident" language signal when it has Kyrgyz-unique letters / words,
 // or is plainly Latin (English). Plain Cyrillic without Kyrgyz markers is NOT confident — that
 // keeps a Kyrgyz conversation from flipping to Russian on a short word like "бугун".
-function confidentLanguage(text: string): boolean {
+export function confidentLanguage(text: string): boolean {
   if (!text) return false;
   const lower = text.toLowerCase();
   if (/[ңүөҢҮӨ]/.test(text)) return true;
@@ -2867,27 +2867,50 @@ export async function callGeminiTools(opts: {
   };
 
   const url = `${GEMINI_BASE}/${MODEL_TEXT}:generateContent?key=${encodeURIComponent(opts.apiKey)}`;
-  try {
-    const r = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const txt = await r.text();
-    if (!r.ok) return { ok: false, error: `gemini ${r.status}: ${txt.slice(0, 300)}` };
-    let json: any;
+
+  // Transient failures (free-tier 429 rate limits, 5xx, network blips) used to surface as a bare
+  // "техническая ошибка" to the client — often mid-booking, which kills the conversion. Retry
+  // with backoff so a one-off hiccup never reaches the client. 429 gets short retries too: the
+  // free tier limit is per-minute, and a brief wait often clears it. Only a persistent failure
+  // (real quota exhaustion, malformed request) falls through to the caller's fallback message.
+  let lastErr = "gemini unknown";
+  for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      json = JSON.parse(txt);
-    } catch {
-      return { ok: false, error: `gemini bad json: ${txt.slice(0, 200)}` };
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const txt = await r.text();
+      if (r.status === 429 || r.status >= 500) {
+        lastErr = `gemini ${r.status}: ${txt.slice(0, 300)}`;
+        if (attempt < 2) {
+          await new Promise((res) => setTimeout(res, 500 * (attempt + 1)));
+          continue;
+        }
+        return { ok: false, error: lastErr };
+      }
+      if (!r.ok) return { ok: false, error: `gemini ${r.status}: ${txt.slice(0, 300)}` };
+      let json: any;
+      try {
+        json = JSON.parse(txt);
+      } catch {
+        return { ok: false, error: `gemini bad json: ${txt.slice(0, 200)}` };
+      }
+      const parts: any[] = (json?.candidates?.[0]?.content?.parts ?? []).filter(
+        (p: any) => !p?.thought,
+      );
+      return { ok: true, parts };
+    } catch (e: any) {
+      lastErr = e?.message ?? String(e);
+      if (attempt < 2) {
+        await new Promise((res) => setTimeout(res, 500 * (attempt + 1)));
+        continue;
+      }
+      return { ok: false, error: lastErr };
     }
-    const parts: any[] = (json?.candidates?.[0]?.content?.parts ?? []).filter(
-      (p: any) => !p?.thought,
-    );
-    return { ok: true, parts };
-  } catch (e: any) {
-    return { ok: false, error: e?.message ?? String(e) };
   }
+  return { ok: false, error: lastErr };
 }
 
 function buildSystemPromptV2(

@@ -484,6 +484,18 @@ test("кыргызский: язык из state сохраняется, ошиб
   expect(res.reply).toContain("Кечиресиз");
 });
 
+test("залипший ru перебивается уверенным кыргызским в текущем сообщении (регрессия со скринов)", async () => {
+  // Реальный баг: state.language once = 'ru' → кыргызский диалог получал русские ошибки.
+  // Теперь уверенный кыргызский сигнал в текущем ходе перебивает залипший язык.
+  (globalThis as any).__WA_DB__ = makeDb();
+  geminiQueue = []; // fetch mock → ошибка Gemini
+  const res = await runWaAgentV4(
+    makeInput("Саат бешке жокпу", { stateData: { language: "ru" } }),
+  );
+  expect(res.reply).toContain("Кечиресиз"); // KY, не русское «Извините»
+  expect(res.nextStateData.language).toBe("ky");
+});
+
 test("humanizeReply убирает markdown и превращает нумерованный список в прозу", () => {
   const input =
     "Вот варианты:\n1. **Ботокс для волос:** восстановление и блеск.\n2. **Кератин:** гладкость и выпрямление.";
