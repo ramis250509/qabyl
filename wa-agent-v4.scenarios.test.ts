@@ -17,7 +17,7 @@ mock.module("@/integrations/supabase/client.server", () => ({ supabaseAdmin: dbP
 
 process.env.GEMINI_API_KEY = "test-key";
 
-const { runWaAgentV4 } = await import("@/lib/wa-agent-v4.server");
+const { runWaAgentV4, humanizeReply } = await import("@/lib/wa-agent-v4.server");
 
 const TZ = "Asia/Bishkek";
 const SALON = { salonId: "salon1", salonName: "Тест салон", timezone: TZ };
@@ -464,4 +464,35 @@ test("кыргызский: язык из state сохраняется, ошиб
   geminiQueue = [];
   const res = await runWaAgentV4(makeInput("салам", { stateData: { language: "ky" } }));
   expect(res.reply).toContain("Кечиресиз");
+});
+
+test("humanizeReply убирает markdown и превращает нумерованный список в прозу", () => {
+  const input =
+    "Вот варианты:\n1. **Ботокс для волос:** восстановление и блеск.\n2. **Кератин:** гладкость и выпрямление.";
+  const out = humanizeReply(input);
+  expect(out).not.toContain("**");
+  expect(out).not.toMatch(/^\s*\d+[.)]/m); // no line starts with "1." / "2."
+  expect(out).not.toContain("\n1.");
+  expect(out).toContain("Ботокс для волос");
+  expect(out).toContain("Кератин");
+});
+
+test("humanizeReply не трогает нормальный текст со временем и двоеточиями", () => {
+  const input = "Есть 10:00, 12:30 и 16:00 — что удобнее?";
+  expect(humanizeReply(input)).toBe(input);
+});
+
+test("ответ агента очищается от markdown/списка перед отправкой клиенту", async () => {
+  (globalThis as any).__WA_DB__ = makeDb();
+  geminiQueue = [
+    [
+      {
+        text: "Смотрите:\n1. **Ботокс** — восстановление.\n2. **Кератин** — выпрямление.",
+      },
+    ],
+  ];
+  const res = await runWaAgentV4(makeInput("волосы сухие после осветления, что делать?"));
+  expect(res.reply).not.toContain("**");
+  expect(res.reply).not.toMatch(/^\s*\d+[.)]\s/m);
+  expect(res.reply).toContain("Ботокс");
 });

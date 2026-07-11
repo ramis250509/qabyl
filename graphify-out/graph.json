@@ -253,7 +253,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "package",
-      "community": 6,
+      "community": 7,
       "norm_label": "package.json"
     },
     {
@@ -1063,7 +1063,7 @@
       "source_location": "L84",
       "_origin": "ast",
       "id": "package_name",
-      "community": 6,
+      "community": 7,
       "norm_label": "name"
     },
     {
@@ -1073,7 +1073,7 @@
       "source_location": "L85",
       "_origin": "ast",
       "id": "package_private",
-      "community": 6,
+      "community": 7,
       "norm_label": "private"
     },
     {
@@ -1083,7 +1083,7 @@
       "source_location": "L86",
       "_origin": "ast",
       "id": "package_scripts",
-      "community": 6,
+      "community": 7,
       "norm_label": "scripts"
     },
     {
@@ -1093,7 +1093,7 @@
       "source_location": "L87",
       "_origin": "ast",
       "id": "package_scripts_build",
-      "community": 6,
+      "community": 7,
       "norm_label": "build"
     },
     {
@@ -1103,7 +1103,7 @@
       "source_location": "L88",
       "_origin": "ast",
       "id": "package_scripts_build_dev",
-      "community": 6,
+      "community": 7,
       "norm_label": "build:dev"
     },
     {
@@ -1113,7 +1113,7 @@
       "source_location": "L89",
       "_origin": "ast",
       "id": "package_scripts_dev",
-      "community": 6,
+      "community": 7,
       "norm_label": "dev"
     },
     {
@@ -1123,7 +1123,7 @@
       "source_location": "L90",
       "_origin": "ast",
       "id": "package_scripts_format",
-      "community": 6,
+      "community": 7,
       "norm_label": "format"
     },
     {
@@ -1133,7 +1133,7 @@
       "source_location": "L91",
       "_origin": "ast",
       "id": "package_scripts_lint",
-      "community": 6,
+      "community": 7,
       "norm_label": "lint"
     },
     {
@@ -1143,7 +1143,7 @@
       "source_location": "L92",
       "_origin": "ast",
       "id": "package_scripts_preview",
-      "community": 6,
+      "community": 7,
       "norm_label": "preview"
     },
     {
@@ -1153,7 +1153,7 @@
       "source_location": "L94",
       "_origin": "ast",
       "id": "package_sideeffects",
-      "community": 6,
+      "community": 7,
       "norm_label": "sideeffects"
     },
     {
@@ -1163,7 +1163,7 @@
       "source_location": "L95",
       "_origin": "ast",
       "id": "package_type",
-      "community": 6,
+      "community": 7,
       "norm_label": "type"
     },
     {
@@ -1803,7 +1803,7 @@
       "source_location": "L69",
       "_origin": "ast",
       "id": "book_publicbooking_publicbooking",
-      "community": 19,
+      "community": 84,
       "norm_label": "publicbooking()"
     },
     {
@@ -1863,7 +1863,7 @@
       "source_location": "L1212",
       "_origin": "ast",
       "id": "book_publicbooking_formatduration",
-      "community": 19,
+      "community": 84,
       "norm_label": "formatduration()"
     },
     {
@@ -3733,7 +3733,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "ui_loading_state",
-      "community": 0,
+      "community": 84,
       "norm_label": "loading-state.tsx"
     },
     {
@@ -3743,7 +3743,7 @@
       "source_location": "L4",
       "_origin": "ast",
       "id": "ui_loading_state_loadingstate",
-      "community": 0,
+      "community": 84,
       "norm_label": "loadingstate()"
     },
     {
@@ -3753,7 +3753,7 @@
       "source_location": "L26",
       "_origin": "ast",
       "id": "ui_loading_state_fullscreenloader",
-      "community": 0,
+      "community": 84,
       "norm_label": "fullscreenloader()"
     },
     {
@@ -4813,7 +4813,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "ui_sonner",
-      "community": 9,
+      "community": 20,
       "norm_label": "sonner.tsx"
     },
     {
@@ -4823,7 +4823,7 @@
       "source_location": "L3",
       "_origin": "ast",
       "id": "ui_sonner_toasterprops",
-      "community": 9,
+      "community": 20,
       "norm_label": "toasterprops"
     },
     {
@@ -4833,7 +4833,7 @@
       "source_location": "L5",
       "_origin": "ast",
       "id": "ui_sonner_toaster",
-      "community": 9,
+      "community": 20,
       "norm_label": "toaster()"
     },
     {
@@ -5213,7 +5213,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "supabase_auth_attacher",
-      "community": 46,
+      "community": 85,
       "norm_label": "auth-attacher.ts"
     },
     {
@@ -5223,7 +5223,7 @@
       "source_location": "L7",
       "_origin": "ast",
       "id": "supabase_auth_attacher_attachsupabaseauth",
-      "community": 46,
+      "community": 85,
       "norm_label": "attachsupabaseauth"
     },
     {
@@ -6290,7 +6290,7 @@
       "label": "AdminClient",
       "file_type": "code",
       "source_file": "src/lib/wa-agent-v4.server.ts",
-      "source_location": "L31",
+      "source_location": "L32",
       "_origin": "ast",
       "id": "lib_wa_agent_v4_server_adminclient",
       "community": 24,
@@ -6300,7 +6300,7 @@
       "label": "getAdmin()",
       "file_type": "code",
       "source_file": "src/lib/wa-agent-v4.server.ts",
-      "source_location": "L32",
+      "source_location": "L33",
       "_origin": "ast",
       "id": "lib_wa_agent_v4_server_getadmin",
       "community": 24,
@@ -6310,7 +6310,7 @@
       "label": "DAY_LABELS_RU",
       "file_type": "code",
       "source_file": "src/lib/wa-agent-v4.server.ts",
-      "source_location": "L45",
+      "source_location": "L46",
       "_origin": "ast",
       "id": "lib_wa_agent_v4_server_day_labels_ru",
       "community": 24,
@@ -6320,7 +6320,7 @@
       "label": "renderWorkingHours()",
       "file_type": "code",
       "source_file": "src/lib/wa-agent-v4.server.ts",
-      "source_location": "L55",
+      "source_location": "L56",
       "_origin": "ast",
       "id": "lib_wa_agent_v4_server_renderworkinghours",
       "community": 24,
@@ -6330,7 +6330,7 @@
       "label": "buildSystemPromptV4()",
       "file_type": "code",
       "source_file": "src/lib/wa-agent-v4.server.ts",
-      "source_location": "L65",
+      "source_location": "L66",
       "_origin": "ast",
       "id": "lib_wa_agent_v4_server_buildsystempromptv4",
       "community": 24,
@@ -6340,7 +6340,7 @@
       "label": "V4_TOOL_DECLARATIONS",
       "file_type": "code",
       "source_file": "src/lib/wa-agent-v4.server.ts",
-      "source_location": "L132",
+      "source_location": "L148",
       "_origin": "ast",
       "id": "lib_wa_agent_v4_server_v4_tool_declarations",
       "community": 24,
@@ -6350,7 +6350,7 @@
       "label": "V4RunFlags",
       "file_type": "code",
       "source_file": "src/lib/wa-agent-v4.server.ts",
-      "source_location": "L231",
+      "source_location": "L247",
       "_origin": "ast",
       "id": "lib_wa_agent_v4_server_v4runflags",
       "community": 24,
@@ -6360,7 +6360,7 @@
       "label": "isSlotStillFree()",
       "file_type": "code",
       "source_file": "src/lib/wa-agent-v4.server.ts",
-      "source_location": "L239",
+      "source_location": "L255",
       "_origin": "ast",
       "id": "lib_wa_agent_v4_server_isslotstillfree",
       "community": 24,
@@ -6370,17 +6370,27 @@
       "label": "executeV4Tool()",
       "file_type": "code",
       "source_file": "src/lib/wa-agent-v4.server.ts",
-      "source_location": "L255",
+      "source_location": "L271",
       "_origin": "ast",
       "id": "lib_wa_agent_v4_server_executev4tool",
       "community": 24,
       "norm_label": "executev4tool()"
     },
     {
+      "label": "humanizeReply()",
+      "file_type": "code",
+      "source_file": "src/lib/wa-agent-v4.server.ts",
+      "source_location": "L473",
+      "_origin": "ast",
+      "id": "lib_wa_agent_v4_server_humanizereply",
+      "community": 24,
+      "norm_label": "humanizereply()"
+    },
+    {
       "label": "runWaAgentV4()",
       "file_type": "code",
       "source_file": "src/lib/wa-agent-v4.server.ts",
-      "source_location": "L452",
+      "source_location": "L507",
       "_origin": "ast",
       "id": "lib_wa_agent_v4_server_runwaagentv4",
       "community": 24,
@@ -6413,7 +6423,7 @@
       "source_location": "L7",
       "_origin": "ast",
       "id": "lib_wa_agent_server_getadmin",
-      "community": 24,
+      "community": 6,
       "norm_label": "getadmin()"
     },
     {
@@ -6423,7 +6433,7 @@
       "source_location": "L26",
       "_origin": "ast",
       "id": "lib_wa_agent_server_waincomingmessage",
-      "community": 20,
+      "community": 29,
       "norm_label": "waincomingmessage"
     },
     {
@@ -6463,7 +6473,7 @@
       "source_location": "L63",
       "_origin": "ast",
       "id": "lib_wa_agent_server_waagentstate",
-      "community": 20,
+      "community": 29,
       "norm_label": "waagentstate"
     },
     {
@@ -6473,7 +6483,7 @@
       "source_location": "L84",
       "_origin": "ast",
       "id": "lib_wa_agent_server_waagentstatedata",
-      "community": 20,
+      "community": 8,
       "norm_label": "waagentstatedata"
     },
     {
@@ -6543,7 +6553,7 @@
       "source_location": "L165",
       "_origin": "ast",
       "id": "lib_wa_agent_server_greenapisendmessage",
-      "community": 29,
+      "community": 46,
       "norm_label": "greenapisendmessage()"
     },
     {
@@ -6553,7 +6563,7 @@
       "source_location": "L195",
       "_origin": "ast",
       "id": "lib_wa_agent_server_greenapisendfilebyurl",
-      "community": 29,
+      "community": 46,
       "norm_label": "greenapisendfilebyurl()"
     },
     {
@@ -6563,7 +6573,7 @@
       "source_location": "L227",
       "_origin": "ast",
       "id": "lib_wa_agent_server_greenapidownloadfile",
-      "community": 29,
+      "community": 46,
       "norm_label": "greenapidownloadfile()"
     },
     {
@@ -6573,7 +6583,7 @@
       "source_location": "L255",
       "_origin": "ast",
       "id": "lib_wa_agent_server_nowintz",
-      "community": 24,
+      "community": 6,
       "norm_label": "nowintz()"
     },
     {
@@ -6583,7 +6593,7 @@
       "source_location": "L294",
       "_origin": "ast",
       "id": "lib_wa_agent_server_adddaysiso",
-      "community": 24,
+      "community": 6,
       "norm_label": "adddaysiso()"
     },
     {
@@ -6593,7 +6603,7 @@
       "source_location": "L301",
       "_origin": "ast",
       "id": "lib_wa_agent_server_builddatemap",
-      "community": 24,
+      "community": 6,
       "norm_label": "builddatemap()"
     },
     {
@@ -6613,7 +6623,7 @@
       "source_location": "L330",
       "_origin": "ast",
       "id": "lib_wa_agent_server_availablepartstoday",
-      "community": 24,
+      "community": 6,
       "norm_label": "availablepartstoday()"
     },
     {
@@ -6633,7 +6643,7 @@
       "source_location": "L365",
       "_origin": "ast",
       "id": "lib_wa_agent_server_confidentlanguage",
-      "community": 24,
+      "community": 6,
       "norm_label": "confidentlanguage()"
     },
     {
@@ -6643,7 +6653,7 @@
       "source_location": "L381",
       "_origin": "ast",
       "id": "lib_wa_agent_server_clamplanguage",
-      "community": 24,
+      "community": 6,
       "norm_label": "clamplanguage()"
     },
     {
@@ -6723,7 +6733,7 @@
       "source_location": "L575",
       "_origin": "ast",
       "id": "lib_wa_agent_server_callvialovablegateway",
-      "community": 29,
+      "community": 46,
       "norm_label": "callvialovablegateway()"
     },
     {
@@ -6913,7 +6923,7 @@
       "source_location": "L1670",
       "_origin": "ast",
       "id": "lib_wa_agent_server_loadservicesforsalon",
-      "community": 24,
+      "community": 6,
       "norm_label": "loadservicesforsalon()"
     },
     {
@@ -6923,7 +6933,7 @@
       "source_location": "L1686",
       "_origin": "ast",
       "id": "lib_wa_agent_server_loadaivisibleservicesforsalon",
-      "community": 24,
+      "community": 6,
       "norm_label": "loadaivisibleservicesforsalon()"
     },
     {
@@ -6933,7 +6943,7 @@
       "source_location": "L1738",
       "_origin": "ast",
       "id": "lib_wa_agent_server_loadmastersforservice",
-      "community": 24,
+      "community": 6,
       "norm_label": "loadmastersforservice()"
     },
     {
@@ -6993,7 +7003,7 @@
       "source_location": "L1902",
       "_origin": "ast",
       "id": "lib_wa_agent_server_downloadimageasbase64",
-      "community": 24,
+      "community": 6,
       "norm_label": "downloadimageasbase64()"
     },
     {
@@ -7013,7 +7023,7 @@
       "source_location": "L1986",
       "_origin": "ast",
       "id": "lib_wa_agent_server_pickmasterfromcandidates",
-      "community": 24,
+      "community": 6,
       "norm_label": "pickmasterfromcandidates()"
     },
     {
@@ -7033,7 +7043,7 @@
       "source_location": "L2022",
       "_origin": "ast",
       "id": "lib_wa_agent_server_runwaagent",
-      "community": 24,
+      "community": 6,
       "norm_label": "runwaagent()"
     },
     {
@@ -7063,7 +7073,7 @@
       "source_location": "L2887",
       "_origin": "ast",
       "id": "lib_wa_agent_server_buildsystempromptv2",
-      "community": 24,
+      "community": 6,
       "norm_label": "buildsystempromptv2()"
     },
     {
@@ -7083,7 +7093,7 @@
       "source_location": "L2994",
       "_origin": "ast",
       "id": "lib_wa_agent_server_executev2tool",
-      "community": 24,
+      "community": 6,
       "norm_label": "executev2tool()"
     },
     {
@@ -7093,7 +7103,7 @@
       "source_location": "L3094",
       "_origin": "ast",
       "id": "lib_wa_agent_server_runwaagentv2",
-      "community": 24,
+      "community": 6,
       "norm_label": "runwaagentv2()"
     },
     {
@@ -7103,7 +7113,7 @@
       "source_location": "L3239",
       "_origin": "ast",
       "id": "lib_wa_agent_server_greenapisendbuttons",
-      "community": 29,
+      "community": 46,
       "norm_label": "greenapisendbuttons()"
     },
     {
@@ -7113,7 +7123,7 @@
       "source_location": "L3271",
       "_origin": "ast",
       "id": "lib_wa_agent_server_greenapisendinteractivebuttons",
-      "community": 29,
+      "community": 46,
       "norm_label": "greenapisendinteractivebuttons()"
     },
     {
@@ -7123,7 +7133,7 @@
       "source_location": "L3304",
       "_origin": "ast",
       "id": "lib_wa_agent_server_greenapisendlistmessage",
-      "community": 29,
+      "community": 46,
       "norm_label": "greenapisendlistmessage()"
     },
     {
@@ -7383,7 +7393,7 @@
       "source_location": "L3830",
       "_origin": "ast",
       "id": "lib_wa_agent_server_parsedatefromtextv3",
-      "community": 24,
+      "community": 6,
       "norm_label": "parsedatefromtextv3()"
     },
     {
@@ -7393,7 +7403,7 @@
       "source_location": "L3844",
       "_origin": "ast",
       "id": "lib_wa_agent_server_callgeminiv3faq",
-      "community": 29,
+      "community": 46,
       "norm_label": "callgeminiv3faq()"
     },
     {
@@ -7477,6 +7487,26 @@
       "norm_label": "runwaagentv3()"
     },
     {
+      "label": "wa-beauty-knowledge.ts",
+      "file_type": "code",
+      "source_file": "src/lib/wa-beauty-knowledge.ts",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "lib_wa_beauty_knowledge",
+      "community": 24,
+      "norm_label": "wa-beauty-knowledge.ts"
+    },
+    {
+      "label": "BEAUTY_KNOWLEDGE_BASE",
+      "file_type": "code",
+      "source_file": "src/lib/wa-beauty-knowledge.ts",
+      "source_location": "L16",
+      "_origin": "ast",
+      "id": "lib_wa_beauty_knowledge_beauty_knowledge_base",
+      "community": 24,
+      "norm_label": "beauty_knowledge_base"
+    },
+    {
       "label": "wa-check.functions.ts",
       "file_type": "code",
       "source_file": "src/lib/wa-check.functions.ts",
@@ -7523,7 +7553,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "lib_wa_config_functions",
-      "community": 20,
+      "community": 8,
       "norm_label": "wa-config.functions.ts"
     },
     {
@@ -7533,7 +7563,7 @@
       "source_location": "L7",
       "_origin": "ast",
       "id": "lib_wa_config_functions_assertsalonaccess",
-      "community": 20,
+      "community": 8,
       "norm_label": "assertsalonaccess()"
     },
     {
@@ -7543,7 +7573,7 @@
       "source_location": "L16",
       "_origin": "ast",
       "id": "lib_wa_config_functions_publicbaseurl",
-      "community": 20,
+      "community": 8,
       "norm_label": "publicbaseurl()"
     },
     {
@@ -7553,7 +7583,7 @@
       "source_location": "L27",
       "_origin": "ast",
       "id": "lib_wa_config_functions_buildwebhookurls",
-      "community": 20,
+      "community": 8,
       "norm_label": "buildwebhookurls()"
     },
     {
@@ -7563,7 +7593,7 @@
       "source_location": "L36",
       "_origin": "ast",
       "id": "lib_wa_config_functions_gentoken",
-      "community": 20,
+      "community": 8,
       "norm_label": "gentoken()"
     },
     {
@@ -7573,7 +7603,7 @@
       "source_location": "L43",
       "_origin": "ast",
       "id": "lib_wa_config_functions_getwawebhookconfig",
-      "community": 20,
+      "community": 8,
       "norm_label": "getwawebhookconfig"
     },
     {
@@ -7593,7 +7623,7 @@
       "source_location": "L157",
       "_origin": "ast",
       "id": "lib_wa_config_functions_regeneratewawebhooktoken",
-      "community": 20,
+      "community": 8,
       "norm_label": "regeneratewawebhooktoken"
     },
     {
@@ -7773,7 +7803,7 @@
       "source_location": "L129",
       "_origin": "ast",
       "id": "src_routetree_gen_fileroutesbyid",
-      "community": 34,
+      "community": 20,
       "norm_label": "fileroutesbyid"
     },
     {
@@ -7833,7 +7863,7 @@
       "source_location": "L340",
       "_origin": "ast",
       "id": "src_routetree_gen_routetree",
-      "community": 2,
+      "community": 85,
       "norm_label": "routetree"
     },
     {
@@ -7843,7 +7873,7 @@
       "source_location": "L347",
       "_origin": "ast",
       "id": "src_routetree_gen_register",
-      "community": 2,
+      "community": 85,
       "norm_label": "register"
     },
     {
@@ -7853,7 +7883,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_router",
-      "community": 2,
+      "community": 85,
       "norm_label": "router.tsx"
     },
     {
@@ -7863,7 +7893,7 @@
       "source_location": "L5",
       "_origin": "ast",
       "id": "src_router_getrouter",
-      "community": 2,
+      "community": 85,
       "norm_label": "getrouter()"
     },
     {
@@ -7873,7 +7903,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "routes_root",
-      "community": 9,
+      "community": 20,
       "norm_label": "__root.tsx"
     },
     {
@@ -7883,7 +7913,7 @@
       "source_location": "L15",
       "_origin": "ast",
       "id": "routes_root_notfoundcomponent",
-      "community": 9,
+      "community": 20,
       "norm_label": "notfoundcomponent()"
     },
     {
@@ -7893,7 +7923,7 @@
       "source_location": "L37",
       "_origin": "ast",
       "id": "routes_root_errorcomponent",
-      "community": 9,
+      "community": 20,
       "norm_label": "errorcomponent()"
     },
     {
@@ -7903,7 +7933,7 @@
       "source_location": "L72",
       "_origin": "ast",
       "id": "routes_root_route",
-      "community": 34,
+      "community": 20,
       "norm_label": "route"
     },
     {
@@ -7913,7 +7943,7 @@
       "source_location": "L109",
       "_origin": "ast",
       "id": "routes_root_rootshell",
-      "community": 9,
+      "community": 20,
       "norm_label": "rootshell()"
     },
     {
@@ -7923,7 +7953,7 @@
       "source_location": "L123",
       "_origin": "ast",
       "id": "routes_root_rootcomponent",
-      "community": 9,
+      "community": 20,
       "norm_label": "rootcomponent()"
     },
     {
@@ -8553,7 +8583,7 @@
       "source_location": "L88",
       "_origin": "ast",
       "id": "public_wa_cloud_salonid_route",
-      "community": 29,
+      "community": 34,
       "norm_label": "route"
     },
     {
@@ -8673,7 +8703,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "routes_index",
-      "community": 19,
+      "community": 84,
       "norm_label": "index.tsx"
     },
     {
@@ -8683,7 +8713,7 @@
       "source_location": "L10",
       "_origin": "ast",
       "id": "routes_index_route",
-      "community": 19,
+      "community": 84,
       "norm_label": "route"
     },
     {
@@ -8693,7 +8723,7 @@
       "source_location": "L20",
       "_origin": "ast",
       "id": "routes_index_index",
-      "community": 19,
+      "community": 84,
       "norm_label": "index()"
     },
     {
@@ -8703,7 +8733,7 @@
       "source_location": "L67",
       "_origin": "ast",
       "id": "routes_index_landing",
-      "community": 19,
+      "community": 84,
       "norm_label": "landing()"
     },
     {
@@ -8813,7 +8843,7 @@
       "source_location": "L41",
       "_origin": "ast",
       "id": "src_server_fetch",
-      "community": 29,
+      "community": 46,
       "norm_label": "fetch()"
     },
     {
@@ -8823,7 +8853,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_start",
-      "community": 46,
+      "community": 85,
       "norm_label": "start.ts"
     },
     {
@@ -8833,7 +8863,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "src_start_errormiddleware",
-      "community": 46,
+      "community": 85,
       "norm_label": "errormiddleware"
     },
     {
@@ -8843,7 +8873,7 @@
       "source_location": "L21",
       "_origin": "ast",
       "id": "src_start_startinstance",
-      "community": 2,
+      "community": 85,
       "norm_label": "startinstance"
     },
     {
@@ -23182,9 +23212,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L33",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server_getadmin",
-      "target": "supabase_client_server",
-      "confidence_score": 1.0
+      "target": "supabase_client_server"
     },
     {
       "relation": "contains",
@@ -25793,9 +25823,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L13",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server",
-      "target": "lib_wa_agent_server",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server"
     },
     {
       "relation": "imports",
@@ -25804,9 +25834,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L13",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server",
-      "target": "lib_wa_agent_server_builddatemap",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_builddatemap"
     },
     {
       "relation": "imports",
@@ -25815,9 +25845,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L13",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server",
-      "target": "lib_wa_agent_server_callgeminitools",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_callgeminitools"
     },
     {
       "relation": "imports",
@@ -25826,9 +25856,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L13",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server",
-      "target": "lib_wa_agent_server_dbmaster",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_dbmaster"
     },
     {
       "relation": "imports",
@@ -25837,9 +25867,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L13",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server",
-      "target": "lib_wa_agent_server_detectlanguage",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_detectlanguage"
     },
     {
       "relation": "imports",
@@ -25848,9 +25878,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L13",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server",
-      "target": "lib_wa_agent_server_fetchmergedslots",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_fetchmergedslots"
     },
     {
       "relation": "imports",
@@ -25859,9 +25889,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L13",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server",
-      "target": "lib_wa_agent_server_formatdateintz",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_formatdateintz"
     },
     {
       "relation": "imports",
@@ -25870,9 +25900,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L13",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server",
-      "target": "lib_wa_agent_server_formattimeintz",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_formattimeintz"
     },
     {
       "relation": "imports",
@@ -25881,9 +25911,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L13",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server",
-      "target": "lib_wa_agent_server_geminiv2content",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_geminiv2content"
     },
     {
       "relation": "imports",
@@ -25892,9 +25922,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L13",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server",
-      "target": "lib_wa_agent_server_loadaivisibleservicesforsalon",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_loadaivisibleservicesforsalon"
     },
     {
       "relation": "imports",
@@ -25903,9 +25933,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L13",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server",
-      "target": "lib_wa_agent_server_loadmastersforservice",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_loadmastersforservice"
     },
     {
       "relation": "imports",
@@ -25914,9 +25944,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L13",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server",
-      "target": "lib_wa_agent_server_nowintz",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_nowintz"
     },
     {
       "relation": "imports",
@@ -25925,9 +25955,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L13",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server",
-      "target": "lib_wa_agent_server_waagentinput",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_waagentinput"
     },
     {
       "relation": "imports",
@@ -25936,9 +25966,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L13",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server",
-      "target": "lib_wa_agent_server_waagentresult",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_waagentresult"
     },
     {
       "relation": "imports",
@@ -25947,9 +25977,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L13",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server",
-      "target": "lib_wa_agent_server_waagentstate",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_waagentstate"
     },
     {
       "relation": "imports",
@@ -25958,9 +25988,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L13",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server",
-      "target": "lib_wa_agent_server_waagentstatedata",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_waagentstatedata"
     },
     {
       "relation": "contains",
@@ -25968,9 +25998,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L31",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server",
-      "target": "lib_wa_agent_v4_server_adminclient",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_v4_server_adminclient"
     },
     {
       "relation": "contains",
@@ -25978,9 +26008,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L65",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server",
-      "target": "lib_wa_agent_v4_server_buildsystempromptv4",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_v4_server_buildsystempromptv4"
     },
     {
       "relation": "contains",
@@ -25988,9 +26018,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L45",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server",
-      "target": "lib_wa_agent_v4_server_day_labels_ru",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_v4_server_day_labels_ru"
     },
     {
       "relation": "contains",
@@ -25998,9 +26028,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L255",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server",
-      "target": "lib_wa_agent_v4_server_executev4tool",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_v4_server_executev4tool"
     },
     {
       "relation": "contains",
@@ -26008,8 +26038,18 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L32",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server",
-      "target": "lib_wa_agent_v4_server_getadmin",
+      "target": "lib_wa_agent_v4_server_getadmin"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/lib/wa-agent-v4.server.ts",
+      "source_location": "L473",
+      "weight": 1.0,
+      "source": "lib_wa_agent_v4_server",
+      "target": "lib_wa_agent_v4_server_humanizereply",
       "confidence_score": 1.0
     },
     {
@@ -26018,9 +26058,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L239",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server",
-      "target": "lib_wa_agent_v4_server_isslotstillfree",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_v4_server_isslotstillfree"
     },
     {
       "relation": "contains",
@@ -26028,9 +26068,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L55",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server",
-      "target": "lib_wa_agent_v4_server_renderworkinghours",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_v4_server_renderworkinghours"
     },
     {
       "relation": "contains",
@@ -26038,9 +26078,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L452",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server",
-      "target": "lib_wa_agent_v4_server_runwaagentv4",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_v4_server_runwaagentv4"
     },
     {
       "relation": "contains",
@@ -26048,9 +26088,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L132",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server",
-      "target": "lib_wa_agent_v4_server_v4_tool_declarations",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_v4_server_v4_tool_declarations"
     },
     {
       "relation": "contains",
@@ -26058,8 +26098,30 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L231",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server",
-      "target": "lib_wa_agent_v4_server_v4runflags",
+      "target": "lib_wa_agent_v4_server_v4runflags"
+    },
+    {
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "src/lib/wa-agent-v4.server.ts",
+      "source_location": "L30",
+      "weight": 1.0,
+      "source": "lib_wa_agent_v4_server",
+      "target": "lib_wa_beauty_knowledge",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "src/lib/wa-agent-v4.server.ts",
+      "source_location": "L30",
+      "weight": 1.0,
+      "source": "lib_wa_agent_v4_server",
+      "target": "lib_wa_beauty_knowledge_beauty_knowledge_base",
       "confidence_score": 1.0
     },
     {
@@ -26069,9 +26131,9 @@
       "source_file": "src/routes/api/public/wa.$salonId.ts",
       "source_location": "L20",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "public_wa_salonid",
-      "target": "lib_wa_agent_v4_server",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_v4_server"
     },
     {
       "relation": "calls",
@@ -26080,9 +26142,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L453",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server_runwaagentv4",
-      "target": "lib_wa_agent_v4_server_getadmin",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_v4_server_getadmin"
     },
     {
       "relation": "calls",
@@ -26091,9 +26153,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L71",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server_buildsystempromptv4",
-      "target": "lib_wa_agent_v4_server_renderworkinghours",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_v4_server_renderworkinghours"
     },
     {
       "relation": "calls",
@@ -26102,9 +26164,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L68",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server_buildsystempromptv4",
-      "target": "lib_wa_agent_server_builddatemap",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_builddatemap"
     },
     {
       "relation": "calls",
@@ -26113,9 +26175,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L67",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server_buildsystempromptv4",
-      "target": "lib_wa_agent_server_nowintz",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_nowintz"
     },
     {
       "relation": "calls",
@@ -26124,9 +26186,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L519",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server_runwaagentv4",
-      "target": "lib_wa_agent_v4_server_buildsystempromptv4",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_v4_server_buildsystempromptv4"
     },
     {
       "relation": "calls",
@@ -26135,9 +26197,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L332",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server_executev4tool",
-      "target": "lib_wa_agent_v4_server_isslotstillfree",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_v4_server_isslotstillfree"
     },
     {
       "relation": "calls",
@@ -26146,9 +26208,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L311",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server_executev4tool",
-      "target": "lib_wa_agent_server_fetchmergedslots",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_fetchmergedslots"
     },
     {
       "relation": "calls",
@@ -26157,9 +26219,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L373",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server_executev4tool",
-      "target": "lib_wa_agent_server_formatdateintz",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_formatdateintz"
     },
     {
       "relation": "calls",
@@ -26168,9 +26230,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L325",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server_executev4tool",
-      "target": "lib_wa_agent_server_formattimeintz",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_formattimeintz"
     },
     {
       "relation": "calls",
@@ -26179,9 +26241,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L270",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server_executev4tool",
-      "target": "lib_wa_agent_server_loadaivisibleservicesforsalon",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_loadaivisibleservicesforsalon"
     },
     {
       "relation": "calls",
@@ -26190,9 +26252,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L285",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server_executev4tool",
-      "target": "lib_wa_agent_server_loadmastersforservice",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_loadmastersforservice"
     },
     {
       "relation": "calls",
@@ -26201,9 +26263,9 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L295",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server_executev4tool",
-      "target": "lib_wa_agent_server_nowintz",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_nowintz"
     },
     {
       "relation": "calls",
@@ -26212,8 +26274,19 @@
       "source_file": "src/lib/wa-agent-v4.server.ts",
       "source_location": "L554",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_v4_server_runwaagentv4",
-      "target": "lib_wa_agent_v4_server_executev4tool",
+      "target": "lib_wa_agent_v4_server_executev4tool"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/lib/wa-agent-v4.server.ts",
+      "source_location": "L630",
+      "weight": 1.0,
+      "source": "lib_wa_agent_v4_server_runwaagentv4",
+      "target": "lib_wa_agent_v4_server_humanizereply",
       "confidence_score": 1.0
     },
     {
@@ -26256,9 +26329,9 @@
       "source_file": "src/routes/api/public/wa.$salonId.ts",
       "source_location": "L20",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "public_wa_salonid",
-      "target": "lib_wa_agent_v4_server_runwaagentv4",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_v4_server_runwaagentv4"
     },
     {
       "relation": "contains",
@@ -26296,9 +26369,9 @@
       "source_file": "src/lib/wa-agent.server.ts",
       "source_location": "L3678",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_server",
-      "target": "lib_wa_agent_server_backrow",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_backrow"
     },
     {
       "relation": "contains",
@@ -26386,9 +26459,9 @@
       "source_file": "src/lib/wa-agent.server.ts",
       "source_location": "L3783",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_server",
-      "target": "lib_wa_agent_server_buildpostbookingmsg",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_buildpostbookingmsg"
     },
     {
       "relation": "contains",
@@ -26766,9 +26839,9 @@
       "source_file": "src/lib/wa-agent.server.ts",
       "source_location": "L227",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_server",
-      "target": "lib_wa_agent_server_greenapidownloadfile",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_greenapidownloadfile"
     },
     {
       "relation": "contains",
@@ -26826,9 +26899,9 @@
       "source_file": "src/lib/wa-agent.server.ts",
       "source_location": "L397",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_server",
-      "target": "lib_wa_agent_server_greeting_soft_words",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_greeting_soft_words"
     },
     {
       "relation": "contains",
@@ -26886,9 +26959,9 @@
       "source_file": "src/lib/wa-agent.server.ts",
       "source_location": "L453",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_server",
-      "target": "lib_wa_agent_server_islikelynativegreetingrace",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_islikelynativegreetingrace"
     },
     {
       "relation": "contains",
@@ -26906,9 +26979,9 @@
       "source_file": "src/lib/wa-agent.server.ts",
       "source_location": "L418",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_server",
-      "target": "lib_wa_agent_server_ispuregreeting",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_ispuregreeting"
     },
     {
       "relation": "contains",
@@ -27156,9 +27229,9 @@
       "source_file": "src/lib/wa-agent.server.ts",
       "source_location": "L436",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_server",
-      "target": "lib_wa_agent_server_shouldgreetrestart",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_shouldgreetrestart"
     },
     {
       "relation": "contains",
@@ -27196,9 +27269,9 @@
       "source_file": "src/lib/wa-agent.server.ts",
       "source_location": "L1956",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_server",
-      "target": "lib_wa_agent_server_transcribeaudio",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_transcribeaudio"
     },
     {
       "relation": "contains",
@@ -27380,9 +27453,9 @@
       "source_file": "wa-native-greeting-race.test.ts",
       "source_location": "L5",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "wa_native_greeting_race_test",
-      "target": "lib_wa_agent_server",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server"
     },
     {
       "relation": "calls",
@@ -27655,9 +27728,9 @@
       "source_file": "src/routes/api/public/wa.$salonId.ts",
       "source_location": "L5",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "public_wa_salonid",
-      "target": "lib_wa_agent_server_greenapidownloadfile",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_greenapidownloadfile"
     },
     {
       "relation": "calls",
@@ -27886,9 +27959,9 @@
       "source_file": "src/lib/wa-agent.server.ts",
       "source_location": "L419",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_server_ispuregreeting",
-      "target": "lib_wa_agent_server_normalizeformatch",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_normalizeformatch"
     },
     {
       "relation": "calls",
@@ -27897,9 +27970,9 @@
       "source_file": "src/lib/wa-agent.server.ts",
       "source_location": "L437",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_server_shouldgreetrestart",
-      "target": "lib_wa_agent_server_ispuregreeting",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_ispuregreeting"
     },
     {
       "relation": "calls",
@@ -27908,9 +27981,9 @@
       "source_file": "src/lib/wa-agent.server.ts",
       "source_location": "L4070",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_server_runwaagentv3",
-      "target": "lib_wa_agent_server_shouldgreetrestart",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_shouldgreetrestart"
     },
     {
       "relation": "calls",
@@ -27919,9 +27992,9 @@
       "source_file": "src/lib/wa-agent.server.ts",
       "source_location": "L438",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_server_shouldgreetrestart",
-      "target": "lib_wa_agent_server_normalizeformatch",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_normalizeformatch"
     },
     {
       "relation": "imports",
@@ -27930,9 +28003,9 @@
       "source_file": "src/routes/api/public/wa.$salonId.ts",
       "source_location": "L5",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "public_wa_salonid",
-      "target": "lib_wa_agent_server_islikelynativegreetingrace",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_islikelynativegreetingrace"
     },
     {
       "relation": "imports",
@@ -27941,9 +28014,9 @@
       "source_file": "wa-native-greeting-race.test.ts",
       "source_location": "L5",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "wa_native_greeting_race_test",
-      "target": "lib_wa_agent_server_islikelynativegreetingrace",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_islikelynativegreetingrace"
     },
     {
       "relation": "calls",
@@ -28007,9 +28080,9 @@
       "source_file": "src/lib/wa-agent.server.ts",
       "source_location": "L1961",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_server_transcribeaudio",
-      "target": "lib_wa_agent_server_callgemini",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_callgemini"
     },
     {
       "relation": "calls",
@@ -28018,9 +28091,9 @@
       "source_file": "src/lib/wa-agent.server.ts",
       "source_location": "L4000",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_server_translategreetingv3",
-      "target": "lib_wa_agent_server_callgemini",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_callgemini"
     },
     {
       "relation": "calls",
@@ -28458,9 +28531,9 @@
       "source_file": "src/routes/api/public/wa.$salonId.ts",
       "source_location": "L5",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "public_wa_salonid",
-      "target": "lib_wa_agent_server_transcribeaudio",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_transcribeaudio"
     },
     {
       "relation": "calls",
@@ -28843,9 +28916,9 @@
       "source_file": "src/lib/wa-agent.server.ts",
       "source_location": "L3693",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_server_builddatelistmsg",
-      "target": "lib_wa_agent_server_backrow",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_backrow"
     },
     {
       "relation": "calls",
@@ -28854,9 +28927,9 @@
       "source_file": "src/lib/wa-agent.server.ts",
       "source_location": "L3746",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_server_buildmasterlistmsg",
-      "target": "lib_wa_agent_server_backrow",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_backrow"
     },
     {
       "relation": "calls",
@@ -28865,9 +28938,9 @@
       "source_file": "src/lib/wa-agent.server.ts",
       "source_location": "L3730",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_server_buildslotlistmsg",
-      "target": "lib_wa_agent_server_backrow",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_backrow"
     },
     {
       "relation": "calls",
@@ -28931,9 +29004,9 @@
       "source_file": "src/lib/wa-agent.server.ts",
       "source_location": "L5319",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_server_runwaagentv3",
-      "target": "lib_wa_agent_server_buildpostbookingmsg",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_buildpostbookingmsg"
     },
     {
       "relation": "calls",
@@ -29019,9 +29092,9 @@
       "source_file": "src/lib/wa-agent.server.ts",
       "source_location": "L5493",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "lib_wa_agent_server_runwaagentv3",
-      "target": "lib_wa_agent_server_isodateintz",
-      "confidence_score": 1.0
+      "target": "lib_wa_agent_server_isodateintz"
     },
     {
       "relation": "calls",
@@ -29066,6 +29139,16 @@
       "confidence_score": 1.0,
       "source": "public_wa_salonid",
       "target": "lib_wa_agent_server_runwaagentv3"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/lib/wa-beauty-knowledge.ts",
+      "source_location": "L16",
+      "weight": 1.0,
+      "source": "lib_wa_beauty_knowledge",
+      "target": "lib_wa_beauty_knowledge_beauty_knowledge_base",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -31304,9 +31387,9 @@
       "source_file": "wa-agent-v4.scenarios.test.ts",
       "source_location": "L10",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "wa_agent_v4_scenarios_test",
-      "target": "wa_agent_v4_scenarios_test_dbproxy",
-      "confidence_score": 1.0
+      "target": "wa_agent_v4_scenarios_test_dbproxy"
     },
     {
       "relation": "contains",
@@ -31314,9 +31397,9 @@
       "source_file": "wa-agent-v4.scenarios.test.ts",
       "source_location": "L190",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "wa_agent_v4_scenarios_test",
-      "target": "wa_agent_v4_scenarios_test_fc",
-      "confidence_score": 1.0
+      "target": "wa_agent_v4_scenarios_test_fc"
     },
     {
       "relation": "contains",
@@ -31324,9 +31407,9 @@
       "source_file": "wa-agent-v4.scenarios.test.ts",
       "source_location": "L167",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "wa_agent_v4_scenarios_test",
-      "target": "wa_agent_v4_scenarios_test_geminiqueue",
-      "confidence_score": 1.0
+      "target": "wa_agent_v4_scenarios_test_geminiqueue"
     },
     {
       "relation": "contains",
@@ -31334,9 +31417,9 @@
       "source_file": "wa-agent-v4.scenarios.test.ts",
       "source_location": "L168",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "wa_agent_v4_scenarios_test",
-      "target": "wa_agent_v4_scenarios_test_geminirequests",
-      "confidence_score": 1.0
+      "target": "wa_agent_v4_scenarios_test_geminirequests"
     },
     {
       "relation": "contains",
@@ -31344,9 +31427,9 @@
       "source_file": "wa-agent-v4.scenarios.test.ts",
       "source_location": "L27",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "wa_agent_v4_scenarios_test",
-      "target": "wa_agent_v4_scenarios_test_makedb",
-      "confidence_score": 1.0
+      "target": "wa_agent_v4_scenarios_test_makedb"
     },
     {
       "relation": "contains",
@@ -31354,9 +31437,9 @@
       "source_file": "wa-agent-v4.scenarios.test.ts",
       "source_location": "L192",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "wa_agent_v4_scenarios_test",
-      "target": "wa_agent_v4_scenarios_test_makeinput",
-      "confidence_score": 1.0
+      "target": "wa_agent_v4_scenarios_test_makeinput"
     },
     {
       "relation": "contains",
@@ -31364,9 +31447,9 @@
       "source_file": "wa-agent-v4.scenarios.test.ts",
       "source_location": "L23",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "wa_agent_v4_scenarios_test",
-      "target": "wa_agent_v4_scenarios_test_salon",
-      "confidence_score": 1.0
+      "target": "wa_agent_v4_scenarios_test_salon"
     },
     {
       "relation": "contains",
@@ -33631,5 +33714,5 @@
       "source_file": "WA_AGENT_IMPROVEMENTS.md"
     }
   ],
-  "built_at_commit": "0082bd7a86469b5018db08dd7de477aeddd15c93"
+  "built_at_commit": "05ab66847a41ed13a6f35aeba109c045ef2c42a4"
 }

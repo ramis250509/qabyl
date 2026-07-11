@@ -75,7 +75,9 @@ function buildSystemPromptV4(input: WaAgentInput): string {
 
   const lines: string[] = [
     `Ты — старший мастер-консультант и администратор салона красоты «${salon.salonName}». За твоими плечами 20+ лет практики во всех бьюти-услугах: кератин, ботокс и нанопластика для волос, окрашивания и осветления, стрижки, уходовые процедуры, маникюр и педикюр, брови и ресницы. Ты понимаешь нюансы каждой процедуры и умеешь консультировать клиента как живой профессионал.`,
-    `Клиент пишет тебе в WhatsApp. Пиши тепло, живо и по-человечески, как опытный администратор в переписке. Без канцелярита, без markdown, без нумерованных списков и без вариантов вида «1.», «2.», «3.». Никаких меню — только естественный диалог. Эмодзи — максимум один на сообщение. Никогда не говори, что ты бот, ИИ или ассистент.`,
+    `Клиент пишет тебе в WhatsApp. Пиши тепло, живо и по-человечески, как опытный администратор в переписке.`,
+    `КРИТИЧЕСКИ ВАЖНО ПРО ФОРМАТ: пиши ТОЛЬКО сплошным связным текстом, как в живой переписке. СТРОГО ЗАПРЕЩЕНО: списки, пункты, нумерация «1.» «2.» «3.», маркеры «-» и «•», а также любой markdown (никаких звёздочек ** для жирного, никаких #). Даже когда сравниваешь две процедуры — объясни разницу обычными предложениями внутри абзаца, а НЕ списком. Пример правильно: «Тут выбор между ботоксом и кератином: ботокс больше про восстановление и блеск, а кератин — про гладкость и выпрямление. Раз волосы после осветления сухие, я бы начала с ботокса.» Пример неправильно (так НЕ делай): «1. Ботокс… 2. Кератин…».`,
+    `Без канцелярита. Эмодзи — максимум один на сообщение. Никогда не говори, что ты бот, ИИ или ассистент.`,
     `Длина: обычно 2–5 живых предложений. При консультации по процедуре можно чуть подробнее, но не «простыней» — говори по делу, как человек в чате.`,
     `Отвечай на языке клиента (разрешённые языки салона: ${langs}). Кыргызский определяй по словам «салам», «кандай», «бүгүн», «эртең», буквам ң/ү/ө. Не смешивай языки в одном сообщении.`,
     config.tone_instructions
@@ -463,6 +465,45 @@ async function executeV4Tool(
 const REPLY_GREETING_RE =
   /^\s*(здрав|привет|добр|салам|саламат|ассал|ваалейкум|hello|hi\b|hey\b)/iu;
 
+// Guarantee the client never sees markdown or a numbered/bulleted "menu", no matter how the
+// model formats its answer. The prompt forbids both, but LLMs reliably slip into "1. …\n2. …"
+// and **bold** the moment they compare two options — and WhatsApp doesn't render ** anyway, so
+// it would show up as literal asterisks. This strips markdown emphasis and rewrites list items
+// into flowing prose (the owner's explicit requirement: no "1./2./3." and no menus).
+export function humanizeReply(raw: string): string {
+  let t = (raw ?? "").replace(/\r\n/g, "\n");
+  // Markdown emphasis / code / headings that WhatsApp doesn't render.
+  t = t.replace(/\*\*([^*]+)\*\*/g, "$1"); // **bold**
+  t = t.replace(/__([^_]+)__/g, "$1"); // __bold__
+  t = t.replace(/`+([^`]+)`+/g, "$1"); // `code`
+  t = t.replace(/^\s{0,3}#{1,6}\s+/gm, ""); // # heading
+  // Collapse list items (ordered or bulleted) into a single flowing paragraph so it reads like
+  // a person talking, not a menu. A run of adjacent list lines is joined with a space.
+  const listRe = /^\s*(?:\d{1,2}[.)]|[-*•·▪‣]|—)\s+/;
+  const lines = t.split("\n");
+  const out: string[] = [];
+  let buffer: string[] = [];
+  const flush = () => {
+    if (buffer.length) {
+      out.push(buffer.join(" "));
+      buffer = [];
+    }
+  };
+  for (const line of lines) {
+    if (listRe.test(line)) buffer.push(line.replace(listRe, "").trim());
+    else {
+      flush();
+      out.push(line);
+    }
+  }
+  flush();
+  return out
+    .join("\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> {
   const db = await getAdmin();
   const apiKey = process.env.GEMINI_API_KEY ?? "";
@@ -584,6 +625,9 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
         ? "Кечиресиз, дагы бир жолу жазыңызчы."
         : "Извините, напишите, пожалуйста, ещё раз.";
   }
+
+  // Strip markdown and any numbered/bulleted menu the model may have produced (see humanizeReply).
+  reply = humanizeReply(reply);
 
   // First contact: the salon's configured greeting template ALWAYS opens the conversation
   // (owner requirement) — prepend it unless the model already greeted with it.

@@ -1,16 +1,16 @@
-# Graph Report - Qabyl  (2026-07-08)
+# Graph Report - Qabyl  (2026-07-11)
 
 ## Corpus Check
-- 217 files · ~144,150 words
+- 222 files · ~154,778 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1126 nodes · 1994 edges · 89 communities (74 shown, 15 thin omitted)
-- Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 29 edges (avg confidence: 0.86)
+- 1154 nodes · 2071 edges · 86 communities (70 shown, 16 thin omitted)
+- Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 31 edges (avg confidence: 0.85)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `9563039d`
+- Built from commit: `0082bd7a`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -93,22 +93,19 @@
 - [[_COMMUNITY_Community 81|Community 81]]
 - [[_COMMUNITY_Community 82|Community 82]]
 - [[_COMMUNITY_Community 83|Community 83]]
-- [[_COMMUNITY_Community 84|Community 84]]
-- [[_COMMUNITY_Community 85|Community 85]]
 - [[_COMMUNITY_Community 87|Community 87]]
-- [[_COMMUNITY_Community 89|Community 89]]
 - [[_COMMUNITY_Community 90|Community 90]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `cn()` - 72 edges
-2. `runWaAgentV3()` - 37 edges
+2. `runWaAgentV3()` - 40 edges
 3. `supabase` - 26 edges
 4. `Graphify Full Pipeline Skill` - 24 edges
 5. `Button` - 21 edges
 6. `runWaAgent()` - 20 edges
-7. `Card` - 19 edges
-8. `useAuth()` - 18 edges
-9. `fetch()` - 18 edges
+7. `fetch()` - 20 edges
+8. `Card` - 19 edges
+9. `useAuth()` - 18 edges
 10. `compilerOptions` - 17 edges
 
 ## Surprising Connections (you probably didn't know these)
@@ -124,8 +121,8 @@
   WA_AGENT_IMPROVEMENTS.md → .lovable/plan.md
 
 ## Import Cycles
-- 3-file cycle: `src/components/site/SalonSite.tsx -> src/components/site/templates/MinimalTemplate.tsx -> src/components/site/sections.tsx -> src/components/site/SalonSite.tsx`
 - 3-file cycle: `src/components/site/SalonSite.tsx -> src/components/site/templates/PremiumTemplate.tsx -> src/components/site/sections.tsx -> src/components/site/SalonSite.tsx`
+- 3-file cycle: `src/components/site/SalonSite.tsx -> src/components/site/templates/MinimalTemplate.tsx -> src/components/site/sections.tsx -> src/components/site/SalonSite.tsx`
 - 3-file cycle: `src/components/site/SalonSite.tsx -> src/components/site/templates/VividTemplate.tsx -> src/components/site/sections.tsx -> src/components/site/SalonSite.tsx`
 
 ## Hyperedges (group relationships)
@@ -133,11 +130,11 @@
 - **Graphify Extraction Pipeline (AST + semantic + merge)** — graphify_skill_ast_extraction, graphify_skill_semantic_extraction, graphify_skill_extraction_cache [EXTRACTED 1.00]
 - **WA Agent NLP Improvements (fuzzy + intent + yes/no detection)** — wa_agent_improvements_fuzzy_matching, wa_agent_improvements_intent_promotion, wa_agent_improvements_yes_no_detection, wa_agent_improvements_master_name_matching [EXTRACTED 1.00]
 
-## Communities (89 total, 15 thin omitted)
+## Communities (86 total, 16 thin omitted)
 
 ### Community 0 - "Appointment Booking UI"
-Cohesion: 0.12
-Nodes (19): DateQuickPicker(), MoveAppointmentDialog(), DayGrid(), Density, DENSITY_LABEL, DENSITY_ORDER, DragData, HOUR_PX_BY_DENSITY (+11 more)
+Cohesion: 0.05
+Nodes (74): DateQuickPicker(), MoveAppointmentDialog(), BranchFilterBar(), Filters, CalendarPage(), DayGrid(), Density, DENSITY_LABEL (+66 more)
 
 ### Community 1 - "Package Dependencies"
 Cohesion: 0.03
@@ -148,8 +145,8 @@ Cohesion: 0.09
 Nodes (24): getRouter(), AdminCalendarRoute, AdminIndexRoute, AdminNotificationsRoute, AdminRoute, AdminRouteChildren, AdminRouteWithChildren, AdminSalonsIndexRoute (+16 more)
 
 ### Community 3 - "UI Layout Components"
-Cohesion: 0.06
-Nodes (36): Separator, SheetContent, SheetContentProps, SheetDescription, SheetFooter(), SheetHeader(), SheetOverlay, SheetTitle (+28 more)
+Cohesion: 0.05
+Nodes (37): Separator, SheetContent, SheetContentProps, SheetDescription, SheetFooter(), SheetHeader(), SheetOverlay, SheetTitle (+29 more)
 
 ### Community 4 - "Core Platform Architecture"
 Cohesion: 0.07
@@ -160,40 +157,40 @@ Cohesion: 0.11
 Nodes (20): AST Structural Extraction (Part A), Community Detection, Extraction Cache (check_semantic_cache), God Nodes Analysis, Interactive HTML Graph Output, GRAPH_REPORT.md Output, Graphify Full Pipeline Skill, Graphify Query (BFS/DFS traversal) (+12 more)
 
 ### Community 6 - "Notifications & Auth"
-Cohesion: 0.28
-Nodes (14): BUILD_VAPID_PUBLIC_KEY, debugLog(), disablePushSubscription(), EnsurePushOptions, ensurePushSubscription(), getOrRegisterSW(), getVapidPublicKey(), isIos() (+6 more)
+Cohesion: 0.17
+Nodes (11): name, private, scripts, build, build:dev, dev, format, lint (+3 more)
 
 ### Community 7 - "Build Tooling Config"
-Cohesion: 0.07
-Nodes (29): devDependencies, eslint, eslint-config-prettier, @eslint/js, eslint-plugin-prettier, eslint-plugin-react-hooks, eslint-plugin-react-refresh, globals (+21 more)
+Cohesion: 0.11
+Nodes (18): devDependencies, eslint, eslint-config-prettier, @eslint/js, eslint-plugin-prettier, eslint-plugin-react-hooks, eslint-plugin-react-refresh, globals (+10 more)
 
 ### Community 8 - "Branch Staff Management"
-Cohesion: 0.06
-Nodes (30): assertCanManageBranch(), createBranchMaster, listBranchMasters, revokeBranchMaster, WORDS, createSalonAdmin, listSalonAdmins, revokeSalonAdmin (+22 more)
+Cohesion: 0.07
+Nodes (25): assertCanManageBranch(), createBranchMaster, listBranchMasters, revokeBranchMaster, WORDS, createSalonAdmin, listSalonAdmins, revokeSalonAdmin (+17 more)
 
 ### Community 9 - "Salon Public Site"
-Cohesion: 0.08
-Nodes (39): BranchContactsBar(), Ctx, DICT, I18nContext, I18nProvider(), Lang, LanguageSwitcher(), useT() (+31 more)
+Cohesion: 0.06
+Nodes (41): BranchContactsBar(), Ctx, DICT, I18nContext, I18nProvider(), Lang, LanguageSwitcher(), useT() (+33 more)
 
 ### Community 10 - "WA AI Agent Core"
 Cohesion: 0.07
-Nodes (22): AdminClient, cloudApiSend(), cloudApiSendInteractive(), cloudApiSendTemplate(), cloudApiSendText(), DbMaster, Entities, formatTimeInTz() (+14 more)
+Nodes (26): AdminClient, callGemini(), classifyManageIntentV3(), cloudApiSend(), cloudApiSendInteractive(), cloudApiSendTemplate(), cloudApiSendText(), compose() (+18 more)
 
 ### Community 11 - "Salon Admin Config"
 Cohesion: 0.08
-Nodes (16): BranchHours, BranchHoursEditor(), defaultBranchHours(), WEEKDAYS, SalonDayOverridesCard(), BranchDialog(), IntegrationsTab(), SalonEdit() (+8 more)
+Nodes (15): BranchHours, BranchHoursEditor(), defaultBranchHours(), WEEKDAYS, BranchDialog(), IntegrationsTab(), SalonEdit(), SalonScheduleCard() (+7 more)
 
 ### Community 12 - "WA Agent Test Suite"
 Cohesion: 0.09
 Nodes (22): bigMenuSalon(), BRANCHES, branchSalon(), composeSystemInstructions, CONFIG, confirmDraft(), convo(), convoV3() (+14 more)
 
 ### Community 13 - "Salon Site & Reviews"
-Cohesion: 0.20
-Nodes (11): AiAssistantTab(), Assistant, ChatMessage, HistoryMsg, InteractiveMessage, WaSimulator(), WaState, simulateWaMessage (+3 more)
+Cohesion: 0.21
+Nodes (9): SalonShareCard(), ChatMessage, HistoryMsg, InteractiveMessage, WaSimulator(), WaState, simulateWaMessage, Button (+1 more)
 
 ### Community 14 - "Core UI Primitives"
-Cohesion: 0.17
-Nodes (16): cn(), ButtonProps, buttonVariants, Calendar(), CalendarDayButton(), Pagination(), PaginationContent, PaginationEllipsis() (+8 more)
+Cohesion: 0.13
+Nodes (18): cn(), ButtonProps, buttonVariants, Calendar(), CalendarDayButton(), HoverCardContent, Pagination(), PaginationContent (+10 more)
 
 ### Community 15 - "Public Booking Widget"
 Cohesion: 0.17
@@ -216,12 +213,12 @@ Cohesion: 0.17
 Nodes (6): formatDuration(), PublicBooking(), Route, Route, Route, SalonSite()
 
 ### Community 20 - "i18n Translation Layer"
-Cohesion: 0.20
-Nodes (12): ConflictInfo, RestoreTarget, BulkRow, Kind, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription (+4 more)
+Cohesion: 0.22
+Nodes (7): WaAgentState, WaAgentStateData, WaIncomingMessage, buildWebhookUrls(), getWaWebhookConfig, publicBaseUrl(), regenerateWaWebhookToken
 
 ### Community 21 - "UI Utility Components"
-Cohesion: 0.11
-Nodes (12): AccordionContent, AccordionItem, AccordionTrigger, Alert, AlertDescription, AlertTitle, alertVariants, HoverCardContent (+4 more)
+Cohesion: 0.40
+Nodes (4): Alert, AlertDescription, AlertTitle, alertVariants
 
 ### Community 22 - "Carousel Component"
 Cohesion: 0.14
@@ -229,31 +226,31 @@ Nodes (12): Carousel, CarouselApi, CarouselContent, CarouselContext, CarouselCon
 
 ### Community 23 - "Error Handling"
 Cohesion: 0.17
-Nodes (10): AiServiceListEditor(), Override, ServiceRow, Kind, MasterDayOverrides(), Override, AppNotification, supabase (+2 more)
+Nodes (10): Kind, MasterDayOverrides(), Override, BulkRow, Kind, SalonDayOverridesCard(), Label, labelVariants (+2 more)
 
 ### Community 24 - "Date & Time Utils"
-Cohesion: 0.17
-Nodes (16): addDaysISO(), availablePartsToday(), buildDateMap(), clampLanguage(), confidentLanguage(), executeV2Tool(), fetchMergedSlots(), formatDateInTz() (+8 more)
+Cohesion: 0.10
+Nodes (36): addDaysISO(), availablePartsToday(), buildDateMap(), buildSystemPromptV2(), callGeminiTools(), clampLanguage(), confidentLanguage(), DbMaster (+28 more)
 
 ### Community 25 - "Form Components"
 Cohesion: 0.17
 Nodes (9): FormControl, FormDescription, FormFieldContext, FormFieldContextValue, FormItem, FormItemContext, FormItemContextValue, FormLabel (+1 more)
 
 ### Community 26 - "NLP & Intent Classification"
-Cohesion: 0.25
-Nodes (11): classify(), deElongate(), detectLanguage(), deterministicParse(), findServiceByText(), fuzzyHit(), levenshtein(), matchMasterByName() (+3 more)
+Cohesion: 0.22
+Nodes (13): classify(), deElongate(), detectLanguage(), deterministicParse(), findServiceByText(), fuzzyHit(), isPureGreeting(), levenshtein() (+5 more)
 
 ### Community 27 - "Chart UI Components"
 Cohesion: 0.18
 Nodes (7): ChartConfig, ChartContainer, ChartContext, ChartContextProps, ChartLegendContent, ChartTooltipContent, THEMES
 
 ### Community 28 - "WA Chat Management"
-Cohesion: 0.16
-Nodes (13): SalonShareCard(), Conversation, Message, needsHuman(), statusBadge(), WaChatsTab(), Card, CardContent (+5 more)
+Cohesion: 0.29
+Nodes (8): Conversation, Message, needsHuman(), statusBadge(), WaChatsTab(), Badge(), BadgeProps, badgeVariants
 
 ### Community 29 - "WA Agent Types & API"
-Cohesion: 0.16
-Nodes (14): CloudApiCreds, GreenApiCreds, greenApiSendButtons(), greenApiSendInteractiveButtons(), normalizeChatIdToPhone(), renderInteractiveAsText(), WaAgentInput, WaAgentState (+6 more)
+Cohesion: 0.12
+Nodes (20): callGeminiV3Faq(), callViaLovableGateway(), CloudApiCreds, GreenApiCreds, greenApiDownloadFile(), greenApiSendButtons(), greenApiSendFileByUrl(), greenApiSendInteractiveButtons() (+12 more)
 
 ### Community 30 - "Supabase DB Types"
 Cohesion: 0.13
@@ -272,8 +269,8 @@ Cohesion: 0.20
 Nodes (9): DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuShortcut(), DropdownMenuSubContent (+1 more)
 
 ### Community 34 - "WA Config & Access"
-Cohesion: 0.18
-Nodes (11): Route, Route, Route, Route, Route, Route, Route, Route (+3 more)
+Cohesion: 0.17
+Nodes (12): Route, Route, Route, Route, Route, Route, Route, Route (+4 more)
 
 ### Community 35 - "Table UI Component"
 Cohesion: 0.22
@@ -284,8 +281,8 @@ Cohesion: 0.14
 Nodes (13): 10. Технические детали реализации, 11. Файлы, которые меняются, 12. Проверка после имплементации, 13. Что НЕ делаем в этом плане, 1. Архитектурное замечание (важно), 2. Миграция БД (lock + state machine + цена), 3. Секрет, 4. Анти-гонка вебхуков (Green-API часто шлёт два webhook'а параллельно) (+5 more)
 
 ### Community 37 - "Master Day Overrides"
-Cohesion: 0.17
-Nodes (15): buildBranchListMsg(), buildCategoryListMsg(), buildConfirmMsg(), buildDateListMsg(), buildManageActionMsg(), buildManageChoiceMsg(), buildMasterListMsg(), buildServiceListMsg() (+7 more)
+Cohesion: 0.15
+Nodes (18): backRow(), buildBranchListMsg(), buildCategoryListMsg(), buildConfirmMsg(), buildDateListMsg(), buildManageActionMsg(), buildManageChoiceMsg(), buildMasterListMsg() (+10 more)
 
 ### Community 38 - "Web Push Notifications"
 Cohesion: 0.29
@@ -308,16 +305,16 @@ Cohesion: 0.14
 Nodes (13): 1. **Enabled Gemini Thinking Budget** (Line 289), 2. **Increased Intent Classification Temperature** (Line 729), 3. **Improved Service Fuzzy Matching** (Line 438, 444), 4. **Better Master Name Matching** (Line 1269-1280), 5. **Smarter Intent Promotion Logic** (Line 621-632), 6. **Enhanced Yes/No Detection** (Line 508-516), 7. **More Tolerant Time/Part-of-Day Parsing** (Line 491-505), 8. **Slightly Higher Reply Temperature** (Line 819) (+5 more)
 
 ### Community 43 - "Community 43"
-Cohesion: 0.22
-Nodes (4): Route, FileRoutesById, Toaster(), ToasterProps
+Cohesion: 0.25
+Nodes (4): dbProxy, geminiQueue, geminiRequests, SALON
 
 ### Community 44 - "WA Webhook Helpers"
 Cohesion: 0.40
 Nodes (3): corsHeaders, readGreenApiBody(), sendGreenApi()
 
 ### Community 45 - "Community 45"
-Cohesion: 0.40
-Nodes (5): callGemini(), classifyManageIntentV3(), compose(), instructionFallbackReply(), priceFromPhoto()
+Cohesion: 0.50
+Nodes (3): AccordionContent, AccordionItem, AccordionTrigger
 
 ### Community 46 - "OTP Input Component"
 Cohesion: 0.23
@@ -328,16 +325,12 @@ Cohesion: 0.83
 Nodes (4): Qabyl App Icon (512px), Qabyl Brand Identity, Teal-to-Pink Gradient Background, Stylized Q Logo Mark
 
 ### Community 49 - "Avatar UI Component"
-Cohesion: 0.24
-Nodes (9): ReviewsTab(), DAYS, SiteTab(), TEMPLATES, Button, Label, labelVariants, Switch (+1 more)
+Cohesion: 0.14
+Nodes (19): AiAssistantTab(), Assistant, AiServiceListEditor(), Override, ServiceRow, ReviewsTab(), DAYS, SiteTab() (+11 more)
 
 ### Community 50 - "PWA Icons 192px"
 Cohesion: 1.00
 Nodes (3): Qabyl App Icon (192px PWA), Qabyl Brand Identity — Q lettermark with teal-to-pink gradient, Progressive Web App (PWA) Icon Asset 192x192
-
-### Community 61 - "Community 61"
-Cohesion: 0.22
-Nodes (11): BranchFilterBar(), Filters, FullScreenLoader(), LoadingState(), SelectContent, SelectItem, SelectLabel, SelectScrollDownButton (+3 more)
 
 ### Community 62 - "Community 62"
 Cohesion: 0.33
@@ -387,44 +380,32 @@ Nodes (4): BFS Graph Traversal (Query Mode), DFS Graph Traversal (Query Mode), S
 Cohesion: 0.50
 Nodes (3): For --cluster-only, For --update (incremental re-extraction), graphify reference: incremental update and cluster-only
 
-### Community 84 - "Community 84"
-Cohesion: 0.19
-Nodes (14): CalendarPage(), Dashboard(), NotificationsPage(), StatsPage(), AdminBranch, AdminSalon, useAdminFilters(), useNotifications() (+6 more)
-
-### Community 85 - "Community 85"
-Cohesion: 0.18
-Nodes (12): buildSystemPromptV2(), callGeminiTools(), callGeminiV3Faq(), callViaLovableGateway(), downloadImageAsBase64(), getAdmin(), greenApiSendFileByUrl(), greenApiSendListMessage() (+4 more)
-
 ### Community 87 - "Community 87"
 Cohesion: 0.40
 Nodes (4): InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot
-
-### Community 89 - "Community 89"
-Cohesion: 0.32
-Nodes (6): RefreshContext, RefreshContextValue, RefreshFn, RefreshProvider(), useRefreshController(), PullToRefresh()
 
 ### Community 90 - "Community 90"
 Cohesion: 0.50
 Nodes (3): Avatar, AvatarFallback, AvatarImage
 
 ## Knowledge Gaps
-- **529 isolated node(s):** `$schema`, `style`, `rsc`, `tsx`, `css` (+524 more)
+- **535 isolated node(s):** `$schema`, `style`, `rsc`, `tsx`, `css` (+530 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **15 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **16 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `cn()` connect `Core UI Primitives` to `UI Layout Components`, `Salon Admin Config`, `Salon Site & Reviews`, `Menu UI Components`, `i18n Translation Layer`, `UI Utility Components`, `Carousel Component`, `Error Handling`, `Form Components`, `Chart UI Components`, `WA Chat Management`, `Command Palette UI`, `Context Menu UI`, `Dropdown Menu UI`, `Table UI Component`, `Breadcrumb UI`, `Drawer UI Component`, `Navigation Menu UI`, `Avatar UI Component`, `Community 61`, `Community 62`, `Community 87`, `Community 90`?**
-  _High betweenness centrality (0.104) - this node is a cross-community bridge._
-- **Why does `Button` connect `Avatar UI Component` to `Appointment Booking UI`, `UI Layout Components`, `Notifications & Auth`, `Salon Admin Config`, `Salon Site & Reviews`, `Core UI Primitives`, `Public Booking Widget`, `Social & Contact Links`, `i18n Translation Layer`, `Carousel Component`, `Error Handling`, `WA Chat Management`, `Command Palette UI`?**
-  _High betweenness centrality (0.020) - this node is a cross-community bridge._
-- **Why does `supabase` connect `Error Handling` to `Appointment Booking UI`, `Notifications & Auth`, `Salon Public Site`, `Salon Admin Config`, `Salon Site & Reviews`, `OTP Input Component`, `Public Booking Widget`, `Avatar UI Component`, `Social & Contact Links`, `i18n Translation Layer`, `Community 84`, `WA Chat Management`, `Community 61`, `Command Palette UI`?**
-  _High betweenness centrality (0.016) - this node is a cross-community bridge._
+- **Why does `cn()` connect `Core UI Primitives` to `Appointment Booking UI`, `UI Layout Components`, `Salon Admin Config`, `Salon Site & Reviews`, `Menu UI Components`, `UI Utility Components`, `Carousel Component`, `Error Handling`, `Form Components`, `Chart UI Components`, `WA Chat Management`, `Command Palette UI`, `Context Menu UI`, `Dropdown Menu UI`, `Table UI Component`, `Breadcrumb UI`, `Drawer UI Component`, `Navigation Menu UI`, `Community 45`, `Avatar UI Component`, `Community 61`, `Community 62`, `Community 87`, `Community 90`?**
+  _High betweenness centrality (0.103) - this node is a cross-community bridge._
+- **Why does `Button` connect `Salon Site & Reviews` to `Appointment Booking UI`, `UI Layout Components`, `Salon Admin Config`, `Core UI Primitives`, `Public Booking Widget`, `Avatar UI Component`, `Social & Contact Links`, `Carousel Component`, `Error Handling`, `Command Palette UI`?**
+  _High betweenness centrality (0.021) - this node is a cross-community bridge._
+- **Why does `supabase` connect `Avatar UI Component` to `Appointment Booking UI`, `Salon Public Site`, `Salon Admin Config`, `Salon Site & Reviews`, `OTP Input Component`, `Public Booking Widget`, `Social & Contact Links`, `Error Handling`, `WA Chat Management`, `Command Palette UI`?**
+  _High betweenness centrality (0.013) - this node is a cross-community bridge._
 - **What connects `$schema`, `style`, `rsc` to the rest of the system?**
-  _532 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _538 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Appointment Booking UI` be split into smaller, more focused modules?**
-  _Cohesion score 0.12433862433862433 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.050505050505050504 - nodes in this community are weakly interconnected._
 - **Should `Package Dependencies` be split into smaller, more focused modules?**
   _Cohesion score 0.03225806451612903 - nodes in this community are weakly interconnected._
 - **Should `File-Based Routes` be split into smaller, more focused modules?**
