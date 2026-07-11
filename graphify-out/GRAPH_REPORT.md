@@ -1,16 +1,16 @@
 # Graph Report - Qabyl  (2026-07-11)
 
 ## Corpus Check
-- 224 files · ~156,714 words
+- 224 files · ~157,318 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1157 nodes · 2076 edges · 88 communities (72 shown, 16 thin omitted)
+- 1157 nodes · 2076 edges · 87 communities (71 shown, 16 thin omitted)
 - Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 31 edges (avg confidence: 0.85)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `05ab6684`
+- Built from commit: `9a726c9b`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -21,7 +21,6 @@
 - [[_COMMUNITY_UI Layout Components|UI Layout Components]]
 - [[_COMMUNITY_Core Platform Architecture|Core Platform Architecture]]
 - [[_COMMUNITY_Graphify Pipeline|Graphify Pipeline]]
-- [[_COMMUNITY_Notifications & Auth|Notifications & Auth]]
 - [[_COMMUNITY_Build Tooling Config|Build Tooling Config]]
 - [[_COMMUNITY_Branch Staff Management|Branch Staff Management]]
 - [[_COMMUNITY_Salon Public Site|Salon Public Site]]
@@ -124,15 +123,15 @@
 
 ## Import Cycles
 - 3-file cycle: `src/components/site/SalonSite.tsx -> src/components/site/templates/MinimalTemplate.tsx -> src/components/site/sections.tsx -> src/components/site/SalonSite.tsx`
-- 3-file cycle: `src/components/site/SalonSite.tsx -> src/components/site/templates/VividTemplate.tsx -> src/components/site/sections.tsx -> src/components/site/SalonSite.tsx`
 - 3-file cycle: `src/components/site/SalonSite.tsx -> src/components/site/templates/PremiumTemplate.tsx -> src/components/site/sections.tsx -> src/components/site/SalonSite.tsx`
+- 3-file cycle: `src/components/site/SalonSite.tsx -> src/components/site/templates/VividTemplate.tsx -> src/components/site/sections.tsx -> src/components/site/SalonSite.tsx`
 
 ## Hyperedges (group relationships)
 - **WA Agent Core Architecture (state machine + lock + Gemini classifier)** — lovable_plan_state_machine, lovable_plan_advisory_lock, lovable_plan_gemini_intent_classifier [EXTRACTED 0.95]
 - **Graphify Extraction Pipeline (AST + semantic + merge)** — graphify_skill_ast_extraction, graphify_skill_semantic_extraction, graphify_skill_extraction_cache [EXTRACTED 1.00]
 - **WA Agent NLP Improvements (fuzzy + intent + yes/no detection)** — wa_agent_improvements_fuzzy_matching, wa_agent_improvements_intent_promotion, wa_agent_improvements_yes_no_detection, wa_agent_improvements_master_name_matching [EXTRACTED 1.00]
 
-## Communities (88 total, 16 thin omitted)
+## Communities (87 total, 16 thin omitted)
 
 ### Community 0 - "Appointment Booking UI"
 Cohesion: 0.05
@@ -157,10 +156,6 @@ Nodes (35): createServerFn Pattern (server functions), Green-API (WhatsApp Integ
 ### Community 5 - "Graphify Pipeline"
 Cohesion: 0.11
 Nodes (20): AST Structural Extraction (Part A), Community Detection, Extraction Cache (check_semantic_cache), God Nodes Analysis, Interactive HTML Graph Output, GRAPH_REPORT.md Output, Graphify Full Pipeline Skill, Graphify Query (BFS/DFS traversal) (+12 more)
-
-### Community 6 - "Notifications & Auth"
-Cohesion: 0.17
-Nodes (17): addDaysISO(), availablePartsToday(), buildDateMap(), buildSystemPromptV2(), clampLanguage(), confidentLanguage(), downloadImageAsBase64(), executeV2Tool() (+9 more)
 
 ### Community 7 - "Build Tooling Config"
 Cohesion: 0.07
@@ -231,8 +226,8 @@ Cohesion: 0.17
 Nodes (10): Kind, MasterDayOverrides(), Override, BulkRow, Kind, SalonDayOverridesCard(), Label, labelVariants (+2 more)
 
 ### Community 24 - "Date & Time Utils"
-Cohesion: 0.13
-Nodes (21): callGeminiTools(), DbMaster, fetchMergedSlots(), formatDateInTz(), formatTimeInTz(), GeminiV2Content, isInPart(), slotMinutesInTz() (+13 more)
+Cohesion: 0.09
+Nodes (38): addDaysISO(), availablePartsToday(), buildDateMap(), buildSystemPromptV2(), callGeminiTools(), clampLanguage(), confidentLanguage(), DbMaster (+30 more)
 
 ### Community 25 - "Form Components"
 Cohesion: 0.17

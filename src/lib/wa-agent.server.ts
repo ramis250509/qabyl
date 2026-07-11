@@ -150,6 +150,9 @@ export type WaAgentResult = {
   // V3: relay the client's photo to the salon admin (owner_notify_phone) — set when photo
   // pricing confidence stayed low after a retry. The webhook performs the actual send.
   notifyAdmin?: { mediaUrl: string; caption: string };
+  // V4: a plain-text alert the webhook forwards to the salon admin (owner_notify_phone) — set
+  // when the agent escalates a conversation to a live human. The webhook performs the send.
+  notifyAdminText?: string;
 };
 
 export type GreenApiCreds = { instance: string; token: string };

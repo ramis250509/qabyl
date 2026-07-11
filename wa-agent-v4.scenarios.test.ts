@@ -289,7 +289,7 @@ test("занятый слот: create_appointment на несуществующ�
   expect(fr.functionResponse.response.error).toBe("slot_taken");
 });
 
-test("эскалация: escalate_to_human → needs_human в nextStateData", async () => {
+test("эскалация: escalate_to_human → needs_human + notifyAdminText с номером клиента", async () => {
   (globalThis as any).__WA_DB__ = makeDb();
   geminiQueue = [
     [fc("escalate_to_human", { reason: "жалоба" })],
@@ -298,6 +298,17 @@ test("эскалация: escalate_to_human → needs_human в nextStateData", a
   const res = await runWaAgentV4(makeInput("Хочу поговорить с живым человеком!"));
   expect((res.nextStateData as any).needs_human).toBe(true);
   expect(res.reply).toContain("администратору");
+  // Alert for the salon admin's own WhatsApp is prepared (webhook forwards it).
+  expect(res.notifyAdminText).toBeTruthy();
+  expect(res.notifyAdminText).toContain("996700000001"); // client phone from makeInput
+  expect(res.notifyAdminText).toContain("жалоба"); // escalation reason
+});
+
+test("без эскалации notifyAdminText не выставляется", async () => {
+  (globalThis as any).__WA_DB__ = makeDb();
+  geminiQueue = [[{ text: "Здравствуйте! Чем могу помочь?" }]];
+  const res = await runWaAgentV4(makeInput("привет"));
+  expect(res.notifyAdminText).toBeUndefined();
 });
 
 test("шаблонное приветствие салона добавляется к первому ответу", async () => {

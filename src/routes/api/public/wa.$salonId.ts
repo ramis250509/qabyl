@@ -301,6 +301,49 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
           if (dup) return ack();
         }
 
+        // ---- Hidden owner-only test command: "/restart" fully resets the conversation so the
+        // salon owner can re-run the scenario from scratch during testing. Gated to the admin's
+        // own number (owner_notify_phone) so ordinary clients can't discover or trigger it — for
+        // anyone else the command is NOT recognized and simply flows on as a normal message.
+        const ownerNotifyPhone = secrets.owner_notify_phone
+          ? normalizeChatIdToPhone(secrets.owner_notify_phone)
+          : "";
+        if (
+          textBody?.trim().toLowerCase() === "/restart" &&
+          ownerNotifyPhone &&
+          phone === ownerNotifyPhone
+        ) {
+          const resetIso = new Date().toISOString();
+          // Drop any queued-but-unprocessed inbound so the fresh session starts truly clean.
+          await supabaseAdmin
+            .from("wa_messages")
+            .update({ processed_at: resetIso })
+            .eq("conversation_id", convId)
+            .is("processed_at", null);
+          await supabaseAdmin
+            .from("wa_conversations")
+            .update({
+              status: "active",
+              state: "idle",
+              state_data: {},
+              selected_branch_id: null,
+              appointment_id: null,
+              session_started_at: resetIso,
+              ai_paused: false,
+              ai_paused_at: null,
+              last_message_at: resetIso,
+            })
+            .eq("id", convId);
+          if (secrets.greenapi_instance && secrets.greenapi_token) {
+            await greenApiSendMessage(
+              { instance: secrets.greenapi_instance, token: secrets.greenapi_token },
+              chatId,
+              "🔄 Сценарий перезапущен. Можно тестировать заново.",
+            );
+          }
+          return ack();
+        }
+
         // ---- V4: transcribe a voice note into textBody. Runs after webhook dedup so a
         // Green-API retry never pays for a second Gemini transcription. On success the
         // transcript flows through the normal text pipeline (history, agent, admin panel);
@@ -702,6 +745,15 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
                   .from("wa_conversations")
                   .update({ ai_paused: true, ai_paused_at: new Date().toISOString() })
                   .eq("id", convId);
+              }
+            }
+
+            // 5c) V4 escalation: forward a plain-text alert to the salon admin's WhatsApp so
+            // they know a live human is needed (the state update below also pauses the bot).
+            if (result.notifyAdminText && secrets.owner_notify_phone) {
+              const ownerPhone = normalizeChatIdToPhone(secrets.owner_notify_phone);
+              if (ownerPhone) {
+                await greenApiSendMessage(creds, `${ownerPhone}@c.us`, result.notifyAdminText);
               }
             }
 
