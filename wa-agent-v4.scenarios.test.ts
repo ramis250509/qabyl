@@ -580,3 +580,15 @@ test("зависание после «подождите»: агент дожи�
   expect(res.reply).toContain("10:00");
   expect(res.debug.errors).toContain("stall_detected_forcing_completion");
 });
+
+test("стойкое зависание: если модель зависла дважды — вежливый детерминированный ответ", async () => {
+  (globalThis as any).__WA_DB__ = makeDb();
+  geminiQueue = [
+    [{ text: "Секундочку, сейчас проверю расписание." }],
+    [{ text: "Минуточку, подождите немного." }], // и после наджа снова залипла
+  ];
+  const res = await runWaAgentV4(makeInput("на завтра есть время?"));
+  expect(res.reply).not.toMatch(/подожд|сейчас проверю|секундоч|минуточ/i);
+  expect(res.reply).toContain("не удалось получить данные");
+  expect(res.debug.errors).toContain("stall_persisted_using_fallback");
+});

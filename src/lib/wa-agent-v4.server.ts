@@ -83,6 +83,9 @@ function buildSystemPromptV4(input: WaAgentInput): string {
     `ФОРМАТ (СТРОГО): только сплошной связный текст. ЗАПРЕЩЕНЫ списки, пункты, нумерация «1.» «2.» «3.», маркеры «-»/«•» и любой markdown (никаких ** и #). Даже сравнивая две процедуры — пиши обычными предложениями, а не списком. Неправильно: «1. Ботокс… 2. Кератин…». Правильно: «Ботокс — про восстановление и блеск, а кератин — про гладкость. После осветления я бы начала с ботокса.»`,
     `ДЛИНА (ВАЖНО): пиши коротко, как человек в чате. Обычно 1–3 коротких предложения. Если достаточно одного предложения — отвечай одним. Длинные объяснения дроби на короткие мысли, не строчи «простынёй».`,
     `Тепло и по-человечески, без канцелярита. Эмодзи — максимум один на сообщение (часто лучше без). Никогда не говори, что ты бот, ИИ или ассистент.`,
+    ``,
+    `МОЛЧАЛИВОЕ ВЫПОЛНЕНИЕ (КРИТИЧЕСКИ ВАЖНО): никогда не пиши клиенту, что ты сейчас что-то проверяешь/смотришь/уточняешь. ЗАПРЕЩЕНЫ фразы «сейчас проверю», «подождите», «минуточку», «секундочку», «дайте гляну», «азыр текшерип көрөйүн», «бир аз күтө туруңуз». Вместо этого СНАЧАЛА молча выполни все нужные вызовы инструментов (календарь, свободные окна, цена, анализ фото, любые запросы), дождись результата — и только потом отправь клиенту ГОТОВЫЙ ответ. Пусть это займёт на пару секунд дольше — клиент должен видеть результат, а не процесс. У тебя один ответ за ход, поэтому «подождите» = клиент останется без ответа. Так делать нельзя.`,
+    `ЕСЛИ ИНСТРУМЕНТ ВЕРНУЛ ОШИБКУ: не молчи. Вежливо скажи, например «Извините, сейчас не получилось получить данные расписания — попробуйте, пожалуйста, через минуту, или я передам ваш запрос администратору», и при необходимости вызови escalate_to_human. Никогда не оставляй клиента без ответа после начала обработки.`,
     `Отвечай на языке клиента (языки салона: ${langs}). Кыргызский узнавай по «салам», «кандай», «канча», «болобу», «жасайсыз», «бүгүн», «эртең», «эже», «байке», буквам ң/ү/ө; в т.ч. латиницей. Не смешивай языки в одном сообщении.`,
     config.tone_instructions
       ? `ОБЯЗАТЕЛЬНЫЕ правила тона от салона: ${config.tone_instructions}`
@@ -725,30 +728,36 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
 
   let reply = await runToolLoop();
 
-  // Bug fix: the model sometimes answers «сейчас проверю расписание, подождите» WITHOUT calling
-  // any tool, then the turn ends — and since we send exactly one message per webhook turn, the
-  // client is left hanging forever. If the reply is such a stall and no calendar/booking tool
-  // actually ran, force one more pass that must finish the job in the same turn.
+  // The client must NEVER see "сейчас проверю, подождите" and then silence. The model must do
+  // all tool work silently and answer with the finished result. If it instead emits a bare
+  // "wait/checking" message without answering, the turn would end and leave the client hanging
+  // (we send one message per webhook turn). Detect that stall and force a second pass that must
+  // finish the job in the same turn. Fires on ANY such stall, regardless of which tools ran.
   const STALL_RE =
-    /(сейчас проверю|проверю распис|проверю кален|секундоч|минуточ|подожд|ожидайте|одну мин|бир аз(ыраак)?|азыр текшер|текшерип көр|күтө тур|check(ing)? the schedule|one moment|hold on|let me check)/i;
-  const didCalendarWork = debug.actions.some(
-    (a) =>
-      a.startsWith("tool:get_available_slots") ||
-      a.startsWith("tool:check_time") ||
-      a.startsWith("tool:create_appointment"),
-  );
-  if (reply && STALL_RE.test(reply) && !didCalendarWork) {
+    /(сейчас\s+(проверю|гляну|узна|посмотрю)|проверю\s+(распис|кален|свобод|нали)|секундоч|минуточ|минутку|подожд|ожидайте|одну\s+секунд|азыр\s+(текшер|кара)|текшерип\s+көр|күтө\s+тур|бир\s+аз\s+күт|let me check|checking the|one moment|hold on|bear with)/i;
+  if (reply && STALL_RE.test(reply)) {
     debug.errors.push("stall_detected_forcing_completion");
     contents.push({
       role: "user",
       parts: [
         {
-          text: "СИСТЕМА: не пиши «подожди» или «сейчас проверю». Прямо сейчас вызови нужные инструменты (get_available_slots или check_time) и дай клиенту конкретный ответ одним сообщением — свободное время, либо что времени нет.",
+          text: "СИСТЕМА: НЕ пиши «подожди», «сейчас проверю», «минуточку». Прямо сейчас молча вызови все нужные инструменты (get_available_slots / check_time / get_services и т.п.) и пришли клиенту ГОТОВЫЙ ответ одним сообщением. Если инструмент вернул ошибку — вежливо извинись и предложи попробовать позже или передать администратору.",
         },
       ],
     });
     const retry = await runToolLoop();
     if (retry) reply = retry;
+    // Still stalling after the nudge → never leave the client hanging: send a graceful,
+    // deterministic message instead of a bare "подождите".
+    if (!reply || STALL_RE.test(reply)) {
+      debug.errors.push("stall_persisted_using_fallback");
+      reply =
+        language === "ky"
+          ? "Кечиресиз, азыр маалыматты ала алган жокмын. Бир аздан кийин кайра жазып көрүңүз, же сурооңузду администраторго өткөрүп берейин."
+          : language === "en"
+            ? "Sorry, I couldn't fetch the data just now. Please try again in a minute, or I can pass your request to the salon admin."
+            : "К сожалению, сейчас не удалось получить данные. Попробуйте, пожалуйста, ещё раз через минуту — или я передам ваш запрос администратору.";
+    }
   }
 
   if (!reply) {
