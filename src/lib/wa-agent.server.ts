@@ -43,6 +43,9 @@ export type WaAssistantConfig = {
   // V4: free-text salon facts (parking, payment, promos…) injected into the agent's
   // system prompt so it can answer arbitrary questions about the salon.
   knowledge_base?: string | null;
+  // V4: how clients typically address the admin (Айка, Эже, Админ…) — context only, so the
+  // agent recognises such a message is directed at it and doesn't ask "к кому вы обращаетесь?".
+  client_addressing?: string | null;
   // Salon-configured deadline: cancel/reschedule via the bot is refused when the visit
   // starts in less than this many hours (0 / null = no limit, client asked to call the salon).
   manage_cutoff_hours?: number | null;

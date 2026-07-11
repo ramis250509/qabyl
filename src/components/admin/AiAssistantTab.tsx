@@ -25,6 +25,7 @@ type Assistant = {
   manage_cutoff_hours: number;
   engine: "v3" | "v4";
   knowledge_base: string | null;
+  client_addressing: string | null;
 };
 
 const DEFAULT_GREETING =
@@ -54,6 +55,7 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
     manage_cutoff_hours: 0,
     engine: "v3",
     knowledge_base: "",
+    client_addressing: "",
   });
 
   useEffect(() => {
@@ -78,6 +80,7 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
           manage_cutoff_hours: (row as any).manage_cutoff_hours ?? 0,
           engine: (row as any).engine === "v4" ? "v4" : "v3",
           knowledge_base: (row as any).knowledge_base ?? "",
+          client_addressing: (row as any).client_addressing ?? "",
         });
       }
       setLoading(false);
@@ -154,6 +157,7 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
         manage_cutoff_hours: data.manage_cutoff_hours,
         engine: data.engine,
         knowledge_base: data.knowledge_base || null,
+        client_addressing: data.client_addressing || null,
       } as any,
       { onConflict: "salon_id" },
     );
@@ -408,6 +412,24 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
               Только факты о вашем салоне: парковка, оплата, акции, бренды, особенности.
               Общие знания о процедурах (кератин, ботокс, окрашивание, противопоказания,
               уход) у ассистента уже встроены — их сюда добавлять не нужно.
+            </p>
+          </div>
+        )}
+
+        {data.engine === "v4" && (
+          <div className="space-y-2">
+            <Label>Обращения клиентов</Label>
+            <Textarea
+              rows={3}
+              placeholder={"Айка\nАйжан\nЭже\nСестра\nДевочки\nАдмин"}
+              value={data.client_addressing ?? ""}
+              onChange={(e) => setData({ ...data, client_addressing: e.target.value })}
+            />
+            <p className="text-xs text-muted-foreground">
+              Как постоянные клиенты обычно обращаются к администратору (по одному в строке или
+              через запятую). Ассистент поймёт, что такие слова — обращение к нему, и не будет
+              переспрашивать «к кому вы обращаетесь?». В своих ответах эти слова использовать не
+              обязан — поле нужно только для понимания.
             </p>
           </div>
         )}

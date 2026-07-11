@@ -75,7 +75,7 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const [salonResult, assistantResult, branchResult] = await Promise.all([
       supabaseAdmin.from("salons").select("id, name, timezone, working_hours, address").eq("id", data.salonId).maybeSingle(),
-      supabaseAdmin.from("salon_ai_assistant").select("greeting, tone_instructions, pricing_rules, languages, manage_cutoff_hours, engine, knowledge_base").eq("salon_id", data.salonId).maybeSingle(),
+      supabaseAdmin.from("salon_ai_assistant").select("greeting, tone_instructions, pricing_rules, languages, manage_cutoff_hours, engine, knowledge_base, client_addressing").eq("salon_id", data.salonId).maybeSingle(),
       supabaseAdmin.from("branches").select("id, name, address").eq("salon_id", data.salonId).eq("is_active", true).order("sort_order"),
     ]);
 
@@ -122,6 +122,7 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
         languages: (assistant as any)?.languages?.length ? (assistant as any).languages : ["ru"],
         manage_cutoff_hours: (assistant as any)?.manage_cutoff_hours ?? 0,
         knowledge_base: (assistant as any)?.knowledge_base ?? null,
+        client_addressing: (assistant as any)?.client_addressing ?? null,
       },
       client: { phone: "simulator_test", name: "Тест" },
       history: data.history as WaIncomingMessage[],

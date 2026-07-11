@@ -625,6 +625,7 @@ export type Database = {
         Row: {
           ai_category_order: string[]
           ai_hidden_categories: string[]
+          client_addressing: string | null
           created_at: string
           enabled: boolean
           engine: string
@@ -641,6 +642,7 @@ export type Database = {
         Insert: {
           ai_category_order?: string[]
           ai_hidden_categories?: string[]
+          client_addressing?: string | null
           created_at?: string
           enabled?: boolean
           engine?: string
@@ -657,6 +659,7 @@ export type Database = {
         Update: {
           ai_category_order?: string[]
           ai_hidden_categories?: string[]
+          client_addressing?: string | null
           created_at?: string
           enabled?: boolean
           engine?: string

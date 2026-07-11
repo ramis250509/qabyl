@@ -24,7 +24,9 @@ const SALON = { salonId: "salon1", salonName: "Тест салон", timezone: T
 const FREE_SLOT = "2099-01-01T04:00:00.000Z"; // the only slot the mocked RPC ever returns
 
 // ---- In-memory DB mock: only the query shapes V4 actually issues. ----
-function makeDb(opts: { services?: any[]; masters?: any[]; appointments?: any[] } = {}) {
+function makeDb(
+  opts: { services?: any[]; masters?: any[]; appointments?: any[]; daySlots?: string[] } = {},
+) {
   const services = opts.services ?? [
     {
       id: "svc1",
@@ -130,11 +132,16 @@ function makeDb(opts: { services?: any[]; masters?: any[]; appointments?: any[] 
       throw new Error(`unmocked table ${table}`);
     },
     rpc: async (name: string, args: any) => {
-      if (name === "get_available_slots")
+      if (name === "get_available_slots") {
+        const starts = opts.daySlots ?? [FREE_SLOT];
         return {
-          data: [{ slot_start: FREE_SLOT, slot_end: "2099-01-01T05:00:00.000Z" }],
+          data: starts.map((s) => ({
+            slot_start: s,
+            slot_end: new Date(new Date(s).getTime() + 60 * 60 * 1000).toISOString(),
+          })),
           error: null,
         };
+      }
       if (name === "create_appointment") {
         const id = `appt_${appointments.length + 1}`;
         appointments.push({
@@ -506,4 +513,70 @@ test("ответ агента очищается от markdown/списка пе
   expect(res.reply).not.toContain("**");
   expect(res.reply).not.toMatch(/^\s*\d+[.)]\s/m);
   expect(res.reply).toContain("Ботокс");
+});
+
+// --- Bug 1: calendar slots must not be truncated; check_time is authoritative ---
+
+function funcResp(name: string) {
+  const req = geminiRequests[geminiRequests.length - 1];
+  return req.contents
+    .flatMap((c: any) => c.parts)
+    .find((p: any) => p.functionResponse?.name === name)?.functionResponse?.response;
+}
+
+test("get_available_slots возвращает ВЕСЬ день (не обрезает до 8)", async () => {
+  // 20 свободных стартов в один день — раньше список резался до 8, и ИИ думал что день кончается.
+  const daySlots = Array.from({ length: 20 }, (_, i) =>
+    new Date(Date.UTC(2099, 0, 1, 4, i * 15)).toISOString(),
+  );
+  (globalThis as any).__WA_DB__ = makeDb({ daySlots });
+  geminiQueue = [
+    [fc("get_available_slots", { service_id: "svc1", date: "2099-01-01" })],
+    [{ text: "Есть свободное время, что удобнее?" }],
+  ];
+  await runWaAgentV4(makeInput("какое время свободно завтра?"));
+  const resp = funcResp("get_available_slots");
+  expect(resp.free_times.length).toBe(20); // ничего не отрезано
+});
+
+test("check_time: запрошенное время свободно → available true", async () => {
+  (globalThis as any).__WA_DB__ = makeDb(); // FREE_SLOT = 10:00 Bishkek
+  geminiQueue = [
+    [fc("check_time", { service_id: "svc1", date: "2099-01-01", time: "10:00" })],
+    [{ text: "Да, 10:00 свободно, записать?" }],
+  ];
+  await runWaAgentV4(makeInput("10:00 барбы?"));
+  const resp = funcResp("check_time");
+  expect(resp.available).toBe(true);
+  expect(resp.requested).toBe("10:00");
+});
+
+test("check_time: время НЕ в списке → available false, но с ближайшими", async () => {
+  (globalThis as any).__WA_DB__ = makeDb(); // только 10:00 свободно
+  geminiQueue = [
+    [fc("check_time", { service_id: "svc1", date: "2099-01-01", time: "17:00" })],
+    [{ text: "17:00 занято, но есть 10:00 — подойдёт?" }],
+  ];
+  await runWaAgentV4(makeInput("17:00 барбы?"));
+  const resp = funcResp("check_time");
+  expect(resp.available).toBe(false);
+  expect(resp.nearby_free_times).toContain("10:00");
+});
+
+// --- Bug 2: never stall on "подождите" — force completion in the same turn ---
+
+test("зависание после «подождите»: агент дожимает ответ той же репликой", async () => {
+  (globalThis as any).__WA_DB__ = makeDb();
+  geminiQueue = [
+    // 1-й проход: модель «залипла» без вызова инструментов
+    [{ text: "Секундочку, сейчас проверю расписание, подождите немного." }],
+    // после наджа: вызывает инструмент…
+    [fc("get_available_slots", { service_id: "svc1", date: "2099-01-01" })],
+    // …и даёт готовый ответ
+    [{ text: "Есть 10:00 — удобно?" }],
+  ];
+  const res = await runWaAgentV4(makeInput("на завтра есть время?"));
+  expect(res.reply).not.toMatch(/подожд|сейчас проверю|секундоч/i);
+  expect(res.reply).toContain("10:00");
+  expect(res.debug.errors).toContain("stall_detected_forcing_completion");
 });

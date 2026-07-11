@@ -37,7 +37,11 @@ async function getAdmin() {
 
 const MAX_TOOL_ITERS = 8;
 const HISTORY_CAP = 30; // Gemini contents kept in state_data.v4_history between turns
-const SLOTS_LIMIT = 8;
+// The agent must see the WHOLE day's free start-times, not a truncated head of the list.
+// A capped list (was 8) made the model think a full working day ended at 11:45 and wrongly
+// tell clients that later times like 17:00 were "занято". 64 covers any realistic salon day
+// even at 15-minute granularity; the model is told to SHOW only a few, well-spaced options.
+const DAY_SLOT_CAP = 64;
 
 // ============================================================
 // System prompt
@@ -97,6 +101,9 @@ function buildSystemPromptV4(input: WaAgentInput): string {
     config.knowledge_base
       ? `ФАКТЫ ОБ ЭТОМ САЛОНЕ (правила, гарантия, материалы, для детей, акции — используй их естественно, когда уместно):\n${config.knowledge_base}`
       : "",
+    config.client_addressing?.trim()
+      ? `КАК К ТЕБЕ ОБРАЩАЮТСЯ КЛИЕНТЫ: ${config.client_addressing.trim().replace(/\s*\n\s*/g, ", ")}. Если клиент пишет одно из этих слов (или похожее обращение) — он обращается ИМЕННО К ТЕБЕ, администратору. Не переспрашивай «к кому вы обращаетесь?» и не проси уточнить — просто продолжай диалог естественно. Сам эти слова в ответах использовать не обязан.`
+      : "",
     ``,
     `ТВОЯ ЭКСПЕРТНАЯ БАЗА ЗНАНИЙ (общие знания о процедурах для консультации, это НЕ прайс салона):`,
     BEAUTY_KNOWLEDGE_BASE,
@@ -129,9 +136,12 @@ function buildSystemPromptV4(input: WaAgentInput): string {
     ``,
     `КОГДА КЛИЕНТ ГОТОВ ЗАПИСАТЬСЯ (не раньше):`,
     branches.length > 1 ? `- Если филиал не выбран — уточни, куда удобнее.` : "",
-    `- Узнай день (и при желании время суток), вызови get_available_slots, предложи 2–4 времени словами в одной фразе («Есть 10:00, 12:30 и 16:00 — что удобнее?»).`,
+    `- РАБОТА С КАЛЕНДАРЁМ (СТРОГО): о свободном времени говори ТОЛЬКО по данным инструментов, никогда не угадывай. Спросил про день — вызови get_available_slots на эту дату. Клиент назвал КОНКРЕТНЫЙ час («17:00 барбы?») — вызови check_time на эту дату и час и ответь по факту. НИКОГДА не говори, что время занято, пока не проверил его инструментом; если инструмент показал время свободным — оно свободно.`,
+    `- get_available_slots возвращает ПОЛНЫЙ список свободных времён начала на дату (учитывает длительность процедуры и занятость). Если времени там нет — оно занято или не помещается по длительности.`,
+    `- Клиенту показывай не весь список, а 2–4 удобно РАЗНЕСЁННЫХ варианта (например утро, день, вечер), а не подряд через 15 минут. Пример: «Есть 10:00, 13:00 и 16:00 — что удобнее?»`,
     `- Мастеров несколько и клиенту важно — предложи выбор (get_masters); «всё равно» — выбери сам.`,
     `- Узнай имя (если не знаешь), повтори детали одной фразой (услуга, дата, время, мастер, цена) и дождись явного «да». Только тогда вызови create_appointment, коротко поздравь и напомни адрес.`,
+    `- НИКОГДА не пиши «сейчас проверю», «подождите», «минуточку». У тебя один ответ за ход: сразу вызови инструменты и дай готовый ответ (свободное время, либо что времени нет, либо что не получилось получить расписание). Диалог не должен обрываться на «подождите».`,
     ``,
     `УПРАВЛЕНИЕ ЗАПИСЬЮ: «отменить/перенести» → get_my_appointments, уточни какую, подтверди «да», затем cancel_appointment / reschedule_appointment (для переноса сперва подбери время).`,
     cutoff > 0
@@ -191,6 +201,22 @@ const V4_TOOL_DECLARATIONS = [
         },
       },
       required: ["service_id", "date"],
+    },
+  },
+  {
+    name: "check_time",
+    description:
+      "Проверить, свободно ли КОНКРЕТНОЕ время на дату (когда клиент называет час, напр. «17:00 барбы?»). Возвращает точный ответ да/нет из календаря и ближайшие свободные времена. Всегда используй это, прежде чем сказать, что время занято.",
+    parameters: {
+      type: "object",
+      properties: {
+        service_id: { type: "string" },
+        date: { type: "string", description: "YYYY-MM-DD из таблицы дат" },
+        time: { type: "string", description: "Час в формате HH:MM, напр. 17:00" },
+        master_id: { type: "string", description: "Конкретный мастер (необязательно)" },
+        branch_id: { type: "string", description: "ID филиала (если выбран)" },
+      },
+      required: ["service_id", "date", "time"],
     },
   },
   {
@@ -284,6 +310,45 @@ async function isSlotStillFree(
   return (data ?? []).some((s: any) => new Date(s.slot_start).getTime() === target);
 }
 
+// Load the FULL list of free start-times for a service on a date (all masters merged, or a
+// specific master). Used by both get_available_slots and check_time so both see the same
+// authoritative, non-truncated calendar data. "today" excludes past times.
+async function loadFreeSlotsForDay(opts: {
+  db: AdminClient;
+  input: WaAgentInput;
+  serviceId: string;
+  date: string;
+  part?: "morning" | "afternoon" | "evening";
+  masterId?: string | null;
+  branchId?: string | null;
+}): Promise<Awaited<ReturnType<typeof fetchMergedSlots>>> {
+  const tz = opts.input.salon.timezone;
+  const { isoLocalDate } = nowInTz(tz);
+  const minStart = opts.date === isoLocalDate ? new Date() : undefined;
+  let masters: DbMaster[];
+  if (opts.masterId) {
+    masters = [{ id: opts.masterId, name: "", branch_id: null, sort_order: 0, service_ids: [] }];
+  } else {
+    masters = await loadMastersForService(
+      opts.db,
+      opts.input.salon.salonId,
+      opts.serviceId,
+      opts.branchId ?? opts.input.selectedBranchId ?? null,
+    );
+  }
+  if (masters.length === 0) return [];
+  return fetchMergedSlots({
+    db: opts.db,
+    masters,
+    serviceId: opts.serviceId,
+    day: opts.date,
+    tz,
+    part: opts.part,
+    minStartTime: minStart,
+    limit: DAY_SLOT_CAP,
+  });
+}
+
 async function executeV4Tool(
   name: string,
   args: Record<string, any>,
@@ -324,39 +389,55 @@ async function executeV4Tool(
     }
 
     case "get_available_slots": {
-      const { isoLocalDate } = nowInTz(tz);
-      const minStart = args.date === isoLocalDate ? new Date() : undefined;
-      let masters: DbMaster[];
-      if (args.master_id) {
-        masters = [
-          { id: args.master_id, name: "", branch_id: null, sort_order: 0, service_ids: [] },
-        ];
-      } else {
-        masters = await loadMastersForService(
-          db,
-          input.salon.salonId,
-          args.service_id as string,
-          (args.branch_id as string | null) ?? flags.selectedBranchId ?? null,
-        );
-      }
-      if (masters.length === 0) return { date: args.date, slots: [], note: "нет мастеров на эту услугу" };
-      const slots = await fetchMergedSlots({
+      const slots = await loadFreeSlotsForDay({
         db,
-        masters,
+        input,
         serviceId: args.service_id as string,
-        day: args.date as string,
-        tz,
+        date: args.date as string,
         part: args.part_of_day as any,
-        minStartTime: minStart,
-        limit: SLOTS_LIMIT,
+        masterId: (args.master_id as string) || undefined,
+        branchId: (args.branch_id as string | null) ?? flags.selectedBranchId ?? null,
       });
+      const times = slots.map((s) => formatTimeInTz(s.start, tz));
       return {
         date: args.date,
+        // Full, non-truncated list of free start-times for this date. If a time is NOT here,
+        // it is genuinely unavailable (booked or doesn't fit the service duration).
+        free_times: times,
         slots: slots.map((s) => ({
           start: s.start,
           time: formatTimeInTz(s.start, tz),
           master_ids: s.master_ids,
         })),
+        note:
+          slots.length === 0
+            ? "На эту дату свободного времени нет."
+            : "Это ПОЛНЫЙ список свободных времён начала на эту дату. Клиенту покажи 2–4 удобно расставленных варианта, а не все подряд.",
+      };
+    }
+
+    case "check_time": {
+      // Definitive yes/no for a specific requested time (e.g. «17:00 барбы?»). Never guess —
+      // this returns the truth from the calendar, plus nearby free times if it's taken.
+      const m = String(args.time ?? "").match(/(\d{1,2})[:.\s]*(\d{2})?/);
+      if (!m) return { available: false, error: "не понял время" };
+      const hhmm = `${String(Number(m[1])).padStart(2, "0")}:${m[2] ?? "00"}`;
+      const slots = await loadFreeSlotsForDay({
+        db,
+        input,
+        serviceId: args.service_id as string,
+        date: args.date as string,
+        masterId: (args.master_id as string) || undefined,
+        branchId: (args.branch_id as string | null) ?? flags.selectedBranchId ?? null,
+      });
+      const times = slots.map((s) => formatTimeInTz(s.start, tz));
+      const hit = slots.find((s) => formatTimeInTz(s.start, tz) === hhmm);
+      return {
+        requested: hhmm,
+        date: args.date,
+        available: Boolean(hit),
+        ...(hit ? { slot_start: hit.start, master_ids: hit.master_ids } : {}),
+        nearby_free_times: times.slice(0, 8),
       };
     }
 
@@ -592,48 +673,82 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   const systemPrompt = buildSystemPromptV4(input);
   const contents: GeminiV2Content[] = [...v4History, { role: "user", parts: clientParts }];
 
-  let reply = "";
-  for (let iter = 0; iter < MAX_TOOL_ITERS; iter++) {
-    const res = await callGeminiTools({
-      apiKey,
-      systemInstruction: systemPrompt,
-      contents,
-      tools: V4_TOOL_DECLARATIONS,
-    });
+  // One agentic pass: loop tool-calls until the model returns a plain-text reply. Mutates
+  // `contents`, `debug` and `flags`. Returned separately so we can run a second pass if the
+  // model stalls (see below).
+  const runToolLoop = async (): Promise<string> => {
+    let r = "";
+    for (let iter = 0; iter < MAX_TOOL_ITERS; iter++) {
+      const res = await callGeminiTools({
+        apiKey,
+        systemInstruction: systemPrompt,
+        contents,
+        tools: V4_TOOL_DECLARATIONS,
+      });
 
-    if (!res.ok || !res.parts) {
-      debug.errors.push(`gemini_tools iter${iter}: ${res.error ?? "no parts"}`);
-      reply =
-        language === "ky"
-          ? "Кечиресиз, техникалык ката болду. Бир аздан кийин кайра жазыңызчы 🙏"
-          : "Извините, произошла техническая ошибка. Напишите, пожалуйста, чуть позже 🙏";
-      break;
-    }
-
-    contents.push({ role: "model", parts: res.parts });
-    const functionCalls = res.parts.filter((p: any) => p.functionCall);
-    const textPart = res.parts.find((p: any) => typeof p.text === "string" && p.text.trim());
-
-    if (functionCalls.length === 0) {
-      reply = textPart?.text?.trim() ?? "";
-      break;
-    }
-
-    const toolResults: any[] = [];
-    for (const part of functionCalls) {
-      const { name, args } = part.functionCall as { name: string; args: Record<string, any> };
-      debug.actions.push(`tool:${name}`);
-      try {
-        const result = await executeV4Tool(name, args ?? {}, input, db, flags);
-        toolResults.push({ functionResponse: { name, response: result } });
-      } catch (e: any) {
-        debug.errors.push(`tool_${name}: ${e?.message ?? String(e)}`);
-        toolResults.push({
-          functionResponse: { name, response: { error: e?.message ?? "failed" } },
-        });
+      if (!res.ok || !res.parts) {
+        debug.errors.push(`gemini_tools iter${iter}: ${res.error ?? "no parts"}`);
+        r =
+          language === "ky"
+            ? "Кечиресиз, техникалык ката болду. Бир аздан кийин кайра жазыңызчы 🙏"
+            : "Извините, произошла техническая ошибка. Напишите, пожалуйста, чуть позже 🙏";
+        break;
       }
+
+      contents.push({ role: "model", parts: res.parts });
+      const functionCalls = res.parts.filter((p: any) => p.functionCall);
+      const textPart = res.parts.find((p: any) => typeof p.text === "string" && p.text.trim());
+
+      if (functionCalls.length === 0) {
+        r = textPart?.text?.trim() ?? "";
+        break;
+      }
+
+      const toolResults: any[] = [];
+      for (const part of functionCalls) {
+        const { name, args } = part.functionCall as { name: string; args: Record<string, any> };
+        debug.actions.push(`tool:${name}`);
+        try {
+          const result = await executeV4Tool(name, args ?? {}, input, db, flags);
+          toolResults.push({ functionResponse: { name, response: result } });
+        } catch (e: any) {
+          debug.errors.push(`tool_${name}: ${e?.message ?? String(e)}`);
+          toolResults.push({
+            functionResponse: { name, response: { error: e?.message ?? "failed" } },
+          });
+        }
+      }
+      contents.push({ role: "user", parts: toolResults });
     }
-    contents.push({ role: "user", parts: toolResults });
+    return r;
+  };
+
+  let reply = await runToolLoop();
+
+  // Bug fix: the model sometimes answers «сейчас проверю расписание, подождите» WITHOUT calling
+  // any tool, then the turn ends — and since we send exactly one message per webhook turn, the
+  // client is left hanging forever. If the reply is such a stall and no calendar/booking tool
+  // actually ran, force one more pass that must finish the job in the same turn.
+  const STALL_RE =
+    /(сейчас проверю|проверю распис|проверю кален|секундоч|минуточ|подожд|ожидайте|одну мин|бир аз(ыраак)?|азыр текшер|текшерип көр|күтө тур|check(ing)? the schedule|one moment|hold on|let me check)/i;
+  const didCalendarWork = debug.actions.some(
+    (a) =>
+      a.startsWith("tool:get_available_slots") ||
+      a.startsWith("tool:check_time") ||
+      a.startsWith("tool:create_appointment"),
+  );
+  if (reply && STALL_RE.test(reply) && !didCalendarWork) {
+    debug.errors.push("stall_detected_forcing_completion");
+    contents.push({
+      role: "user",
+      parts: [
+        {
+          text: "СИСТЕМА: не пиши «подожди» или «сейчас проверю». Прямо сейчас вызови нужные инструменты (get_available_slots или check_time) и дай клиенту конкретный ответ одним сообщением — свободное время, либо что времени нет.",
+        },
+      ],
+    });
+    const retry = await runToolLoop();
+    if (retry) reply = retry;
   }
 
   if (!reply) {
