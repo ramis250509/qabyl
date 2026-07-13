@@ -10,8 +10,8 @@ import { FullScreenLoader } from "@/components/ui/loading-state";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Qabyl — онлайн-запись для салонов красоты" },
-      { name: "description", content: "Qabyl: платформа онлайн-записи с WhatsApp-уведомлениями для салонов красоты" },
+      { title: "Qabyl — онлайн-запись" },
+      { name: "description", content: "Qabyl: платформа онлайн-записи с WhatsApp-уведомлениями для сферы услуг" },
     ],
   }),
   component: Index,
@@ -80,11 +80,12 @@ function Landing() {
       <main className="container mx-auto px-4 py-20">
         <div className="text-center max-w-3xl mx-auto">
           <h1 className="text-5xl font-bold tracking-tight">
-            Онлайн-запись для салонов красоты
+            Онлайн-запись для вашего бизнеса
           </h1>
           <p className="mt-6 text-xl text-muted-foreground">
-            Управляйте записями десятков салонов из одной панели. WhatsApp-подтверждения,
-            календарь мастеров, отчёты — всё в одном месте.
+            Управляйте записями из одной панели: салоны красоты, барбершопы, массаж,
+            косметология, клиники и другие услуги. WhatsApp-подтверждения, календарь
+            специалистов, отчёты — всё в одном месте.
           </p>
           <div className="mt-8 flex gap-3 justify-center">
             <Link to="/admin"><Button size="lg">Перейти в панель</Button></Link>
@@ -94,7 +95,7 @@ function Landing() {
         <div className="grid md:grid-cols-4 gap-4 mt-20">
           {[
             { icon: Calendar, title: "Календарь мастеров", desc: "День/неделя, drag-and-drop" },
-            { icon: Users, title: "Мульти-салон", desc: "Один кабинет, много салонов" },
+            { icon: Users, title: "Мульти-бизнес", desc: "Один кабинет, много точек" },
             { icon: MessageCircle, title: "WhatsApp", desc: "Автоподтверждение записей" },
             { icon: BarChart3, title: "Статистика", desc: "Выручка, загрузка, ТОП" },
           ].map((f) => (
@@ -112,7 +113,7 @@ function Landing() {
           <div>
             <div className="text-lg font-semibold">Qabyl</div>
             <p className="mt-2 max-w-sm text-sm text-muted-foreground">
-              Платформа онлайн-записи для салонов красоты с WhatsApp-уведомлениями.
+              Платформа онлайн-записи для сферы услуг с WhatsApp-уведомлениями.
             </p>
             <p className="mt-4 text-sm">
               <Link to="/privacy" className="text-muted-foreground underline hover:text-foreground">

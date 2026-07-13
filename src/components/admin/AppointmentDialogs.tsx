@@ -113,6 +113,98 @@ function TimeScroller({ value, onChange }: { value: string; onChange: (v: string
   );
 }
 
+/**
+ * Показывает ТОЛЬКО свободные окна начала для выбранного мастера/услуги/даты.
+ * Использует ту же серверную RPC `get_available_slots`, что и публичный виджет
+ * записи (учитывает расписание мастера, длительность услуги+буфер, занятость,
+ * рабочие часы и закрытие салона). Занятое/нерабочее время не показывается.
+ */
+function FreeSlotPicker({
+  masterId,
+  serviceId,
+  dayKey,
+  tz,
+  value,
+  onChange,
+}: {
+  masterId: string;
+  serviceId: string;
+  dayKey: string;
+  tz: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [slots, setSlots] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!masterId || !serviceId || !dayKey) {
+      setSlots([]);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    supabase
+      .rpc("get_available_slots", {
+        _master_id: masterId,
+        _service_id: serviceId,
+        _date: dayKey,
+      })
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          setSlots([]);
+          setLoading(false);
+          return;
+        }
+        const times = (data ?? [])
+          .map((r: any) =>
+            formatInTz(new Date(r.slot_start), tz, {
+              hour: "2-digit",
+              minute: "2-digit",
+              hourCycle: "h23",
+            }),
+          )
+          .filter((v: string, i: number, a: string[]) => a.indexOf(v) === i);
+        setSlots(times);
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [masterId, serviceId, dayKey, tz]);
+
+  if (!masterId || !serviceId) {
+    return <p className="text-sm text-muted-foreground">Сначала выберите мастера и услугу.</p>;
+  }
+  if (loading) {
+    return <p className="text-sm text-muted-foreground">Загрузка свободного времени…</p>;
+  }
+  if (slots.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        На эту дату нет свободных окон. Выберите другую дату или введите время вручную.
+      </p>
+    );
+  }
+  return (
+    <div className="grid grid-cols-4 gap-2 sm:grid-cols-5">
+      {slots.map((t) => (
+        <Button
+          key={t}
+          type="button"
+          size="sm"
+          variant={value === t ? "default" : "outline"}
+          className="font-mono"
+          onClick={() => onChange(t)}
+        >
+          {t}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
 /* ============================= Create Appointment ============================= */
 
 export function CreateAppointmentDialog({
@@ -138,7 +230,10 @@ export function CreateAppointmentDialog({
   const [masterId, setMasterId] = useState("");
   const [serviceId, setServiceId] = useState("");
   const [dayKey, setDayKey] = useState(defaultDayKey);
-  const [time, setTime] = useState("10:00");
+  const [time, setTime] = useState("");
+  // false → выбор из свободных окон (по умолчанию); true → ручной ввод любого
+  // времени для walk-in / записи вне графика.
+  const [manualTime, setManualTime] = useState(false);
   const [clientName, setClientName] = useState("");
   const [clientPhone, setClientPhone] = useState("");
   const [notes, setNotes] = useState("");
@@ -158,6 +253,12 @@ export function CreateAppointmentDialog({
     setNotes("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // В режиме свободных окон сбрасываем выбранное время при смене мастера/услуги/даты,
+  // чтобы устаревший выбор из другого набора слотов не «залипал».
+  useEffect(() => {
+    if (!manualTime) setTime("");
+  }, [masterId, serviceId, dayKey, manualTime]);
 
   useEffect(() => {
     if (!open || !salonId) return;
@@ -205,6 +306,7 @@ export function CreateAppointmentDialog({
 
   async function submit() {
     if (!masterId || !serviceId) return toast.error("Выберите мастера и услугу");
+    if (!time) return toast.error("Выберите время");
     if (clientName.trim().length === 0) return toast.error("Укажите имя клиента");
     if (clientPhone.trim().length < 5) return toast.error("Укажите телефон");
     const [hh, mm] = time.split(":").map(Number);
@@ -298,8 +400,35 @@ export function CreateAppointmentDialog({
             <DateQuickPicker dayKey={dayKey} setDayKey={setDayKey} tz={tz} />
           </div>
           <div className="space-y-2">
-            <Label>Время</Label>
-            <TimeScroller value={time} onChange={setTime} />
+            <div className="flex items-center justify-between">
+              <Label>Время</Label>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-auto px-2 py-1 text-xs"
+                onClick={() => {
+                  // Переключаясь на ручной ввод с пустым временем — ставим дефолт,
+                  // чтобы селектор не был пустым.
+                  if (!manualTime && !time) setTime("10:00");
+                  setManualTime((v) => !v);
+                }}
+              >
+                {manualTime ? "Выбрать из свободных" : "Ввести вручную"}
+              </Button>
+            </div>
+            {manualTime ? (
+              <TimeScroller value={time} onChange={setTime} />
+            ) : (
+              <FreeSlotPicker
+                masterId={masterId}
+                serviceId={serviceId}
+                dayKey={dayKey}
+                tz={tz}
+                value={time}
+                onChange={setTime}
+              />
+            )}
           </div>
           <div>
             <Label>Имя клиента</Label>
@@ -347,29 +476,25 @@ export function MoveAppointmentDialog({
   const open = !!appt;
   const initial = appt ? new Date(appt.starts_at) : null;
   const [dayKey, setDayKey] = useState<string>("");
-  const [time, setTime] = useState<string>("10:00");
+  const [time, setTime] = useState<string>("");
+  const [manualTime, setManualTime] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!appt) return;
+    setManualTime(false);
+    setTime("");
     setDayKey(dayKeyInTz(appt.starts_at, tz));
-    const parts = new Intl.DateTimeFormat("en-GB", {
-      timeZone: tz,
-      hourCycle: "h23",
-      hour: "2-digit",
-      minute: "2-digit",
-    }).formatToParts(new Date(appt.starts_at));
-    const h = parts.find((p) => p.type === "hour")?.value ?? "10";
-    const m = parts.find((p) => p.type === "minute")?.value ?? "00";
-    // snap to 15-min
-    const total = Number(h) * 60 + Math.round(Number(m) / 15) * 15;
-    setTime(
-      `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`,
-    );
   }, [appt, tz]);
+
+  // В режиме свободных окон сбрасываем выбор при смене даты.
+  useEffect(() => {
+    if (!manualTime) setTime("");
+  }, [dayKey, manualTime]);
 
   async function submit() {
     if (!appt || !dayKey) return;
+    if (!time) return toast.error("Выберите время");
     const [hh, mm] = time.split(":").map(Number);
     const [y, mo, da] = dayKey.split("-").map(Number);
     const start = zonedTimeToUtc(y, mo, da, hh, mm, tz);
@@ -408,8 +533,33 @@ export function MoveAppointmentDialog({
               <DateQuickPicker dayKey={dayKey} setDayKey={setDayKey} tz={tz} />
             </div>
             <div className="space-y-2">
-              <Label>Новое время</Label>
-              <TimeScroller value={time} onChange={setTime} />
+              <div className="flex items-center justify-between">
+                <Label>Новое время</Label>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-auto px-2 py-1 text-xs"
+                  onClick={() => {
+                    if (!manualTime && !time) setTime("10:00");
+                    setManualTime((v) => !v);
+                  }}
+                >
+                  {manualTime ? "Выбрать из свободных" : "Ввести вручную"}
+                </Button>
+              </div>
+              {manualTime ? (
+                <TimeScroller value={time} onChange={setTime} />
+              ) : (
+                <FreeSlotPicker
+                  masterId={appt.master_id}
+                  serviceId={appt.service_id}
+                  dayKey={dayKey}
+                  tz={tz}
+                  value={time}
+                  onChange={setTime}
+                />
+              )}
             </div>
             <div className="flex justify-end gap-2 pt-1">
               <Button variant="outline" onClick={() => onOpenChange(false)}>

@@ -11,9 +11,14 @@ interface RefreshContextValue {
 
 const RefreshContext = createContext<RefreshContextValue | null>(null);
 
+// Как долго данные считаются «свежими». Возврат на вкладку раньше этого порога
+// ничего не перезагружает (нативное ощущение); дольше — тихо синхронизируем.
+const STALE_AFTER_MS = 10 * 60 * 1000; // 10 минут
+
 export function RefreshProvider({ children }: { children: React.ReactNode }) {
   const handlers = useRef<Set<RefreshFn>>(new Set());
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const lastRefreshAt = useRef<number>(Date.now());
 
   const register = useCallback((fn: RefreshFn) => {
     handlers.current.add(fn);
@@ -28,9 +33,24 @@ export function RefreshProvider({ children }: { children: React.ReactNode }) {
     try {
       await Promise.all(Array.from(handlers.current).map((fn) => Promise.resolve(fn())));
     } finally {
+      lastRefreshAt.current = Date.now();
       setIsRefreshing(false);
     }
   }, []);
+
+  // Обновляем данные при возврате в приложение ТОЛЬКО если оно долго было
+  // свёрнуто/неактивно. Обычное быстрое переключение вкладок не трогает ничего —
+  // это и убирает «постоянные перезагрузки» и приближает поведение к нативному.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastRefreshAt.current < STALE_AFTER_MS) return;
+      void trigger();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [trigger]);
 
   return (
     <RefreshContext.Provider value={{ register, unregister, trigger, isRefreshing }}>

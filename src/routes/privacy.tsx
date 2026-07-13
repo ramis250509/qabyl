@@ -35,7 +35,7 @@ function PrivacyPolicy() {
       <div className="mt-10 space-y-8 text-sm leading-relaxed text-foreground/90">
         <section>
           <p>
-            Qabyl — платформа онлайн-записи для салонов красоты. Мы уважаем вашу
+            Qabyl — платформа онлайн-записи для сферы услуг. Мы уважаем вашу
             конфиденциальность и обрабатываем персональные данные только в объёме,
             необходимом для работы сервиса записи и общения через WhatsApp.
           </p>
@@ -117,7 +117,7 @@ function PrivacyPolicy() {
           <p className="text-xs text-muted-foreground">Last updated: July 3, 2026</p>
 
           <p>
-            Qabyl is an online booking platform for beauty salons. We respect your
+            Qabyl is an online booking platform for service businesses. We respect your
             privacy and only process personal data to the extent necessary to run the
             booking service and to communicate over WhatsApp.
           </p>

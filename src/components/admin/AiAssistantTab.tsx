@@ -11,6 +11,13 @@ import { useAuth } from "@/lib/auth-client";
 import { toast } from "sonner";
 import { Sparkles, Lock, Copy, RefreshCw, Webhook, MessageCircle } from "lucide-react";
 import { getWaWebhookConfig, regenerateWaWebhookToken } from "@/lib/wa-config.functions";
+import {
+  INDUSTRIES_META,
+  INDUSTRY_ORDER,
+  DEFAULT_INDUSTRY,
+  normalizeIndustry,
+  type IndustryKey,
+} from "@/lib/industries";
 import { WaSimulator } from "./WaSimulator";
 import { AiServiceListEditor } from "./AiServiceListEditor";
 
@@ -26,6 +33,8 @@ type Assistant = {
   engine: "v3" | "v4";
   knowledge_base: string | null;
   client_addressing: string | null;
+  industry: IndustryKey;
+  knowledge_answers: Record<string, string>;
 };
 
 const DEFAULT_GREETING =
@@ -56,6 +65,8 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
     engine: "v3",
     knowledge_base: "",
     client_addressing: "",
+    industry: DEFAULT_INDUSTRY,
+    knowledge_answers: {},
   });
 
   useEffect(() => {
@@ -81,6 +92,8 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
           engine: (row as any).engine === "v4" ? "v4" : "v3",
           knowledge_base: (row as any).knowledge_base ?? "",
           client_addressing: (row as any).client_addressing ?? "",
+          industry: normalizeIndustry((row as any).industry),
+          knowledge_answers: ((row as any).knowledge_answers as Record<string, string>) ?? {},
         });
       }
       setLoading(false);
@@ -158,6 +171,8 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
         engine: data.engine,
         knowledge_base: data.knowledge_base || null,
         client_addressing: data.client_addressing || null,
+        industry: data.industry,
+        knowledge_answers: data.knowledge_answers ?? {},
       } as any,
       { onConflict: "salon_id" },
     );
@@ -168,6 +183,9 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
     }
     toast.success("Настройки ассистента сохранены");
   }
+
+  const setAnswer = (id: string, val: string) =>
+    setData((d) => ({ ...d, knowledge_answers: { ...d.knowledge_answers, [id]: val } }));
 
   if (loading) return <div className="p-4 text-muted-foreground">Загрузка...</div>;
 
@@ -317,6 +335,37 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
         </div>
 
         <div className="space-y-2">
+          <Label>Тип бизнеса (ИИ-администратор)</Label>
+          <div className="flex flex-wrap gap-2">
+            {INDUSTRY_ORDER.map((key) => {
+              const m = INDUSTRIES_META[key];
+              return (
+                <Button
+                  key={key}
+                  type="button"
+                  variant={data.industry === key ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setData({ ...data, industry: key })}
+                >
+                  <span className="mr-1">{m.emoji}</span>
+                  {m.label}
+                </Button>
+              );
+            })}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Определяет экспертизу, терминологию и сценарии консультаций ассистента.{" "}
+            {INDUSTRIES_META[data.industry].tagline}.
+          </p>
+          {data.engine === "v3" && (
+            <p className="text-xs text-amber-600 dark:text-amber-500">
+              Отраслевая экспертиза и книга знаний работают в режиме «Живой диалог». В
+              «Классическом» режиме ассистент ведёт запись по меню без развёрнутых консультаций.
+            </p>
+          )}
+        </div>
+
+        <div className="space-y-2">
           <Label>WhatsApp-номер салона</Label>
           <Input
             placeholder="+996700000000"
@@ -398,21 +447,49 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
         </div>
 
         {data.engine === "v4" && (
-          <div className="space-y-2">
-            <Label>Знания о салоне</Label>
-            <Textarea
-              rows={5}
-              placeholder={
-                "Например: Парковка бесплатная во дворе. Оплата наличными, картой и QR. По вторникам скидка 10% на маникюр. Работаем на материалах CND и OPI."
-              }
-              value={data.knowledge_base ?? ""}
-              onChange={(e) => setData({ ...data, knowledge_base: e.target.value })}
-            />
-            <p className="text-xs text-muted-foreground">
-              Только факты о вашем салоне: парковка, оплата, акции, бренды, особенности.
-              Общие знания о процедурах (кератин, ботокс, окрашивание, противопоказания,
-              уход) у ассистента уже встроены — их сюда добавлять не нужно.
-            </p>
+          <div className="space-y-4 rounded-lg border p-4">
+            <div>
+              <h4 className="font-medium text-sm">
+                Книга знаний · {INDUSTRIES_META[data.industry].label}
+              </h4>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Ответьте своими словами — чем подробнее, тем профессиональнее ассистент
+                консультирует клиентов именно вашей сферы. Любой вопрос можно пропустить.
+                Общие знания о процедурах у ассистента уже встроены.
+              </p>
+            </div>
+            {INDUSTRIES_META[data.industry].questions.map((q) => (
+              <div key={q.id} className="space-y-1.5">
+                <Label className="text-sm">{q.label}</Label>
+                {q.long ? (
+                  <Textarea
+                    rows={2}
+                    placeholder={q.placeholder}
+                    value={data.knowledge_answers[q.id] ?? ""}
+                    onChange={(e) => setAnswer(q.id, e.target.value)}
+                  />
+                ) : (
+                  <Input
+                    placeholder={q.placeholder}
+                    value={data.knowledge_answers[q.id] ?? ""}
+                    onChange={(e) => setAnswer(q.id, e.target.value)}
+                  />
+                )}
+                {q.help ? <p className="text-xs text-muted-foreground">{q.help}</p> : null}
+              </div>
+            ))}
+            <div className="space-y-1.5">
+              <Label className="text-sm">Дополнительно (прочие факты)</Label>
+              <Textarea
+                rows={3}
+                placeholder="Например: парковка бесплатная во дворе, оплата картой и QR, работаем без выходных."
+                value={data.knowledge_base ?? ""}
+                onChange={(e) => setData({ ...data, knowledge_base: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">
+                Любые факты о бизнесе, не вошедшие в вопросы выше.
+              </p>
+            </div>
           </div>
         )}
 

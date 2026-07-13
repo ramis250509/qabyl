@@ -32,6 +32,12 @@ export function useAuth() {
   // нельзя интерпретировать ранние null-события как logout, иначе
   // роутер мгновенно редиректит на /auth и затирает состояние.
   const initialized = useRef(false);
+  // Текущий id пользователя, отражённый в состоянии, и id, для которого уже
+  // загружены роли. Нужны, чтобы token-refresh / повторные SIGNED_IN при
+  // возврате на вкладку (PWA resume) НЕ пересоздавали объект user и НЕ
+  // перезапрашивали роли — иначе каскад ре-рендеров выглядит как «перезагрузка».
+  const currentUidRef = useRef<string | null>(null);
+  const rolesUidRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -81,45 +87,58 @@ export function useAuth() {
       setRolesLoading(false);
     }
 
+    // Применяет пользователя из сессии, НЕ создавая лишних ре-рендеров:
+    // объект user меняем только при смене id, роли грузим только для нового id.
+    function applyUser(u: User | null) {
+      const uid = u?.id ?? null;
+      if (uid !== currentUidRef.current) {
+        currentUidRef.current = uid;
+        setUser(u);
+      }
+      if (uid) {
+        if (rolesUidRef.current !== uid) {
+          rolesUidRef.current = uid;
+          setTimeout(() => {
+            if (!cancelled) loadRoles(uid);
+          }, 0);
+        }
+      } else {
+        rolesUidRef.current = null;
+        clearRoles();
+      }
+    }
+
     const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      // Token-refresh при возврате на вкладку не меняет ни пользователя, ни роли —
+      // полностью игнорируем, чтобы не дёргать состояние.
+      if (event === "TOKEN_REFRESHED") return;
       // Игнорируем ранние события до завершения первичной проверки сессии,
       // кроме явных идентификационных переходов.
       if (!initialized.current && event !== "SIGNED_IN" && event !== "SIGNED_OUT") {
         return;
       }
       if (event === "SIGNED_OUT" && !intentionalSignOut) {
+        // Транзиентный SIGNED_OUT (частый на мобильном PWA при resume). Не
+        // сбрасываем состояние сразу — сперва перепроверяем сессию; если она
+        // жива, applyUser увидит тот же id и НЕ вызовет ни setUser, ни reload
+        // (никакого «мигания»). Чистим только если сессии реально нет.
         window.setTimeout(async () => {
           if (cancelled) return;
           const restoredSession = await readSessionWithRetry();
           if (cancelled) return;
-          const restoredUser = restoredSession?.user ?? null;
-          setUser(restoredUser);
-          if (restoredUser) await loadRoles(restoredUser.id);
-          else clearRoles();
+          applyUser(restoredSession?.user ?? null);
           initialized.current = true;
           setLoading(false);
         }, 500);
         return;
       }
-      const u = session?.user ?? null;
-      setUser(u);
-      if (u) {
-        setTimeout(() => { if (!cancelled) loadRoles(u.id); }, 0);
-      } else if (event === "SIGNED_OUT" || initialized.current) {
-        clearRoles();
-      }
+      applyUser(session?.user ?? null);
     });
 
     // Строго дожидаемся ответа getSession() перед тем как разрешить редирект.
-    readSessionWithRetry().then(async (session) => {
+    readSessionWithRetry().then((session) => {
       if (cancelled) return;
-      const u = session?.user ?? null;
-      setUser(u);
-      if (u) {
-        await loadRoles(u.id);
-      } else {
-        clearRoles();
-      }
+      applyUser(session?.user ?? null);
       initialized.current = true;
       setLoading(false);
     }).catch(() => {

@@ -1,7 +1,7 @@
 {
   "name": "Qabyl — онлайн-запись",
   "short_name": "Qabyl",
-  "description": "Qabyl — онлайн-запись для салонов красоты",
+  "description": "Qabyl — платформа онлайн-записи для сферы услуг",
   "start_url": "/admin",
   "scope": "/",
   "display": "standalone",

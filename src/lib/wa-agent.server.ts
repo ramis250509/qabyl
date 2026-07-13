@@ -49,6 +49,12 @@ export type WaAssistantConfig = {
   // Salon-configured deadline: cancel/reschedule via the bot is refused when the visit
   // starts in less than this many hours (0 / null = no limit, client asked to call the salon).
   manage_cutoff_hours?: number | null;
+  // V4: business vertical — selects the assistant persona and expert knowledge base
+  // (beauty | barbershop | massage | cosmetology | epilation | dental). Default 'beauty'.
+  industry?: string | null;
+  // V4: answers to the industry-specific "knowledge book" questions, keyed by question id
+  // (see src/lib/industries.ts). Rendered into the system prompt as labelled salon facts.
+  knowledge_answers?: Record<string, string> | null;
 };
 
 export type WaSalonContext = {
@@ -521,7 +527,8 @@ async function callGemini(opts: {
       const txt = await r.text();
       if (r.status === 429) {
         // Quota exhausted on the user's direct Gemini API key. Retrying won't help — break
-        // immediately and fall back to Lovable AI Gateway (same Gemini model, billed via Lovable).
+        // immediately. There is NO Lovable fallback: every call goes through the salon's own
+        // Gemini key so we never spend Lovable credits (surfaced as-is below).
         lastQuotaError = `gemini 429: ${txt.slice(0, 200)}`;
         break;
       }
@@ -575,79 +582,6 @@ async function callGemini(opts: {
   // Gemini API key (paid subscription) and never spend Lovable credits. Surface the
   // 429/quota error as-is so they can see it in logs and top up Gemini billing.
   return { ok: false, error: lastQuotaError ?? "gemini unknown" };
-}
-
-// ----- Lovable AI Gateway fallback (OpenAI-compatible chat completions)
-async function callViaLovableGateway(opts: {
-  systemInstruction?: string;
-  parts: GeminiPart[];
-  contents?: GeminiContent[];
-  responseMimeType?: "application/json" | "text/plain";
-  responseSchema?: unknown;
-  temperature?: number;
-  maxOutputTokens?: number;
-}): Promise<{ ok: boolean; text?: string; error?: string }> {
-  const key = process.env.LOVABLE_API_KEY;
-  if (!key) return { ok: false, error: "no LOVABLE_API_KEY for fallback" };
-
-  // Translate Gemini parts → OpenAI content blocks (text + image_url with data: URLs).
-  const toOpenAIContent = (parts: GeminiPart[]): any[] =>
-    parts.map((p) =>
-      "text" in p
-        ? { type: "text", text: p.text }
-        : {
-            type: "image_url",
-            image_url: { url: `data:${p.inline_data.mime_type};base64,${p.inline_data.data}` },
-          },
-    );
-
-  const messages: any[] = [];
-  if (opts.systemInstruction) messages.push({ role: "system", content: opts.systemInstruction });
-  if (opts.contents?.length) {
-    for (const c of opts.contents) {
-      messages.push({
-        role: c.role === "model" ? "assistant" : "user",
-        content: toOpenAIContent(c.parts),
-      });
-    }
-  } else {
-    messages.push({ role: "user", content: toOpenAIContent(opts.parts) });
-  }
-
-  const body: any = {
-    model: "google/gemini-2.5-flash",
-    messages,
-    temperature: opts.temperature ?? 0.4,
-    max_tokens: Math.max(512, opts.maxOutputTokens ?? 2048),
-  };
-  if (opts.responseMimeType === "application/json") {
-    body.response_format = { type: "json_object" };
-  }
-
-  try {
-    const r = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${key}`,
-        "Lovable-API-Key": key,
-      },
-      body: JSON.stringify(body),
-    });
-    const txt = await r.text();
-    if (!r.ok) return { ok: false, error: `lovable gw ${r.status}: ${txt.slice(0, 300)}` };
-    let json: any;
-    try {
-      json = JSON.parse(txt);
-    } catch {
-      return { ok: false, error: `lovable gw bad json: ${txt.slice(0, 200)}` };
-    }
-    const text: string | undefined = json?.choices?.[0]?.message?.content?.trim();
-    if (!text) return { ok: false, error: `lovable gw empty: ${txt.slice(0, 200)}` };
-    return { ok: true, text };
-  } catch (e: any) {
-    return { ok: false, error: e?.message ?? String(e) };
-  }
 }
 
 function normalizeForMatch(text: string): string {
@@ -1092,7 +1026,7 @@ async function classify(opts: {
     .map((d) => `${d.iso} = ${d.relative} (${d.label})`)
     .join("\n");
 
-  const sys = `Ты — парсер сообщений клиента салона красоты. Получаешь последнее сообщение клиента и историю диалога. Возвращаешь СТРОГО JSON по схеме, без markdown.
+  const sys = `Ты — парсер сообщений клиента бизнеса сферы услуг. Получаешь последнее сообщение клиента и историю диалога. Возвращаешь СТРОГО JSON по схеме, без markdown.
 Никогда не выдумывай id — service_id и branch_id выбирай ровно из переданных таблиц или оставляй пустыми.
 Определи язык клиента: "ru", "ky" (кыргызский — слова кандай, салам, бүгүн, эртең, кеч, ң/ү/ө) или "en".
 Для дат используй таблицу. Если клиент сказал "сегодня"/"завтра" — поставь day_relative; если назвал дату — day_iso по таблице.
@@ -2921,7 +2855,7 @@ function buildSystemPromptV2(
   todayHuman: string,
 ): string {
   const lines: string[] = [
-    `Ты — живой администратор салона красоты «${salon.salonName}».`,
+    `Ты — живой администратор «${salon.salonName}».`,
     `Пишешь клиенту в WhatsApp. Коротко, по-человечески, без канцелярита. 1–3 предложения. Никакого markdown. Эмодзи — не более одного.`,
     `Отвечай СТРОГО на том языке, на котором написал клиент — русский или кыргызский. Не смешивай языки.`,
     config.greeting ? `Первое сообщение клиенту начни с: ${config.greeting}` : "",
@@ -3753,7 +3687,7 @@ function buildSlotListMsg(
       description: masterNames ? masterNames.get(s.master_ids[0] ?? "")?.slice(0, 72) : undefined,
     });
   });
-  const sections = (["morning", "afternoon", "evening"] as const)
+  const sections: { title?: string; rows: any[] }[] = (["morning", "afternoon", "evening"] as const)
     .filter((p) => buckets[p].length > 0)
     .map((p) => ({ title: partTitles[p], rows: buckets[p] }));
   if (opts?.back) sections.push({ title: undefined, rows: [backRow(language)] });
@@ -3927,7 +3861,7 @@ async function classifyManageIntentV3(
     model: MODEL_TEXT,
     apiKey,
     systemInstruction:
-      "У клиента салона красоты уже есть предстоящая запись. Определи по его сообщению (учитывай опечатки и разговорные формулировки, русский и кыргызский), что клиент хочет сделать с ЭТОЙ записью:\n" +
+      "У клиента уже есть предстоящая запись. Определи по его сообщению (учитывай опечатки и разговорные формулировки, русский и кыргызский), что клиент хочет сделать с ЭТОЙ записью:\n" +
       '"cancel" — отменить запись;\n' +
       '"reschedule" — перенести её на другое время или день;\n' +
       '"none" — сообщение не об изменении существующей записи (приветствие, вопрос, желание записаться ещё раз).\n' +
@@ -4021,7 +3955,7 @@ async function translateGreetingV3(
 ): Promise<string> {
   if (!apiKey || !text.trim()) return "";
   const langName = targetLang === "ky" ? "кыргызский" : "английский";
-  const sys = `Переведи текст приветствия администратора салона красоты на ${langName} язык. Сохрани тон, эмодзи и форматирование (переносы строк). Верни только перевод, без кавычек и пояснений.`;
+  const sys = `Переведи текст приветствия администратора бизнеса на ${langName} язык. Сохрани тон, эмодзи и форматирование (переносы строк). Верни только перевод, без кавычек и пояснений.`;
   // Route through callGemini so we get its retry-on-5xx/network + MAX_TOKENS handling. The old
   // single-shot fetch with a 400-token cap intermittently returned empty (or truncated on the
   // salon's long promo greeting), which dropped the client to a generic "Чем помочь?" instead of

@@ -18,6 +18,7 @@ import { Route as BookSlugRouteImport } from './routes/book.$slug'
 import { Route as AdminStatsRouteImport } from './routes/admin/stats'
 import { Route as AdminNotificationsRouteImport } from './routes/admin/notifications'
 import { Route as AdminCalendarRouteImport } from './routes/admin/calendar'
+import { Route as AdminAccountRouteImport } from './routes/admin/account'
 import { Route as AdminSalonsIndexRouteImport } from './routes/admin/salons/index'
 import { Route as PreviewSalonSalonIdRouteImport } from './routes/preview.salon.$salonId'
 import { Route as AdminSalonsSalonIdRouteImport } from './routes/admin/salons/$salonId'
@@ -69,6 +70,11 @@ const AdminCalendarRoute = AdminCalendarRouteImport.update({
   path: '/calendar',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminAccountRoute = AdminAccountRouteImport.update({
+  id: '/account',
+  path: '/account',
+  getParentRoute: () => AdminRoute,
+} as any)
 const AdminSalonsIndexRoute = AdminSalonsIndexRouteImport.update({
   id: '/salons/',
   path: '/salons/',
@@ -100,6 +106,7 @@ export interface FileRoutesByFullPath {
   '/admin': typeof AdminRouteWithChildren
   '/auth': typeof AuthRoute
   '/privacy': typeof PrivacyRoute
+  '/admin/account': typeof AdminAccountRoute
   '/admin/calendar': typeof AdminCalendarRoute
   '/admin/notifications': typeof AdminNotificationsRoute
   '/admin/stats': typeof AdminStatsRoute
@@ -115,6 +122,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/privacy': typeof PrivacyRoute
+  '/admin/account': typeof AdminAccountRoute
   '/admin/calendar': typeof AdminCalendarRoute
   '/admin/notifications': typeof AdminNotificationsRoute
   '/admin/stats': typeof AdminStatsRoute
@@ -132,6 +140,7 @@ export interface FileRoutesById {
   '/admin': typeof AdminRouteWithChildren
   '/auth': typeof AuthRoute
   '/privacy': typeof PrivacyRoute
+  '/admin/account': typeof AdminAccountRoute
   '/admin/calendar': typeof AdminCalendarRoute
   '/admin/notifications': typeof AdminNotificationsRoute
   '/admin/stats': typeof AdminStatsRoute
@@ -150,6 +159,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/auth'
     | '/privacy'
+    | '/admin/account'
     | '/admin/calendar'
     | '/admin/notifications'
     | '/admin/stats'
@@ -165,6 +175,7 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/privacy'
+    | '/admin/account'
     | '/admin/calendar'
     | '/admin/notifications'
     | '/admin/stats'
@@ -181,6 +192,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/auth'
     | '/privacy'
+    | '/admin/account'
     | '/admin/calendar'
     | '/admin/notifications'
     | '/admin/stats'
@@ -269,6 +281,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminCalendarRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/account': {
+      id: '/admin/account'
+      path: '/account'
+      fullPath: '/admin/account'
+      preLoaderRoute: typeof AdminAccountRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/salons/': {
       id: '/admin/salons/'
       path: '/salons'
@@ -308,6 +327,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface AdminRouteChildren {
+  AdminAccountRoute: typeof AdminAccountRoute
   AdminCalendarRoute: typeof AdminCalendarRoute
   AdminNotificationsRoute: typeof AdminNotificationsRoute
   AdminStatsRoute: typeof AdminStatsRoute
@@ -317,6 +337,7 @@ interface AdminRouteChildren {
 }
 
 const AdminRouteChildren: AdminRouteChildren = {
+  AdminAccountRoute: AdminAccountRoute,
   AdminCalendarRoute: AdminCalendarRoute,
   AdminNotificationsRoute: AdminNotificationsRoute,
   AdminStatsRoute: AdminStatsRoute,

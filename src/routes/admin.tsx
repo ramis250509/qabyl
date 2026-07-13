@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { signOutFromApp, useAuth } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { LayoutDashboard, Building2, Calendar, LogOut, BarChart3, Settings, Menu, Bell } from "lucide-react";
+import { LayoutDashboard, Building2, Calendar, LogOut, BarChart3, Settings, Menu, Bell, UserCog } from "lucide-react";
 import { useNotifications } from "@/hooks/use-notifications";
 import { FullScreenLoader } from "@/components/ui/loading-state";
 import { RefreshProvider } from "@/lib/refresh-context";
@@ -73,6 +73,7 @@ function AdminLayout() {
     ? [
         { to: "/admin/calendar", label: "Календарь", icon: Calendar },
         { to: "/admin/notifications", label: "Уведомления", icon: Bell, badge: unreadCount },
+        { to: "/admin/account", label: "Аккаунт", icon: UserCog },
       ]
     : isSuperAdmin
     ? [
@@ -81,6 +82,7 @@ function AdminLayout() {
         { to: "/admin/calendar", label: "Календарь", icon: Calendar },
         { to: "/admin/notifications", label: "Уведомления", icon: Bell, badge: unreadCount },
         { to: "/admin/stats", label: "Статистика", icon: BarChart3 },
+        { to: "/admin/account", label: "Аккаунт", icon: UserCog },
       ]
     : [
         { to: "/admin", label: "Дашборд", icon: LayoutDashboard, exact: true },
@@ -88,6 +90,7 @@ function AdminLayout() {
         { to: "/admin/notifications", label: "Уведомления", icon: Bell, badge: unreadCount },
         { to: "/admin/stats", label: "Статистика", icon: BarChart3 },
         ...(salonId ? [{ to: `/admin/salons/${salonId}`, label: "Мой салон", icon: Settings }] : []),
+        { to: "/admin/account", label: "Аккаунт", icon: UserCog },
       ];
 
   const roleLabel = isSuperAdmin ? "Админ-панель" : isSalonAdmin ? "Кабинет салона" : "Кабинет мастера";
