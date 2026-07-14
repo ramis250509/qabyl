@@ -10,6 +10,7 @@ import {
   clampPriceOverride,
   isDayWorkableForService,
   loadSalonClosedDates,
+  sanitizeGeminiHistory,
 } from "@/lib/wa-agent-v4.server";
 
 const TZ = "Asia/Bishkek"; // UTC+6, no DST
@@ -325,6 +326,43 @@ describe("loadSalonClosedDates — whole-salon days off for the prompt", () => {
     const closed = await loadSalonClosedDates(db, "s1", "2026-07-14", 14);
     expect(closed).toContain("2026-07-15");
     expect(closed).not.toContain("2026-07-16");
+  });
+});
+
+// The "техническая ошибка на каждый ответ" bug: history sliced mid tool-call pair makes Gemini
+// 400 on every subsequent turn. sanitizeGeminiHistory must drop the bad prefix.
+describe("sanitizeGeminiHistory — valid Gemini contents start", () => {
+  const userText = (t: string) => ({ role: "user", parts: [{ text: t }] });
+  const modelText = (t: string) => ({ role: "model", parts: [{ text: t }] });
+  const modelCall = (name: string) => ({ role: "model", parts: [{ functionCall: { name, args: {} } }] });
+  const fnResponse = (name: string) => ({ role: "user", parts: [{ functionResponse: { name, response: {} } }] });
+
+  test("history starting with an orphaned functionResponse → prefix dropped", () => {
+    const h = [fnResponse("get_services"), modelText("ответ"), userText("окей"), modelText("готово")] as any;
+    const out = sanitizeGeminiHistory(h);
+    expect(out[0].role).toBe("user");
+    expect(out[0].parts[0].text).toBe("окей");
+  });
+
+  test("history starting with a model turn → dropped to first user text", () => {
+    const h = [modelCall("get_available_slots"), fnResponse("get_available_slots"), modelText("вот времена"), userText("11:00")] as any;
+    const out = sanitizeGeminiHistory(h);
+    expect(out[0].role).toBe("user");
+    expect(out[0].parts[0].text).toBe("11:00");
+  });
+
+  test("already-valid history is unchanged", () => {
+    const h = [userText("привет"), modelText("здравствуйте"), userText("стрижка")] as any;
+    expect(sanitizeGeminiHistory(h)).toEqual(h);
+  });
+
+  test("no user-text anywhere → empty (still a valid request once new msg is appended)", () => {
+    const h = [fnResponse("x"), modelCall("y")] as any;
+    expect(sanitizeGeminiHistory(h)).toEqual([]);
+  });
+
+  test("non-array input → empty", () => {
+    expect(sanitizeGeminiHistory(undefined as any)).toEqual([]);
   });
 });
 

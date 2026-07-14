@@ -1119,6 +1119,28 @@ export function humanizeReply(raw: string): string {
     .trim();
 }
 
+// Gemini rejects a request (HTTP 400) unless its `contents` start with a real user turn and
+// every functionResponse immediately follows its functionCall. Persisting only the last
+// HISTORY_CAP entries can slice the array in the middle of a functionCall→functionResponse
+// pair, leaving the reloaded history starting on a model turn or an orphaned functionResponse.
+// That 400 then repeats on EVERY following message (the bad prefix is replayed each turn), which
+// is exactly the "техническая ошибка на каждый ответ" symptom. Fix: drop leading entries until
+// the first genuine user text message — always a valid, self-contained conversation start. This
+// also self-heals conversations already stuck with a corrupted history (no /restart needed).
+export function sanitizeGeminiHistory(history: GeminiV2Content[]): GeminiV2Content[] {
+  if (!Array.isArray(history)) return [];
+  let i = 0;
+  for (; i < history.length; i++) {
+    const c = history[i] as any;
+    const parts = Array.isArray(c?.parts) ? c.parts : [];
+    const hasText = parts.some((p: any) => typeof p?.text === "string");
+    const hasFnResponse = parts.some((p: any) => p?.functionResponse);
+    const hasFnCall = parts.some((p: any) => p?.functionCall);
+    if (c?.role === "user" && hasText && !hasFnResponse && !hasFnCall) break; // valid start
+  }
+  return i > 0 ? history.slice(i) : history;
+}
+
 export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> {
   const db = await getAdmin();
   const apiKey = process.env.GEMINI_API_KEY ?? "";
@@ -1135,8 +1157,9 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     photoNotes: [...priorPhotoNotes],
   };
 
-  const v4History: GeminiV2Content[] = ((input.stateData as any).v4_history ??
-    []) as GeminiV2Content[];
+  const v4History: GeminiV2Content[] = sanitizeGeminiHistory(
+    ((input.stateData as any).v4_history ?? []) as GeminiV2Content[],
+  );
   const isFirstTurn = v4History.length === 0;
 
   // Language: sticky from state, BUT refresh whenever THIS turn carries a confident signal.
@@ -1221,6 +1244,8 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
 
       if (!res.ok || !res.parts) {
         debug.errors.push(`gemini_tools iter${iter}: ${res.error ?? "no parts"}`);
+        // Surface the exact Gemini failure (429/503/400 + body) in Worker logs for diagnosis.
+        console.error(`[wa-v4] gemini_tools failed iter${iter}: ${res.error ?? "no parts"}`);
         r =
           language === "ky"
             ? "Кечиресиз, техникалык ката болду. Бир аздан кийин кайра жазыңызчы 🙏"
@@ -1310,11 +1335,15 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     reply = `${greeting}\n\n${reply}`;
   }
 
-  // Persist Gemini history without inline images (keep the DB row small).
-  const historyToSave = contents.slice(-HISTORY_CAP).map((c) => ({
-    ...c,
-    parts: c.parts.map((p: any) => (p.inlineData ? { text: "[фото]" } : p)),
-  }));
+  // Persist Gemini history without inline images (keep the DB row small). Sanitize AFTER the
+  // cap slice so a stored history never begins on an orphaned functionResponse / model turn
+  // (which would 400 the next request — see sanitizeGeminiHistory).
+  const historyToSave = sanitizeGeminiHistory(
+    contents.slice(-HISTORY_CAP).map((c) => ({
+      ...c,
+      parts: c.parts.map((p: any) => (p.inlineData ? { text: "[фото]" } : p)),
+    })),
+  );
 
   const nextState: WaAgentState = flags.appointmentId ? "done" : "collecting";
   const nextStateData: WaAgentStateData = {
