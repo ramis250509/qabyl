@@ -7,6 +7,7 @@ import {
   normHHMM,
   classifyEmptyDay,
   executeV4Tool,
+  clampPriceOverride,
 } from "@/lib/wa-agent-v4.server";
 
 const TZ = "Asia/Bishkek"; // UTC+6, no DST
@@ -175,5 +176,57 @@ describe("get_available_slots — part-of-day empty but day is open", () => {
       openInput, db, flags,
     );
     expect(r.reason).toBe("fully_booked");
+  });
+});
+
+// Phase B: price stays inside the service's configured range.
+function makeServiceDb(row: any) {
+  const chain: any = {
+    select: () => chain,
+    eq: () => chain,
+    maybeSingle: async () => ({ data: row }),
+  };
+  return { from: () => chain } as any;
+}
+describe("clampPriceOverride — never outside the service range", () => {
+  test("range service: below min → clamped up to min", async () => {
+    const db = makeServiceDb({ price: 2500, price_max: 7000, price_type: "range" });
+    expect(await clampPriceOverride(db, "s1", "svc", 1000)).toBe(2500);
+  });
+  test("range service: above max → clamped down to max", async () => {
+    const db = makeServiceDb({ price: 2500, price_max: 7000, price_type: "range" });
+    expect(await clampPriceOverride(db, "s1", "svc", 9999)).toBe(7000);
+  });
+  test("range service: inside → kept as agreed", async () => {
+    const db = makeServiceDb({ price: 2500, price_max: 7000, price_type: "range" });
+    expect(await clampPriceOverride(db, "s1", "svc", 4200)).toBe(4200);
+  });
+  test("fixed service: any override → pinned to the fixed price", async () => {
+    const db = makeServiceDb({ price: 1500, price_max: null, price_type: "fixed" });
+    expect(await clampPriceOverride(db, "s1", "svc", 999)).toBe(1500);
+  });
+  test("unknown service → returns input unchanged", async () => {
+    const db = makeServiceDb(null);
+    expect(await clampPriceOverride(db, "s1", "svc", 3333)).toBe(3333);
+  });
+});
+
+// Phase B: photo analysis persists so a follow-up a turn later still has the master's read.
+describe("remember_photo — persists structured photo analysis into flags", () => {
+  test("stores note the model can recall next turn", async () => {
+    const flags = { appointmentId: null, selectedBranchId: null, needsHuman: false, escalateReason: null, photoNotes: [] as any[] };
+    const r = await executeV4Tool(
+      "remember_photo",
+      { kind: "hair", summary: "длинные густые волосы, следы осветления", price_band: "3200–3500 сом", issues: ["сухие концы"] },
+      { ...input, config: { manage_cutoff_hours: 0 } } as any,
+      {} as any,
+      flags as any,
+    );
+    expect(r.success).toBe(true);
+    expect(flags.photoNotes).toHaveLength(1);
+    expect(flags.photoNotes[0].kind).toBe("hair");
+    expect(flags.photoNotes[0].price_band).toBe("3200–3500 сом");
+    expect(flags.photoNotes[0].issues).toEqual(["сухие концы"]);
+    expect(typeof flags.photoNotes[0].ts).toBe("string");
   });
 });

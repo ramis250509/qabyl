@@ -1599,6 +1599,8 @@ export type DbMaster = {
   branch_id: string | null;
   sort_order: number;
   service_ids: string[];
+  specialization?: string | null;
+  bio?: string | null;
 };
 
 type MergedSlot = {
@@ -1683,7 +1685,7 @@ export async function loadMastersForService(
 ): Promise<DbMaster[]> {
   const { data } = await db
     .from("masters")
-    .select("id, name, branch_id, sort_order, master_services(service_id)")
+    .select("id, name, branch_id, sort_order, specialization, bio, master_services(service_id)")
     .eq("salon_id", salonId)
     .eq("is_active", true)
     .order("sort_order");
@@ -1693,6 +1695,8 @@ export async function loadMastersForService(
     branch_id: m.branch_id ?? null,
     sort_order: m.sort_order ?? 0,
     service_ids: (m.master_services ?? []).map((s: any) => s.service_id),
+    specialization: m.specialization ?? null,
+    bio: m.bio ?? null,
   })) as DbMaster[];
   return all.filter(
     (m) =>

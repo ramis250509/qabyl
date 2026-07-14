@@ -39,6 +39,7 @@ async function getAdmin() {
 
 const MAX_TOOL_ITERS = 8;
 const HISTORY_CAP = 30; // Gemini contents kept in state_data.v4_history between turns
+const PHOTO_NOTES_CAP = 6; // structured photo analyses kept in state_data.photo_notes
 // The agent must see the WHOLE day's free start-times, not a truncated head of the list.
 // A capped list (was 8) made the model think a full working day ended at 11:45 and wrongly
 // tell clients that later times like 17:00 were "занято". 64 covers any realistic salon day
@@ -96,6 +97,25 @@ const BEAUTY_SCENARIOS = [
   `- «Менин эки кызымдыкы тармал, 16–18 жашта» → консультация по детям/нескольким людям: учти возраст и факты салона (напр. детский возраст, длительность), уточни детали при необходимости.`,
   `- ФОТО БЕЗ ТЕКСТА → это почти всегда волосы/ногти для оценки. Оцени по фото (см. ниже) для обсуждаемой услуги; если услуга ещё не ясна — коротко спроси, что хочет сделать.`,
 ].join("\n");
+
+// Prior photo analyses (state_data.photo_notes) → a compact recap for the prompt so the model
+// "remembers" what it saw on earlier photos even though the pixels are gone from history.
+function renderPhotoNotes(notes: PhotoNote[] | undefined): string {
+  if (!notes?.length) return "";
+  return notes
+    .slice(-PHOTO_NOTES_CAP)
+    .map((n) => {
+      const bits = [
+        n.summary,
+        n.service_hint ? `услуга: ${n.service_hint}` : "",
+        n.issues?.length ? `нюансы: ${n.issues.join(", ")}` : "",
+        n.price_band ? `оценка: ${n.price_band}` : "",
+        n.needs?.length ? `не хватает: ${n.needs.join(", ")}` : "",
+      ].filter(Boolean);
+      return `- [${n.kind}] ${bits.join("; ")}`;
+    })
+    .join("\n");
+}
 
 function buildSystemPromptV4(input: WaAgentInput): string {
   const { salon, config, branches, salonInfo } = input;
@@ -156,6 +176,13 @@ function buildSystemPromptV4(input: WaAgentInput): string {
     `- Темп: не дави записью и не спеши закончить. Сними сомнения и возражения (цена, безопасность, «подумаю»), и лишь когда клиент определился — ненавязчиво предложи подобрать время.`,
     `- С ПЕРВОГО сообщения определи цель клиента (узнать цену, подобрать услугу, записаться, перенести или отменить запись, узнать свободное время, консультация, оценка по фото, вопрос о процедуре) и сразу веди подходящий сценарий, не переспрашивая лишнего.`,
     `- ПОМНИ ВЕСЬ КОНТЕКСТ диалога: имя, дату, время, услугу, длину/тип волос, присланные фото и любые уже названные детали. НИКОГДА не переспрашивай то, что клиент уже сообщил.`,
+    `- ПАМЯТЬ О ФОТО: когда клиент присылает фото — проанализируй его как мастер и СРАЗУ вызови remember_photo (kind, summary, при оценке price_band, при необходимости issues/needs). Пиксели фото исчезают после этого хода, поэтому если не сохранишь — потеряешь. Ниже в блоке «РАЗБОР РАНЕЕ ПРИСЛАННЫХ ФОТО» вернётся то, что ты уже видел — опирайся на него и НЕ проси то же фото снова.`,
+    ...(renderPhotoNotes((input.stateData as any)?.photo_notes)
+      ? [
+          `РАЗБОР РАНЕЕ ПРИСЛАННЫХ ФОТО (ты это уже видел, помни это):`,
+          renderPhotoNotes((input.stateData as any)?.photo_notes),
+        ]
+      : []),
     `- ГЛАВНАЯ ЦЕЛЬ — помочь клиенту записаться. Мягко и естественно веди к записи, когда это уместно, но без навязчивых продаж и давления.`,
     `- Ты администратор ИМЕННО «${salon.salonName}»: опирайся на факты, стиль, акции, гарантию и материалы этого салона. Клиент должен чувствовать, что пишет живому админу этого салона, а не общему боту.`,
     `- Пиши естественно, как опытный администратор: без шаблонных и роботизированных фраз, без повторов и канцелярита.`,
@@ -186,7 +213,8 @@ function buildSystemPromptV4(input: WaAgentInput): string {
     `- get_available_slots возвращает ПОЛНЫЙ список свободных времён начала на дату (учитывает длительность процедуры и занятость) плюс поле reason. reason=closed_that_day → в этот день салон НЕ работает (выходной): так и скажи и предложи другой день, НЕ говори «занято». reason=fully_booked → на эту дату всё занято, предложи ближайший день. reason=part_unavailable → на запрошенную часть дня (утро/день/вечер) окошек нет, НО в этот же день есть другое время: предложи эти времена из free_times («вечером всё занято, но есть днём в 14:00 или 16:00»), НЕ говори «всё занято» и НЕ перескакивай на другой день. Никогда не выдавай «выходной» за «занято» и наоборот.`,
     `- ВРЕМЯ ЗАКРЫТИЯ (СТРОГО): никогда не предлагай и не подтверждай время, если услуга не успеет закончиться до закрытия салона. Пример: салон работает до 20:00, услуга длится 3 часа — значит запись возможна не позже 17:00, а 18:00/19:00 предлагать нельзя. Не считай это в уме — get_available_slots уже отфильтровал такие времена, предлагай ТОЛЬКО из его ответа. Если клиент сам просит время, которое не помещается до закрытия, мягко объясни и предложи ближайшее подходящее из get_available_slots (в т.ч. на другой день).`,
     `- Клиенту показывай не весь список, а 2–4 удобно РАЗНЕСЁННЫХ варианта (например утро, день, вечер), а не подряд через 15 минут. Пример: «Есть 10:00, 13:00 и 16:00 — что удобнее?»`,
-    `- Мастеров несколько и клиенту важно — предложи выбор (get_masters); «всё равно» — выбери сам.`,
+    `- Мастеров несколько и клиенту важно — предложи выбор (get_masters). Если у мастеров указана specialization/bio_short — рекомендуй по сильной стороне («по сложному окрашиванию лучше Айгерим, по маникюру — Нургуль»). «Всё равно» — выбери сам и назови, кого записал.`,
+    `- ЦЕНЫ: get_services даёт price_min, price_max (числа) и price_label. Для услуги с диапазоном называй вилку (price_label) и говори, что точную цену подтвердит мастер; если согласовали конкретную сумму — передай её в create_appointment как price_override (сервер сам удержит её в пределах price_min…price_max). Никогда не называй цену вне вилки и не считай стоимость «на глаз» без этих чисел.`,
     `- Узнай имя (если не знаешь), повтори детали одной фразой (услуга, дата, время, мастер, цена) и дождись явного «да». Только тогда вызови create_appointment, коротко поздравь и напомни адрес.`,
     `- ВРЕМЯ ЗАПИСИ (СТРОГО): в create_appointment/reschedule_appointment передавай время как date + time (HH:MM, напр. 11:00) — НИКОГДА не вычисляй и не пиши ISO/таймстемпы сам, сервер сам подберёт точный слот. Если инструмент вернул reason=slot_not_free — это время уже заняли, предложи клиенту времена из поля nearest и переспроси; НИКОГДА не подставляй другое время молча (клиент просил 11:00 — не записывай на другое без его согласия).`,
     `- ДЛЯ КОГО ЗАПИСЬ: если клиент записывает не себя, а другого (дочку, маму, подругу — «кызымды жазам», «на дочь»), в client_name пиши имя ТОГО, КОГО записывают, а не имя клиента. Спроси имя именно этого человека («А как зовут дочку?»), не переспрашивай про клиента. Держи в голове ранее упомянутые детали (возраст ребёнка и т.п.) — не теряй их.`,
@@ -224,7 +252,8 @@ const V4_TOOL_DECLARATIONS = [
   },
   {
     name: "get_masters",
-    description: "Мастера, выполняющие услугу.",
+    description:
+      "Мастера, выполняющие услугу, с их специализацией (specialization) и кратким био (bio_short) — используй их, чтобы рекомендовать подходящего мастера.",
     parameters: {
       type: "object",
       properties: {
@@ -332,17 +361,62 @@ const V4_TOOL_DECLARATIONS = [
       required: ["reason"],
     },
   },
+  {
+    name: "remember_photo",
+    description:
+      "Сохрани разбор ПРИСЛАННОГО клиентом фото, чтобы не потерять его на следующих ходах (пиксели фото пропадают после этого хода). Вызывай СРАЗУ, как проанализировал фото. На последующих ходах сохранённый разбор вернётся тебе в контексте — не проси то же фото повторно.",
+    parameters: {
+      type: "object",
+      properties: {
+        kind: {
+          type: "string",
+          description: "Что на фото: hair | nails | lashes | brows | face | other",
+        },
+        summary: {
+          type: "string",
+          description: "Что ты как мастер видишь на фото (длина, густота, состояние, желаемый результат)",
+        },
+        service_hint: { type: "string", description: "К какой услуге относится фото" },
+        issues: {
+          type: "array",
+          items: { type: "string" },
+          description: "Замеченные проблемы/риски (повреждение, противопоказания)",
+        },
+        needs: {
+          type: "array",
+          items: { type: "string" },
+          description: "Каких доп. фото/данных ещё не хватает (только реально нужное)",
+        },
+        price_band: {
+          type: "string",
+          description: "Узкий диапазон цены по фото (если оценивал), напр. «3200–3500 сом»",
+        },
+      },
+      required: ["kind", "summary"],
+    },
+  },
 ];
 
 // ============================================================
 // Tool executor — deterministic TS against the DB
 // ============================================================
 
+export type PhotoNote = {
+  ts: string; // ISO instant the analysis was made
+  kind: string; // hair | nails | lashes | brows | face | other
+  summary: string; // what the master sees on the photo
+  service_hint?: string; // which service it points to
+  issues?: string[]; // damage / contraindications noticed
+  needs?: string[]; // extra photos or info still needed
+  price_band?: string; // narrow estimate, e.g. "3200–3500 сом"
+};
+
 type V4RunFlags = {
   appointmentId: string | null;
   selectedBranchId: string | null;
   needsHuman: boolean;
   escalateReason: string | null;
+  photoNotes: PhotoNote[]; // structured photo analyses persisted across turns
 };
 
 // Normalize a loose clock string ("11", "11:0", "11.00", "11 00") → "HH:MM" or null.
@@ -370,6 +444,32 @@ export function classifyEmptyDay(
     return "closed_that_day";
   }
   return "fully_booked";
+}
+
+// Clamp an AI-agreed price into the service's real [min, max]. Fixed-price services pin to
+// their exact price; range services keep the agreed value but never below min / above max.
+// Server-authoritative: the model cannot book a price outside what the salon configured.
+export async function clampPriceOverride(
+  db: AdminClient,
+  salonId: string,
+  serviceId: string,
+  price: number,
+): Promise<number> {
+  if (!Number.isFinite(price)) return price;
+  const { data } = await db
+    .from("services")
+    .select("price, price_max, price_type")
+    .eq("salon_id", salonId)
+    .eq("id", serviceId)
+    .maybeSingle();
+  if (!data) return price;
+  const min = Number((data as any).price);
+  if ((data as any).price_type !== "range") return Number.isFinite(min) ? min : price;
+  const max = Number((data as any).price_max);
+  let p = price;
+  if (Number.isFinite(min)) p = Math.max(p, min);
+  if (Number.isFinite(max)) p = Math.min(p, max);
+  return p;
 }
 
 // THE single converter "requested clock time → real free slot". The server owns this:
@@ -478,15 +578,22 @@ export async function executeV4Tool(
     case "get_services": {
       const services = await loadAiVisibleServicesForSalon(db, input.salon.salonId);
       return {
-        services: services.map((s: any) => ({
-          id: s.id,
-          name: s.name,
-          category: s.category,
-          price:
-            s.price_type === "range" ? `${s.price}–${s.price_max} сом` : `${s.price} сом`,
-          price_type: s.price_type,
-          duration_min: s.duration_min,
-        })),
+        services: services.map((s: any) => {
+          const isRange = s.price_type === "range";
+          return {
+            id: s.id,
+            name: s.name,
+            category: s.category,
+            // Numeric bounds so the model never parses a price out of a string. For a range
+            // service, any agreed price MUST stay within [price_min, price_max] (see the
+            // price_override clamp on booking). For a fixed price, min == max.
+            price_min: s.price,
+            price_max: isRange ? s.price_max : s.price,
+            price_type: s.price_type,
+            price_label: isRange ? `${s.price}–${s.price_max} сом` : `${s.price} сом`,
+            duration_min: s.duration_min,
+          };
+        }),
       };
     }
 
@@ -497,7 +604,16 @@ export async function executeV4Tool(
         args.service_id as string,
         (args.branch_id as string | null) ?? flags.selectedBranchId ?? null,
       );
-      return { masters: masters.map((m) => ({ id: m.id, name: m.name })) };
+      return {
+        masters: masters.map((m) => ({
+          id: m.id,
+          name: m.name,
+          // Specialization / short bio let the assistant recommend by strength ("по сложному
+          // окрашиванию — Айгерим"). Trim bio so the tool payload stays small.
+          specialization: m.specialization || null,
+          bio_short: m.bio ? String(m.bio).slice(0, 200) : null,
+        })),
+      };
     }
 
     case "get_available_slots": {
@@ -613,7 +729,16 @@ export async function executeV4Tool(
         _addon_ids: [],
         _source: "ai_assistant",
       };
-      if (args.price_override != null) rpcArgs._price_override = args.price_override;
+      if (args.price_override != null) {
+        // Clamp the agreed price into the service's [min, max] range so the model can never
+        // book below the floor or above the ceiling of a range-priced service.
+        rpcArgs._price_override = await clampPriceOverride(
+          db,
+          input.salon.salonId,
+          args.service_id as string,
+          Number(args.price_override),
+        );
+      }
       const { data: newId, error } = await db.rpc("create_appointment", rpcArgs);
       if (error) return { success: false, error: error.message };
       flags.appointmentId = newId as string;
@@ -707,6 +832,20 @@ export async function executeV4Tool(
       return { success: true, note: "Диалог помечен для живого администратора." };
     }
 
+    case "remember_photo": {
+      const note: PhotoNote = {
+        ts: new Date().toISOString(),
+        kind: String(args.kind ?? "other"),
+        summary: String(args.summary ?? "").slice(0, 500),
+        ...(args.service_hint ? { service_hint: String(args.service_hint).slice(0, 120) } : {}),
+        ...(Array.isArray(args.issues) ? { issues: args.issues.map(String).slice(0, 6) } : {}),
+        ...(Array.isArray(args.needs) ? { needs: args.needs.map(String).slice(0, 6) } : {}),
+        ...(args.price_band ? { price_band: String(args.price_band).slice(0, 60) } : {}),
+      };
+      flags.photoNotes.push(note);
+      return { success: true, note: "Разбор фото сохранён — вернётся тебе в контексте на след. ходах." };
+    }
+
     default:
       return { error: `Unknown tool: ${name}` };
   }
@@ -765,11 +904,15 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   const apiKey = process.env.GEMINI_API_KEY ?? "";
 
   const debug: WaAgentResult["debug"] = { actions: [], errors: [] };
+  const priorPhotoNotes: PhotoNote[] = Array.isArray((input.stateData as any).photo_notes)
+    ? ((input.stateData as any).photo_notes as PhotoNote[])
+    : [];
   const flags: V4RunFlags = {
     appointmentId: null,
     selectedBranchId: input.selectedBranchId,
     needsHuman: false,
     escalateReason: null,
+    photoNotes: [...priorPhotoNotes],
   };
 
   const v4History: GeminiV2Content[] = ((input.stateData as any).v4_history ??
@@ -953,6 +1096,9 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     greeted: true,
     ...(flags.needsHuman ? { needs_human: true } : {}),
     ...({ v4_history: historyToSave } as any),
+    // Keep the most recent photo analyses so a follow-up ("а сколько за это?") a turn later
+    // still has the master's read of the image even though the pixels are gone.
+    ...(flags.photoNotes.length ? ({ photo_notes: flags.photoNotes.slice(-PHOTO_NOTES_CAP) } as any) : {}),
   };
 
   // On escalation, hand the webhook a plain-text alert for the salon admin's own WhatsApp
