@@ -8,6 +8,7 @@ import {
   greenApiDownloadFile,
   isLikelyNativeGreetingRace,
   normalizeChatIdToPhone,
+  ownerPhoneMatches,
   renderInteractiveAsText,
   runWaAgentV3,
   transcribeAudio,
@@ -311,11 +312,16 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         const ownerNotifyPhone = secrets.owner_notify_phone
           ? normalizeChatIdToPhone(secrets.owner_notify_phone)
           : "";
-        if (
-          textBody?.trim().toLowerCase() === "/restart" &&
-          ownerNotifyPhone &&
-          phone === ownerNotifyPhone
-        ) {
+        const isRestartCmd = textBody?.trim().toLowerCase() === "/restart";
+        // Log rejected /restart so a misconfigured owner_notify_phone is diagnosable (it silently
+        // no-op'd before). /restart only ever clears the SENDER's own conversation, so a tolerant
+        // owner match is safe.
+        if (isRestartCmd && !ownerPhoneMatches(phone, ownerNotifyPhone)) {
+          console.warn(
+            `[wa] /restart ignored: sender ${phone} does not match owner_notify_phone ${ownerNotifyPhone || "(unset)"}`,
+          );
+        }
+        if (isRestartCmd && ownerPhoneMatches(phone, ownerNotifyPhone)) {
           const resetIso = new Date().toISOString();
           // Drop any queued-but-unprocessed inbound so the fresh session starts truly clean.
           await supabaseAdmin

@@ -174,6 +174,19 @@ export function normalizeChatIdToPhone(chatId: string): string {
   return chatId.replace(/@c\.us$/, "").replace(/[^\d]/g, "");
 }
 
+// Does an inbound sender phone belong to the salon owner (owner_notify_phone)? Both are reduced
+// to digits, then compared exactly OR by their last 9 digits — so a country-code/format mismatch
+// (e.g. owner saved as "0700…" but WhatsApp sends "996700…") still matches. Used to gate the
+// hidden /restart test command; a wrong owner_notify_phone was why /restart silently no-op'd.
+export function ownerPhoneMatches(senderPhone: string, ownerPhone: string): boolean {
+  const a = (senderPhone ?? "").replace(/[^\d]/g, "");
+  const b = (ownerPhone ?? "").replace(/[^\d]/g, "");
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (a.length < 9 || b.length < 9) return false;
+  return a.slice(-9) === b.slice(-9);
+}
+
 export async function greenApiSendMessage(
   creds: GreenApiCreds,
   chatId: string,
