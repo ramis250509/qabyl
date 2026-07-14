@@ -186,6 +186,7 @@ export function buildSystemPromptV4(input: WaAgentInput, closedDates: string[] =
     `- Темп: не дави записью и не спеши закончить. Сними сомнения и возражения (цена, безопасность, «подумаю»), и лишь когда клиент определился — ненавязчиво предложи подобрать время.`,
     `- С ПЕРВОГО сообщения определи цель клиента (узнать цену, подобрать услугу, записаться, перенести или отменить запись, узнать свободное время, консультация, оценка по фото, вопрос о процедуре) и сразу веди подходящий сценарий, не переспрашивая лишнего.`,
     `- ПОМНИ ВЕСЬ КОНТЕКСТ диалога: имя, дату, время, услугу, длину/тип волос, присланные фото и любые уже названные детали. НИКОГДА не переспрашивай то, что клиент уже сообщил.`,
+    `- ПОСТОЯННЫЙ КЛИЕНТ: в начале разговора один раз вызови get_client_context. Если is_returning=true — тепло узнай знакомого (например «рады снова видеть 🙂»), можешь мягко опереться на preferred_master («записать к вашему мастеру, к <имя>?») и на прошлые услуги. НЕ переспрашивай то, что и так известно, и НЕ приписывай визиты, которых нет. Новому клиенту (is_returning=false) — обычное знакомство, без «снова».`,
     `- ПАМЯТЬ О ФОТО: когда клиент присылает фото — проанализируй его как мастер и СРАЗУ вызови remember_photo (kind, summary, при оценке price_band, при необходимости issues/needs). Пиксели фото исчезают после этого хода, поэтому если не сохранишь — потеряешь. Ниже в блоке «РАЗБОР РАНЕЕ ПРИСЛАННЫХ ФОТО» вернётся то, что ты уже видел — опирайся на него и НЕ проси то же фото снова.`,
     ...(renderPhotoNotes((input.stateData as any)?.photo_notes)
       ? [
@@ -344,6 +345,12 @@ const V4_TOOL_DECLARATIONS = [
   {
     name: "get_my_appointments",
     description: "Предстоящие записи этого клиента (для отмены/переноса).",
+    parameters: { type: "object", properties: {} },
+  },
+  {
+    name: "get_client_context",
+    description:
+      "Узнать, постоянный ли это клиент: прошлые визиты, любимый мастер, какие услуги делал. Вызывай ОДИН раз в начале разговора, чтобы узнать знакомого и не переспрашивать известное. is_returning=false — новый клиент.",
     parameters: { type: "object", properties: {} },
   },
   {
@@ -932,6 +939,46 @@ export async function executeV4Tool(
           time: formatTimeInTz(a.starts_at, tz),
           starts_at: a.starts_at,
         })),
+      };
+    }
+
+    case "get_client_context": {
+      // Returning-client recognition aggregated from PAST appointments (no separate profile
+      // table needed for MVP). "Past" = started before now and not cancelled.
+      const { data } = await db
+        .from("appointments")
+        .select("starts_at, status, services(name), masters(id, name)")
+        .eq("salon_id", input.salon.salonId)
+        .eq("client_phone", input.client.phone)
+        .neq("status", "cancelled")
+        .lt("starts_at", new Date().toISOString())
+        .order("starts_at", { ascending: false })
+        .limit(50);
+      const past = (data ?? []) as any[];
+      if (past.length === 0) return { is_returning: false, visit_count: 0 };
+      const masterCounts = new Map<string, { id: string; name: string; visits: number }>();
+      const services = new Set<string>();
+      for (const a of past) {
+        if (a.services?.name) services.add(a.services.name);
+        const mid = a.masters?.id;
+        if (mid) {
+          const c = masterCounts.get(mid) ?? { id: mid, name: a.masters?.name ?? "?", visits: 0 };
+          c.visits += 1;
+          masterCounts.set(mid, c);
+        }
+      }
+      const preferred = [...masterCounts.values()].sort((a, b) => b.visits - a.visits)[0] ?? null;
+      const last = past[0];
+      return {
+        is_returning: true,
+        visit_count: past.length,
+        last_visit: {
+          date: formatDateInTz(last.starts_at, tz),
+          service: last.services?.name ?? null,
+          master: last.masters?.name ?? null,
+        },
+        services_used: [...services].slice(0, 10),
+        preferred_master: preferred,
       };
     }
 

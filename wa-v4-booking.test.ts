@@ -240,12 +240,14 @@ function makeTableDb(tables: Record<string, any[]>, rpc?: (n: string, a: any) =>
     const b: any = {
       select: () => b,
       eq: () => b,
+      neq: () => b,
       in: () => b,
       gte: () => b,
       lte: () => b,
       gt: () => b,
       lt: () => b,
-      order: () => Promise.resolve({ data: rows }),
+      order: () => b,
+      limit: () => b,
       maybeSingle: () => Promise.resolve({ data: rows[0] ?? null }),
       then: (resolve: any) => resolve({ data: rows }),
     };
@@ -312,6 +314,42 @@ describe("loadSalonClosedDates — whole-salon days off for the prompt", () => {
     const closed = await loadSalonClosedDates(db, "s1", "2026-07-14", 14);
     expect(closed).toContain("2026-07-15");
     expect(closed).not.toContain("2026-07-16");
+  });
+});
+
+// Phase D: returning-client recognition aggregated from past appointments.
+describe("get_client_context — returning client from past visits", () => {
+  const flags = { appointmentId: null, selectedBranchId: null, needsHuman: false, escalateReason: null, photoNotes: [] };
+  const clientInput = {
+    salon: { salonId: "s1", salonName: "Тест", timezone: TZ },
+    selectedBranchId: null,
+    salonInfo: { working_hours: null },
+    config: { manage_cutoff_hours: 0 },
+    client: { phone: "996700000001" },
+  } as any;
+
+  test("no past visits → is_returning:false", async () => {
+    const db = makeTableDb({ appointments: [] });
+    const r = await executeV4Tool("get_client_context", {}, clientInput, db, flags as any);
+    expect(r.is_returning).toBe(false);
+    expect(r.visit_count).toBe(0);
+  });
+
+  test("past visits → returning, preferred master = most frequent, services aggregated", async () => {
+    const db = makeTableDb({
+      appointments: [
+        // ordered desc by starts_at (newest first), as the query returns them
+        { starts_at: "2026-07-10T05:00:00Z", status: "completed", services: { name: "Кератин" }, masters: { id: "m1", name: "Айгерим" } },
+        { starts_at: "2026-06-01T05:00:00Z", status: "completed", services: { name: "Стрижка" }, masters: { id: "m1", name: "Айгерим" } },
+        { starts_at: "2026-05-01T05:00:00Z", status: "confirmed", services: { name: "Маникюр" }, masters: { id: "m2", name: "Нургуль" } },
+      ],
+    });
+    const r = await executeV4Tool("get_client_context", {}, clientInput, db, flags as any);
+    expect(r.is_returning).toBe(true);
+    expect(r.visit_count).toBe(3);
+    expect(r.preferred_master).toEqual({ id: "m1", name: "Айгерим", visits: 2 });
+    expect(r.services_used).toEqual(expect.arrayContaining(["Кератин", "Стрижка", "Маникюр"]));
+    expect(r.last_visit.service).toBe("Кератин");
   });
 });
 
