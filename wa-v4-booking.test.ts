@@ -8,6 +8,8 @@ import {
   classifyEmptyDay,
   executeV4Tool,
   clampPriceOverride,
+  isDayWorkableForService,
+  loadSalonClosedDates,
 } from "@/lib/wa-agent-v4.server";
 
 const TZ = "Asia/Bishkek"; // UTC+6, no DST
@@ -228,5 +230,113 @@ describe("remember_photo — persists structured photo analysis into flags", () 
     expect(flags.photoNotes[0].price_band).toBe("3200–3500 сом");
     expect(flags.photoNotes[0].issues).toEqual(["сухие концы"]);
     expect(typeof flags.photoNotes[0].ts).toBe("string");
+  });
+});
+
+// A table-dispatching Supabase mock: from(table) returns a thenable query builder that ignores
+// filters and resolves to the preset rows for that table. Enough to exercise the schedule reads.
+function makeTableDb(tables: Record<string, any[]>, rpc?: (n: string, a: any) => Promise<any>) {
+  const builder = (rows: any[]) => {
+    const b: any = {
+      select: () => b,
+      eq: () => b,
+      in: () => b,
+      gte: () => b,
+      lte: () => b,
+      gt: () => b,
+      lt: () => b,
+      order: () => Promise.resolve({ data: rows }),
+      maybeSingle: () => Promise.resolve({ data: rows[0] ?? null }),
+      then: (resolve: any) => resolve({ data: rows }),
+    };
+    return b;
+  };
+  return {
+    from: (name: string) => builder(tables[name] ?? []),
+    rpc: rpc ?? (async () => ({ data: null })),
+  } as any;
+}
+const masterRow = (id: string, svc: string) => ({
+  id, name: id, branch_id: null, sort_order: 0, specialization: null, bio: null,
+  master_services: [{ service_id: svc }],
+});
+
+// The day-off bug fix: a one-off выходной is stored in master_day_overrides (kind='off'), NOT in
+// salons.working_hours — so availability reasons must consult the real schedule tables.
+describe("isDayWorkableForService — day-off vs working day (real sources)", () => {
+  const D = "2026-07-15"; // Wednesday
+  test("per-date override kind=off → NOT workable (→ closed_that_day)", async () => {
+    const db = makeTableDb({
+      masters: [masterRow("m1", "svc")],
+      master_day_overrides: [{ master_id: "m1", is_off: true, kind: "off", intervals: null }],
+      master_schedules: [{ master_id: "m1" }], // has a weekly schedule, but the override wins
+    });
+    expect(await isDayWorkableForService({ db, input, serviceId: "svc", date: D })).toBe(false);
+  });
+  test("no override + has weekly schedule → workable (→ fully_booked when no free slot)", async () => {
+    const db = makeTableDb({
+      masters: [masterRow("m1", "svc")],
+      master_day_overrides: [],
+      master_schedules: [{ master_id: "m1" }],
+    });
+    expect(await isDayWorkableForService({ db, input, serviceId: "svc", date: D })).toBe(true);
+  });
+  test("no schedule that weekday → NOT workable", async () => {
+    const db = makeTableDb({
+      masters: [masterRow("m1", "svc")],
+      master_day_overrides: [],
+      master_schedules: [],
+    });
+    expect(await isDayWorkableForService({ db, input, serviceId: "svc", date: D })).toBe(false);
+  });
+  test("one master off but another works → workable", async () => {
+    const db = makeTableDb({
+      masters: [masterRow("m1", "svc"), masterRow("m2", "svc")],
+      master_day_overrides: [{ master_id: "m1", is_off: true, kind: "off", intervals: null }],
+      master_schedules: [{ master_id: "m2" }],
+    });
+    expect(await isDayWorkableForService({ db, input, serviceId: "svc", date: D })).toBe(true);
+  });
+});
+
+describe("loadSalonClosedDates — whole-salon days off for the prompt", () => {
+  test("date off for ALL active masters → listed; date off for only one → not listed", async () => {
+    const db = makeTableDb({
+      masters: [{ id: "m1" }, { id: "m2" }],
+      master_day_overrides: [
+        { date: "2026-07-15", master_id: "m1" },
+        { date: "2026-07-15", master_id: "m2" }, // both off → closed
+        { date: "2026-07-16", master_id: "m1" }, // only one off → open
+      ],
+    });
+    const closed = await loadSalonClosedDates(db, "s1", "2026-07-14", 14);
+    expect(closed).toContain("2026-07-15");
+    expect(closed).not.toContain("2026-07-16");
+  });
+});
+
+// The false-busy bug: a time past the working window must read as outside_hours, not «занято».
+describe("check_time — outside_hours vs time_taken", () => {
+  const flags = { appointmentId: null, selectedBranchId: null, needsHuman: false, escalateReason: null, photoNotes: [] };
+  const cfgInput = { ...input, config: { manage_cutoff_hours: 0 } } as any;
+  test("17:00 asked, only morning free (9:30–11:15) → outside_hours, not time_taken", async () => {
+    const db = makeDb(DATE, ["09:30", "10:00", "10:30", "11:00", "11:15"]);
+    const r = await executeV4Tool(
+      "check_time",
+      { service_id: "svc", date: DATE, master_id: "m1", time: "17:00" },
+      cfgInput, db, flags as any,
+    );
+    expect(r.available).toBe(false);
+    expect(r.reason).toBe("outside_hours");
+  });
+  test("11:00 asked and it is a gap between free slots (10:00 & 12:00) → time_taken", async () => {
+    const db = makeDb(DATE, ["10:00", "12:00"]);
+    const r = await executeV4Tool(
+      "check_time",
+      { service_id: "svc", date: DATE, master_id: "m1", time: "11:00" },
+      cfgInput, db, flags as any,
+    );
+    expect(r.available).toBe(false);
+    expect(r.reason).toBe("time_taken");
   });
 });

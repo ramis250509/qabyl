@@ -117,15 +117,22 @@ function renderPhotoNotes(notes: PhotoNote[] | undefined): string {
     .join("\n");
 }
 
-function buildSystemPromptV4(input: WaAgentInput): string {
+function buildSystemPromptV4(input: WaAgentInput, closedDates: string[] = []): string {
   const { salon, config, branches, salonInfo } = input;
   const { isoLocalDate, humanDate, hour, minute } = nowInTz(salon.timezone);
   const industryKey = normalizeIndustry(config.industry);
   const ind = INDUSTRY_EXPERT[industryKey];
   const knowledgeBook = renderKnowledgeAnswers(industryKey, config.knowledge_answers);
-  const dates = buildDateMap(salon.timezone, 14)
-    .map((d) => `${d.iso} = ${d.relative} (${d.label})`)
-    .join("\n");
+  const dateMap = buildDateMap(salon.timezone, 14);
+  const dates = dateMap.map((d) => `${d.iso} = ${d.relative} (${d.label})`).join("\n");
+  // Upcoming whole-salon days-off (from master_day_overrides) with human labels, so the
+  // assistant can say «в этот день у нас выходной» immediately — without first asking for a
+  // service just to discover the day is closed.
+  const closedSet = new Set(closedDates);
+  const closedLine = dateMap
+    .filter((d) => closedSet.has(d.iso))
+    .map((d) => `${d.label} (${d.iso})`)
+    .join("; ");
   const hours = renderWorkingHours(salonInfo?.working_hours);
   const langs = (config.languages?.length ? config.languages : ["ru"]).join(", ");
   const cutoff = config.manage_cutoff_hours ?? 0;
@@ -149,6 +156,9 @@ function buildSystemPromptV4(input: WaAgentInput): string {
     `СЕГОДНЯ: ${humanDate} (${isoLocalDate}), время ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")} (${salon.timezone}).`,
     `ТАБЛИЦА ДАТ (перевод «завтра», «в пятницу», «бүгүнкүгө» в YYYY-MM-DD):`,
     dates,
+    closedLine
+      ? `ВЫХОДНЫЕ ДНИ (салон НЕ работает, записать нельзя): ${closedLine}. Если клиент просит запись на такой день — сразу скажи, что в этот день выходной, и предложи ближайший рабочий день. НЕ спрашивай услугу и НЕ говори «занято» для этих дат.`
+      : "",
     ``,
     `ИНФОРМАЦИЯ О САЛОНЕ:`,
     salonInfo?.address ? `Адрес: ${salonInfo.address}` : "",
@@ -210,6 +220,7 @@ function buildSystemPromptV4(input: WaAgentInput): string {
     `КОГДА КЛИЕНТ ГОТОВ ЗАПИСАТЬСЯ (не раньше):`,
     branches.length > 1 ? `- Если филиал не выбран — уточни, куда удобнее.` : "",
     `- РАБОТА С КАЛЕНДАРЁМ (СТРОГО): о свободном времени говори ТОЛЬКО по данным инструментов, никогда не угадывай. Спросил про день — вызови get_available_slots на эту дату. Клиент назвал КОНКРЕТНЫЙ час («17:00 барбы?») — вызови check_time на эту дату и час и ответь по факту. НИКОГДА не говори, что время занято, пока не проверил его инструментом; если инструмент показал время свободным — оно свободно.`,
+    `- check_time возвращает reason: ok (свободно, можно записывать) / time_taken (это время уже занято — предложи из nearby_free_times) / outside_hours (в это время салон/мастер уже не работает или процедура не успеет закончиться — НЕ говори «занято»; скажи, что на этот час не получится, и предложи времена из nearby_free_times) / closed_that_day (выходной) / fully_booked (весь день занят). Никогда не называй «outside_hours» занятостью.`,
     `- get_available_slots возвращает ПОЛНЫЙ список свободных времён начала на дату (учитывает длительность процедуры и занятость) плюс поле reason. reason=closed_that_day → в этот день салон НЕ работает (выходной): так и скажи и предложи другой день, НЕ говори «занято». reason=fully_booked → на эту дату всё занято, предложи ближайший день. reason=part_unavailable → на запрошенную часть дня (утро/день/вечер) окошек нет, НО в этот же день есть другое время: предложи эти времена из free_times («вечером всё занято, но есть днём в 14:00 или 16:00»), НЕ говори «всё занято» и НЕ перескакивай на другой день. Никогда не выдавай «выходной» за «занято» и наоборот.`,
     `- ВРЕМЯ ЗАКРЫТИЯ (СТРОГО): никогда не предлагай и не подтверждай время, если услуга не успеет закончиться до закрытия салона. Пример: салон работает до 20:00, услуга длится 3 часа — значит запись возможна не позже 17:00, а 18:00/19:00 предлагать нельзя. Не считай это в уме — get_available_slots уже отфильтровал такие времена, предлагай ТОЛЬКО из его ответа. Если клиент сам просит время, которое не помещается до закрытия, мягко объясни и предложи ближайшее подходящее из get_available_slots (в т.ч. на другой день).`,
     `- Клиенту показывай не весь список, а 2–4 удобно РАЗНЕСЁННЫХ варианта (например утро, день, вечер), а не подряд через 15 минут. Пример: «Есть 10:00, 13:00 и 16:00 — что удобнее?»`,
@@ -429,17 +440,137 @@ export function normHHMM(t: string): string | null {
   return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
 }
 
-// Why is a day empty: salon is closed that weekday (day off) vs genuinely fully booked.
-// Lets the assistant tell the truth instead of a blanket "занято". working_hours is keyed
-// mon..sun with values like "10:00–20:00" or "Выходной".
+// Weekday for a YYYY-MM-DD, 0=Sunday..6=Saturday — matches Postgres EXTRACT(DOW) used by the
+// get_available_slots SQL, so TS and SQL agree on which day a date is.
+function dowOf(date: string): number {
+  return new Date(`${date}T12:00:00Z`).getUTCDay();
+}
+
+// AUTHORITATIVE "is this date a working day for this service?" — mirrors the schedule logic of
+// the get_available_slots SQL (per-date master_day_overrides off/workday, weekly master_schedules,
+// branch working_hours) so we can tell «выходной» apart from «всё занято». This is the FIX for
+// the day-off bug: a one-off day-off is stored as master_day_overrides(kind='off') for every
+// master (see SalonDayOverridesCard), NOT in salons.working_hours — so the old classifyEmptyDay,
+// which only read the weekly salons.working_hours map, wrongly reported "fully_booked".
+// Bookings are intentionally ignored here: this answers "is anyone scheduled to work at all?".
+export async function isDayWorkableForService(opts: {
+  db: AdminClient;
+  input: WaAgentInput;
+  serviceId: string;
+  date: string;
+  branchId?: string | null;
+}): Promise<boolean> {
+  try {
+    const branchId = opts.branchId ?? opts.input.selectedBranchId ?? null;
+    const masters = await loadMastersForService(
+      opts.db,
+      opts.input.salon.salonId,
+      opts.serviceId,
+      branchId,
+    );
+    if (masters.length === 0) return false;
+    const dow = dowOf(opts.date);
+    const ids = masters.map((m) => m.id);
+
+    const [overridesRes, schedRes] = await Promise.all([
+      opts.db
+        .from("master_day_overrides")
+        .select("master_id, is_off, kind, intervals")
+        .in("master_id", ids)
+        .eq("date", opts.date),
+      opts.db
+        .from("master_schedules")
+        .select("master_id")
+        .in("master_id", ids)
+        .eq("weekday", dow),
+    ]);
+    const overrides = new Map<string, any>();
+    for (const o of ((overridesRes as any).data as any[]) ?? []) overrides.set(o.master_id, o);
+    const scheduled = new Set<string>();
+    for (const s of ((schedRes as any).data as any[]) ?? []) scheduled.add(s.master_id);
+
+    // Branch closed that weekday? branches.working_hours is keyed by numeric dow with an
+    // array-of-intervals value; an empty array means closed. null/absent = no constraint.
+    if (branchId) {
+      const { data: b } = await opts.db
+        .from("branches")
+        .select("working_hours")
+        .eq("id", branchId)
+        .maybeSingle();
+      const wh = (b as any)?.working_hours;
+      if (wh && typeof wh === "object") {
+        const iv = wh[String(dow)];
+        if (Array.isArray(iv) && iv.length === 0) return false;
+      }
+    }
+
+    for (const m of masters) {
+      const ov = overrides.get(m.id);
+      if (ov && (ov.is_off || ov.kind === "off")) continue; // this master off this date
+      const workdayOverride =
+        ov && ov.kind === "workday" && Array.isArray(ov.intervals) && ov.intervals.length > 0;
+      if (workdayOverride || scheduled.has(m.id)) return true; // at least one master works
+    }
+    return false;
+  } catch {
+    // On any query failure, don't wrongly claim "выходной" — fall back to "fully_booked".
+    return true;
+  }
+}
+
+// Dates in the next `days` on which the WHOLE salon is closed (one-off days-off applied to all
+// masters via SalonDayOverridesCard → master_day_overrides note='salon_bulk', kind='off').
+// Injected into the prompt so the assistant can announce «выходной» BEFORE a service is chosen,
+// instead of asking "на какую услугу?" for a day it can't book at all.
+export async function loadSalonClosedDates(
+  db: AdminClient,
+  salonId: string,
+  fromIso: string,
+  days: number,
+): Promise<string[]> {
+  try {
+    const to = new Date(`${fromIso}T12:00:00Z`);
+    to.setUTCDate(to.getUTCDate() + days);
+    const toIso = to.toISOString().slice(0, 10);
+    // salon_bulk offs are written per-master; confirm the date is off for EVERY active master
+    // so we never mislabel a single master's day-off as a whole-salon closure.
+    const [offsRes, mastersRes] = await Promise.all([
+      db
+        .from("master_day_overrides")
+        .select("date, master_id")
+        .eq("note", "salon_bulk")
+        .eq("kind", "off")
+        .gte("date", fromIso)
+        .lte("date", toIso),
+      db.from("masters").select("id").eq("salon_id", salonId).eq("is_active", true),
+    ]);
+    const activeIds = new Set(((mastersRes as any).data as any[])?.map((m) => m.id) ?? []);
+    if (activeIds.size === 0) return [];
+    const byDate = new Map<string, Set<string>>();
+    for (const r of ((offsRes as any).data as any[]) ?? []) {
+      if (!activeIds.has(r.master_id)) continue;
+      const set = byDate.get(r.date) ?? new Set<string>();
+      set.add(r.master_id);
+      byDate.set(r.date, set);
+    }
+    return [...byDate.entries()]
+      .filter(([, set]) => set.size >= activeIds.size)
+      .map(([date]) => date)
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+// Kept for tests / legacy: weekly-map based day-off guess. Superseded by isDayWorkableForService
+// for live reason codes. working_hours is keyed mon..sun with values like "10:00–20:00"/"Выходной".
 export function classifyEmptyDay(
   date: string,
   wh: Record<string, string> | null | undefined,
 ): "closed_that_day" | "fully_booked" {
   if (!wh) return "fully_booked"; // hours unknown → don't wrongly claim closed
   const keys = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
-  const dow = new Date(`${date}T12:00:00Z`).getUTCDay(); // noon UTC → weekday stable
-  const v = wh[keys[dow]];
+  const v = wh[keys[dowOf(date)]];
   if (!v || /выход|closed|off|не\s*работ|дем\s*алыс|дэм\s*алыс|жабык/i.test(v)) {
     return "closed_that_day";
   }
@@ -640,10 +771,15 @@ export async function executeV4Tool(
           reason = "part_unavailable";
           slots = daySlots; // surface the day's other free times
         } else {
-          reason = classifyEmptyDay(args.date as string, input.salonInfo?.working_hours);
+          // Whole day empty: is it a day-off (schedule) or a booked-out working day?
+          reason = (await isDayWorkableForService(commonArgs))
+            ? "fully_booked"
+            : "closed_that_day";
         }
       } else {
-        reason = classifyEmptyDay(args.date as string, input.salonInfo?.working_hours);
+        reason = (await isDayWorkableForService(commonArgs))
+          ? "fully_booked"
+          : "closed_that_day";
       }
       const times = slots.map((s) => formatTimeInTz(s.start, tz));
       const partRu =
@@ -685,17 +821,36 @@ export async function executeV4Tool(
       });
       const times = slots.map((s) => formatTimeInTz(s.start, tz));
       const hit = slots.find((s) => formatTimeInTz(s.start, tz) === hhmm);
-      // Distinguish "closed that day" from "occupied" so the assistant phrases it correctly.
-      const reason = hit
-        ? "ok"
-        : slots.length === 0
-          ? classifyEmptyDay(args.date as string, input.salonInfo?.working_hours)
-          : "time_taken";
+      // Tell apart four cases so the assistant never falsely says «занято»:
+      //  - ok            → time is free
+      //  - closed_that_day → nobody works that date (day-off)
+      //  - fully_booked  → working day, but no free slot at all
+      //  - outside_hours → there ARE free slots, but the asked time is beyond the window
+      //                    (past closing / service doesn't fit) — NOT booked
+      //  - time_taken    → free slots exist on both sides, so the asked time is a real gap (booked)
+      let reason: string;
+      if (hit) {
+        reason = "ok";
+      } else if (slots.length === 0) {
+        reason = (await isDayWorkableForService({
+          db,
+          input,
+          serviceId: args.service_id as string,
+          date: args.date as string,
+          branchId: (args.branch_id as string | null) ?? flags.selectedBranchId ?? null,
+        }))
+          ? "fully_booked"
+          : "closed_that_day";
+      } else {
+        // HH:MM strings are zero-padded, so lexicographic compare == chronological.
+        const outside = hhmm > times[times.length - 1] || hhmm < times[0];
+        reason = outside ? "outside_hours" : "time_taken";
+      }
       return {
         requested: hhmm,
         date: args.date,
         available: Boolean(hit),
-        reason, // ok | time_taken | closed_that_day | fully_booked
+        reason, // ok | time_taken | outside_hours | closed_that_day | fully_booked
         ...(hit ? { slot_start: hit.start, master_ids: hit.master_ids } : {}),
         nearby_free_times: times.slice(0, 8),
       };
@@ -977,7 +1132,13 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     };
   }
 
-  const systemPrompt = buildSystemPromptV4(input);
+  const closedDates = await loadSalonClosedDates(
+    db,
+    input.salon.salonId,
+    nowInTz(input.salon.timezone).isoLocalDate,
+    14,
+  );
+  const systemPrompt = buildSystemPromptV4(input, closedDates);
   const contents: GeminiV2Content[] = [...v4History, { role: "user", parts: clientParts }];
 
   // One agentic pass: loop tool-calls until the model returns a plain-text reply. Mutates
