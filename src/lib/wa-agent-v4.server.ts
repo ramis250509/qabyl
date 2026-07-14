@@ -479,15 +479,19 @@ export async function isDayWorkableForService(opts: {
   serviceId: string;
   date: string;
   branchId?: string | null;
+  masterId?: string | null; // when the client named a specific master, judge only that master
 }): Promise<boolean> {
   try {
     const branchId = opts.branchId ?? opts.input.selectedBranchId ?? null;
-    const masters = await loadMastersForService(
+    let masters = await loadMastersForService(
       opts.db,
       opts.input.salon.salonId,
       opts.serviceId,
       branchId,
     );
+    // Client asked for a specific master → the day is "workable" only if THAT master works,
+    // so "запишите к Айгерим в среду" (её выходной) reads as closed, not "всё занято".
+    if (opts.masterId) masters = masters.filter((m) => m.id === opts.masterId);
     if (masters.length === 0) return false;
     const dow = dowOf(opts.date);
     const ids = masters.map((m) => m.id);
@@ -857,6 +861,7 @@ export async function executeV4Tool(
           input,
           serviceId: args.service_id as string,
           date: args.date as string,
+          masterId: (args.master_id as string) || undefined,
           branchId: (args.branch_id as string | null) ?? flags.selectedBranchId ?? null,
         }))
           ? "fully_booked"

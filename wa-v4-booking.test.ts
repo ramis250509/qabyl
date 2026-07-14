@@ -299,6 +299,17 @@ describe("isDayWorkableForService — day-off vs working day (real sources)", ()
     });
     expect(await isDayWorkableForService({ db, input, serviceId: "svc", date: D })).toBe(true);
   });
+  test("named master is off (another works) → NOT workable for that master", async () => {
+    const db = makeTableDb({
+      masters: [masterRow("m1", "svc"), masterRow("m2", "svc")],
+      master_day_overrides: [{ master_id: "m1", is_off: true, kind: "off", intervals: null }],
+      master_schedules: [{ master_id: "m2" }],
+    });
+    // Client asked specifically for m1, who is off → closed for them, even though m2 works.
+    expect(
+      await isDayWorkableForService({ db, input, serviceId: "svc", date: D, masterId: "m1" }),
+    ).toBe(false);
+  });
 });
 
 describe("loadSalonClosedDates — whole-salon days off for the prompt", () => {
