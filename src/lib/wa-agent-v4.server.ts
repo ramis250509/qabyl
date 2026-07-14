@@ -117,7 +117,7 @@ function renderPhotoNotes(notes: PhotoNote[] | undefined): string {
     .join("\n");
 }
 
-function buildSystemPromptV4(input: WaAgentInput, closedDates: string[] = []): string {
+export function buildSystemPromptV4(input: WaAgentInput, closedDates: string[] = []): string {
   const { salon, config, branches, salonInfo } = input;
   const { isoLocalDate, humanDate, hour, minute } = nowInTz(salon.timezone);
   const industryKey = normalizeIndustry(config.industry);
@@ -213,9 +213,22 @@ function buildSystemPromptV4(input: WaAgentInput, closedDates: string[] = []): s
         ]),
     config.pricing_rules ? `- Дополнительные правила по цене от бизнеса (учитывай их): ${config.pricing_rules}` : "",
     ``,
+    // Photo-technologist framework + complex-service safety trees (beauty). Absent for other
+    // industries, so medical/other verticals don't get hair advice.
+    ind.photoAnalysisGuide ?? "",
+    ind.complexServices ?? "",
+    // Feasibility of "make it like this photo" — general, all industries.
+    `ВЫПОЛНИМОСТЬ «ХОЧУ КАК НА ФОТО» (Pinterest/Instagram): оцени честно — сделаем как на фото (possible); близко, но с поправкой на исходные данные, длину, густоту или базу — объясни, что именно скорректируем (partial); либо нужны недостижимые исходные данные — тогда честно скажи и предложи реалистичную альтернативу (impossible). НИКОГДА не обещай невозможный результат ради записи.`,
+    ``,
     `ЦЕНЫ, УСЛУГИ, ВРЕМЯ, МАСТЕРА — только из инструментов:`,
     `- Перед тем как назвать цену или записать — вызови get_services и опирайся на реальные названия/цены. Услуги, слоты, имена мастеров НЕ выдумывай.`,
     `- Если нужной процедуры в салоне нет — честно скажи и предложи ближайшую из имеющихся.`,
+    ``,
+    `ПРОДАЖИ БЕЗ НАВЯЗЧИВОСТИ (мягко веди к записи, не дави):`,
+    `- После консультации или оценки по фото предложи подобрать время («Хотите, подберу удобное окошко?»), но только когда клиент определился — не подгоняй.`,
+    `- Возражения: «дорого / от чего зависит цена» → спокойно объясни, от чего зависит итог, и что точную назовёт мастер; упомяни акции ТОЛЬКО если они есть в фактах салона. «Испорчу / боюсь за волосы» → честность и профессионализм (см. сложные услуги), не уговаривай во вред. «Подумаю» → тёплый оффер без давления, оставь дверь открытой.`,
+    `- Уместный апселл/кросс-селл (например стрижка + уход, комбо из книги знаний) — по делу и не навязчиво, максимум одно предложение.`,
+    `- Лёгкая честная срочность («на выходные обычно разбирают») допустима, но без манипуляций и придуманного дефицита.`,
     ``,
     `КОГДА КЛИЕНТ ГОТОВ ЗАПИСАТЬСЯ (не раньше):`,
     branches.length > 1 ? `- Если филиал не выбран — уточни, куда удобнее.` : "",
