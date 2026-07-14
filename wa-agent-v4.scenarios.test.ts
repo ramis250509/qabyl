@@ -288,12 +288,14 @@ test("занятый слот: create_appointment на несуществующ�
   const res = await runWaAgentV4(makeInput("Да"));
   expect(res.appointmentId).toBeNull();
   expect(db.appointments).toHaveLength(0);
-  // The model received the slot_taken error in a functionResponse
+  // The model received the slot-not-free signal in a functionResponse (server-authoritative
+  // contract: no such free slot → reason=slot_not_free, never a silent booking on another time).
   const lastReq = geminiRequests[geminiRequests.length - 1];
   const fr = lastReq.contents
     .flatMap((c: any) => c.parts)
     .find((p: any) => p.functionResponse?.name === "create_appointment");
-  expect(fr.functionResponse.response.error).toBe("slot_taken");
+  expect(fr.functionResponse.response.success).toBe(false);
+  expect(fr.functionResponse.response.reason).toBe("slot_not_free");
 });
 
 test("эскалация: escalate_to_human → needs_human + notifyAdminText с номером клиента", async () => {

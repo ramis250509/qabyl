@@ -183,7 +183,7 @@ function buildSystemPromptV4(input: WaAgentInput): string {
     `КОГДА КЛИЕНТ ГОТОВ ЗАПИСАТЬСЯ (не раньше):`,
     branches.length > 1 ? `- Если филиал не выбран — уточни, куда удобнее.` : "",
     `- РАБОТА С КАЛЕНДАРЁМ (СТРОГО): о свободном времени говори ТОЛЬКО по данным инструментов, никогда не угадывай. Спросил про день — вызови get_available_slots на эту дату. Клиент назвал КОНКРЕТНЫЙ час («17:00 барбы?») — вызови check_time на эту дату и час и ответь по факту. НИКОГДА не говори, что время занято, пока не проверил его инструментом; если инструмент показал время свободным — оно свободно.`,
-    `- get_available_slots возвращает ПОЛНЫЙ список свободных времён начала на дату (учитывает длительность процедуры и занятость) плюс поле reason. reason=closed_that_day → в этот день салон НЕ работает (выходной): так и скажи и предложи другой день, НЕ говори «занято». reason=fully_booked → на эту дату всё занято, предложи ближайший день. Никогда не выдавай «выходной» за «занято» и наоборот.`,
+    `- get_available_slots возвращает ПОЛНЫЙ список свободных времён начала на дату (учитывает длительность процедуры и занятость) плюс поле reason. reason=closed_that_day → в этот день салон НЕ работает (выходной): так и скажи и предложи другой день, НЕ говори «занято». reason=fully_booked → на эту дату всё занято, предложи ближайший день. reason=part_unavailable → на запрошенную часть дня (утро/день/вечер) окошек нет, НО в этот же день есть другое время: предложи эти времена из free_times («вечером всё занято, но есть днём в 14:00 или 16:00»), НЕ говори «всё занято» и НЕ перескакивай на другой день. Никогда не выдавай «выходной» за «занято» и наоборот.`,
     `- ВРЕМЯ ЗАКРЫТИЯ (СТРОГО): никогда не предлагай и не подтверждай время, если услуга не успеет закончиться до закрытия салона. Пример: салон работает до 20:00, услуга длится 3 часа — значит запись возможна не позже 17:00, а 18:00/19:00 предлагать нельзя. Не считай это в уме — get_available_slots уже отфильтровал такие времена, предлагай ТОЛЬКО из его ответа. Если клиент сам просит время, которое не помещается до закрытия, мягко объясни и предложи ближайшее подходящее из get_available_slots (в т.ч. на другой день).`,
     `- Клиенту показывай не весь список, а 2–4 удобно РАЗНЕСЁННЫХ варианта (например утро, день, вечер), а не подряд через 15 минут. Пример: «Есть 10:00, 13:00 и 16:00 — что удобнее?»`,
     `- Мастеров несколько и клиенту важно — предложи выбор (get_masters); «всё равно» — выбери сам.`,
@@ -203,7 +203,7 @@ function buildSystemPromptV4(input: WaAgentInput): string {
     `- Здоровье и противопоказания (беременность, аллергии, заболевания, приём лекарств и т.п.): дай общую информацию из базы знаний, но без диагнозов и без медицинских гарантий; порекомендуй очную оценку специалиста или врача.`,
     `- Не обещай «100%» результат и не преувеличивай сроки.`,
     `- create_appointment — только после явного «да» («да», «записывайте», «ооба», «макул»).`,
-    `- slot_taken → извинись, что время заняли, предложи другое.`,
+    `- reason=slot_not_free при записи → извинись, что время только что заняли, и предложи времена из nearest.`,
     `- Не обещай «перезвонить»/«написать позже» — у тебя один ответ за ход.`,
     `- ЭСКАЛАЦИЯ: если клиент жалуется, конфликтует, просит живого человека, ситуация нестандартная или ты НЕ уверен в ответе — вызови escalate_to_human (в reason кратко опиши суть) и вежливо скажи, что передаёшь диалог администратору салона, он скоро ответит. Не придумывай ответ вместо этого.`,
     `- НО обычные вопросы о процедурах, ценах, времени и записи решай сам — уверенно, по базе знаний и инструментам. Эскалация только для действительно сложных/спорных случаев, не по мелочам.`,
@@ -237,7 +237,7 @@ const V4_TOOL_DECLARATIONS = [
   {
     name: "get_available_slots",
     description:
-      "Полный (НЕ обрезанный) список свободных времён начала на дату. Клиенту показывай 2–4 удобно расставленных варианта. Возвращает reason, если свободного времени нет (closed_that_day / fully_booked).",
+      "Полный (НЕ обрезанный) список свободных времён начала на дату. Клиенту показывай 2–4 удобно расставленных варианта. Возвращает reason, если свободного времени нет: closed_that_day (выходной) / fully_booked (весь день занят) / part_unavailable (запрошенная часть дня занята, но в этот же день есть другое время — оно в free_times).",
     parameters: {
       type: "object",
       properties: {
@@ -461,7 +461,7 @@ async function loadFreeSlotsForDay(opts: {
   });
 }
 
-async function executeV4Tool(
+export async function executeV4Tool(
   name: string,
   args: Record<string, any>,
   input: WaAgentInput,
@@ -501,23 +501,40 @@ async function executeV4Tool(
     }
 
     case "get_available_slots": {
-      const slots = await loadFreeSlotsForDay({
+      const part = args.part_of_day as "morning" | "afternoon" | "evening" | undefined;
+      const commonArgs = {
         db,
         input,
         serviceId: args.service_id as string,
         date: args.date as string,
-        part: args.part_of_day as any,
         masterId: (args.master_id as string) || undefined,
         branchId: (args.branch_id as string | null) ?? flags.selectedBranchId ?? null,
-      });
+      };
+      let slots = await loadFreeSlotsForDay({ ...commonArgs, part });
+      let reason: string;
+      if (slots.length > 0) {
+        reason = "ok";
+      } else if (part) {
+        // Part-of-day (утро/день/вечер) filter came back empty. Before saying "занято",
+        // check the rest of the day: if the salon is open at other hours, this is NOT a full
+        // day / day-off — it's just this part. Return those other times so the assistant offers
+        // the SAME day instead of jumping to another date (scenario-3 bug).
+        const daySlots = await loadFreeSlotsForDay({ ...commonArgs });
+        if (daySlots.length > 0) {
+          reason = "part_unavailable";
+          slots = daySlots; // surface the day's other free times
+        } else {
+          reason = classifyEmptyDay(args.date as string, input.salonInfo?.working_hours);
+        }
+      } else {
+        reason = classifyEmptyDay(args.date as string, input.salonInfo?.working_hours);
+      }
       const times = slots.map((s) => formatTimeInTz(s.start, tz));
-      const reason =
-        slots.length > 0
-          ? "ok"
-          : classifyEmptyDay(args.date as string, input.salonInfo?.working_hours);
+      const partRu =
+        part === "morning" ? "утром" : part === "afternoon" ? "днём" : "вечером";
       return {
         date: args.date,
-        reason, // ok | closed_that_day | fully_booked
+        reason, // ok | part_unavailable | closed_that_day | fully_booked
         // Full, non-truncated list of free start-times for this date. If a time is NOT here,
         // it is genuinely unavailable (booked or doesn't fit the service duration).
         free_times: times,
@@ -531,7 +548,9 @@ async function executeV4Tool(
             ? "В этот день салон не работает (выходной). Предложи другой день — не говори «занято»."
             : reason === "fully_booked"
               ? "На эту дату всё занято. Предложи ближайший другой день."
-              : "Это ПОЛНЫЙ список свободных времён начала на эту дату. Клиенту покажи 2–4 удобно расставленных варианта, а не все подряд.",
+              : reason === "part_unavailable"
+                ? `${partRu.charAt(0).toUpperCase() + partRu.slice(1)} на эту дату свободных окошек нет, но в этот же день есть другое время (см. free_times). Предложи их — НЕ говори «всё занято» и не перескакивай на другой день.`
+                : "Это ПОЛНЫЙ список свободных времён начала на эту дату. Клиенту покажи 2–4 удобно расставленных варианта, а не все подряд.",
       };
     }
 

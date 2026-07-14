@@ -6,6 +6,7 @@ import {
   resolveRequestedSlot,
   normHHMM,
   classifyEmptyDay,
+  executeV4Tool,
 } from "@/lib/wa-agent-v4.server";
 
 const TZ = "Asia/Bishkek"; // UTC+6, no DST
@@ -123,5 +124,56 @@ describe("classifyEmptyDay — closed vs fully booked", () => {
   });
   test("day missing from config → closed_that_day", () => {
     expect(classifyEmptyDay(D, {})).toBe("closed_that_day");
+  });
+});
+
+// Scenario-3 bug: client asks for a part of day (вечером) with no slots, but the salon is
+// open earlier the same day. Must NOT say "всё занято"/jump to another date — must return
+// the day's other free times with reason=part_unavailable.
+describe("get_available_slots — part-of-day empty but day is open", () => {
+  const flags = { appointmentId: null, selectedBranchId: null, needsHuman: false, escalateReason: null };
+  // Salon open all week 10:00–17:00, so there is never an "evening" (>17:00) slot.
+  const openInput = {
+    ...input,
+    config: { manage_cutoff_hours: 0 },
+    salonInfo: {
+      working_hours: {
+        mon: "10:00–17:00", tue: "10:00–17:00", wed: "10:00–17:00", thu: "10:00–17:00",
+        fri: "10:00–17:00", sat: "10:00–17:00", sun: "10:00–17:00",
+      },
+    },
+  } as any;
+
+  test("evening empty, day open → part_unavailable + day's free times (not fully_booked)", async () => {
+    const db = makeDb(DATE, ["10:00", "12:00", "14:00", "16:00"]); // all before 17:00
+    const r = await executeV4Tool(
+      "get_available_slots",
+      { service_id: "svc", date: DATE, master_id: "m1", part_of_day: "evening" },
+      openInput, db, flags,
+    );
+    expect(r.reason).toBe("part_unavailable");
+    expect(r.free_times.length).toBeGreaterThan(0);
+    expect(r.free_times).toContain("14:00");
+  });
+
+  test("evening has slots → ok", async () => {
+    const db = makeDb(DATE, ["16:00", "18:00", "19:00"]);
+    const r = await executeV4Tool(
+      "get_available_slots",
+      { service_id: "svc", date: DATE, master_id: "m1", part_of_day: "evening" },
+      openInput, db, flags,
+    );
+    expect(r.reason).toBe("ok");
+    expect(r.free_times).toContain("18:00");
+  });
+
+  test("whole day empty (no part filter) → fully_booked, not part_unavailable", async () => {
+    const db = makeDb(DATE, []);
+    const r = await executeV4Tool(
+      "get_available_slots",
+      { service_id: "svc", date: DATE, master_id: "m1" },
+      openInput, db, flags,
+    );
+    expect(r.reason).toBe("fully_booked");
   });
 });
