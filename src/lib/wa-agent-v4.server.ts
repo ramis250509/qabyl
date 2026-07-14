@@ -183,11 +183,12 @@ function buildSystemPromptV4(input: WaAgentInput): string {
     `КОГДА КЛИЕНТ ГОТОВ ЗАПИСАТЬСЯ (не раньше):`,
     branches.length > 1 ? `- Если филиал не выбран — уточни, куда удобнее.` : "",
     `- РАБОТА С КАЛЕНДАРЁМ (СТРОГО): о свободном времени говори ТОЛЬКО по данным инструментов, никогда не угадывай. Спросил про день — вызови get_available_slots на эту дату. Клиент назвал КОНКРЕТНЫЙ час («17:00 барбы?») — вызови check_time на эту дату и час и ответь по факту. НИКОГДА не говори, что время занято, пока не проверил его инструментом; если инструмент показал время свободным — оно свободно.`,
-    `- get_available_slots возвращает ПОЛНЫЙ список свободных времён начала на дату (учитывает длительность процедуры и занятость). Если времени там нет — оно занято или не помещается по длительности.`,
+    `- get_available_slots возвращает ПОЛНЫЙ список свободных времён начала на дату (учитывает длительность процедуры и занятость) плюс поле reason. reason=closed_that_day → в этот день салон НЕ работает (выходной): так и скажи и предложи другой день, НЕ говори «занято». reason=fully_booked → на эту дату всё занято, предложи ближайший день. Никогда не выдавай «выходной» за «занято» и наоборот.`,
     `- ВРЕМЯ ЗАКРЫТИЯ (СТРОГО): никогда не предлагай и не подтверждай время, если услуга не успеет закончиться до закрытия салона. Пример: салон работает до 20:00, услуга длится 3 часа — значит запись возможна не позже 17:00, а 18:00/19:00 предлагать нельзя. Не считай это в уме — get_available_slots уже отфильтровал такие времена, предлагай ТОЛЬКО из его ответа. Если клиент сам просит время, которое не помещается до закрытия, мягко объясни и предложи ближайшее подходящее из get_available_slots (в т.ч. на другой день).`,
     `- Клиенту показывай не весь список, а 2–4 удобно РАЗНЕСЁННЫХ варианта (например утро, день, вечер), а не подряд через 15 минут. Пример: «Есть 10:00, 13:00 и 16:00 — что удобнее?»`,
     `- Мастеров несколько и клиенту важно — предложи выбор (get_masters); «всё равно» — выбери сам.`,
     `- Узнай имя (если не знаешь), повтори детали одной фразой (услуга, дата, время, мастер, цена) и дождись явного «да». Только тогда вызови create_appointment, коротко поздравь и напомни адрес.`,
+    `- ВРЕМЯ ЗАПИСИ (СТРОГО): в create_appointment/reschedule_appointment передавай время как date + time (HH:MM, напр. 11:00) — НИКОГДА не вычисляй и не пиши ISO/таймстемпы сам, сервер сам подберёт точный слот. Если инструмент вернул reason=slot_not_free — это время уже заняли, предложи клиенту времена из поля nearest и переспроси; НИКОГДА не подставляй другое время молча (клиент просил 11:00 — не записывай на другое без его согласия).`,
     `- ДЛЯ КОГО ЗАПИСЬ: если клиент записывает не себя, а другого (дочку, маму, подругу — «кызымды жазам», «на дочь»), в client_name пиши имя ТОГО, КОГО записывают, а не имя клиента. Спроси имя именно этого человека («А как зовут дочку?»), не переспрашивай про клиента. Держи в голове ранее упомянутые детали (возраст ребёнка и т.п.) — не теряй их.`,
     `- НИКОГДА не пиши «сейчас проверю», «подождите», «минуточку». У тебя один ответ за ход: сразу вызови инструменты и дай готовый ответ (свободное время, либо что времени нет, либо что не получилось получить расписание). Диалог не должен обрываться на «подождите».`,
     ``,
@@ -235,7 +236,8 @@ const V4_TOOL_DECLARATIONS = [
   },
   {
     name: "get_available_slots",
-    description: "Свободные слоты на дату (до 8 ближайших).",
+    description:
+      "Полный (НЕ обрезанный) список свободных времён начала на дату. Клиенту показывай 2–4 удобно расставленных варианта. Возвращает reason, если свободного времени нет (closed_that_day / fully_booked).",
     parameters: {
       type: "object",
       properties: {
@@ -271,18 +273,19 @@ const V4_TOOL_DECLARATIONS = [
   {
     name: "create_appointment",
     description:
-      "Создать запись. Вызывать ТОЛЬКО после явного «да» клиента на озвученные детали.",
+      "Создать запись. Вызывать ТОЛЬКО после явного «да» клиента на озвученные детали. Время передавай как date + time (НЕ ISO/таймстемп) — сервер сам подберёт точный слот. Если вернётся reason=slot_not_free — предложи клиенту времена из nearest, не подставляй другое время сам.",
     parameters: {
       type: "object",
       properties: {
         service_id: { type: "string" },
         master_id: { type: "string" },
-        slot_start: { type: "string", description: "ISO start из get_available_slots" },
+        date: { type: "string", description: "Дата YYYY-MM-DD из таблицы дат" },
+        time: { type: "string", description: "Время начала в формате HH:MM, напр. 11:00" },
         client_name: { type: "string" },
         branch_id: { type: "string" },
         price_override: { type: "number", description: "Согласованная цена для range-услуг" },
       },
-      required: ["service_id", "master_id", "slot_start", "client_name"],
+      required: ["service_id", "master_id", "date", "time", "client_name"],
     },
   },
   {
@@ -302,15 +305,16 @@ const V4_TOOL_DECLARATIONS = [
   {
     name: "reschedule_appointment",
     description:
-      "Перенести запись на новое время (и при необходимости к другому мастеру). Только после явного подтверждения.",
+      "Перенести запись на новое время (и при необходимости к другому мастеру). Только после явного подтверждения. Время передавай как new_date + new_time (НЕ ISO). При reason=slot_not_free — предложи времена из nearest.",
     parameters: {
       type: "object",
       properties: {
         appointment_id: { type: "string" },
-        new_slot_start: { type: "string", description: "ISO start из get_available_slots" },
+        new_date: { type: "string", description: "Новая дата YYYY-MM-DD" },
+        new_time: { type: "string", description: "Новое время HH:MM" },
         new_master_id: { type: "string", description: "Только если мастер меняется" },
       },
-      required: ["appointment_id", "new_slot_start"],
+      required: ["appointment_id", "new_date", "new_time"],
     },
   },
   {
@@ -341,22 +345,81 @@ type V4RunFlags = {
   escalateReason: string | null;
 };
 
-// Slot must still be free for this exact master at this exact start — get_available_slots
-// is the same RPC the calendar uses, so this is the authoritative availability check.
-async function isSlotStillFree(
-  db: AdminClient,
-  masterId: string,
-  serviceId: string,
-  slotStartIso: string,
-): Promise<boolean> {
-  const day = slotStartIso.slice(0, 10);
-  const { data } = await db.rpc("get_available_slots", {
-    _master_id: masterId,
-    _service_id: serviceId,
-    _date: day,
+// Normalize a loose clock string ("11", "11:0", "11.00", "11 00") → "HH:MM" or null.
+export function normHHMM(t: string): string | null {
+  const m = String(t ?? "").match(/(\d{1,2})[:.\s]*(\d{2})?/);
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = m[2] ? Number(m[2]) : 0;
+  if (h < 0 || h > 23 || min < 0 || min > 59) return null;
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+}
+
+// Why is a day empty: salon is closed that weekday (day off) vs genuinely fully booked.
+// Lets the assistant tell the truth instead of a blanket "занято". working_hours is keyed
+// mon..sun with values like "10:00–20:00" or "Выходной".
+export function classifyEmptyDay(
+  date: string,
+  wh: Record<string, string> | null | undefined,
+): "closed_that_day" | "fully_booked" {
+  if (!wh) return "fully_booked"; // hours unknown → don't wrongly claim closed
+  const keys = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+  const dow = new Date(`${date}T12:00:00Z`).getUTCDay(); // noon UTC → weekday stable
+  const v = wh[keys[dow]];
+  if (!v || /выход|closed|off|не\s*работ|дем\s*алыс|дэм\s*алыс|жабык/i.test(v)) {
+    return "closed_that_day";
+  }
+  return "fully_booked";
+}
+
+// THE single converter "requested clock time → real free slot". The server owns this:
+// the LLM only passes date + HH:MM, and TS finds the exact matching slot in the live
+// calendar. The model never supplies a timestamp — that was the 11:00→17:00 bug (a naive
+// ...T11:00:00Z is 17:00 in UTC+6 Bishkek). A slot is booked ONLY if its own local time
+// equals what the client asked for, so we can never silently move the client's time.
+export async function resolveRequestedSlot(opts: {
+  db: AdminClient;
+  input: WaAgentInput;
+  serviceId: string;
+  masterId?: string | null;
+  branchId?: string | null;
+  date: string;
+  time?: string | null;
+  slotStartIso?: string | null; // legacy fallback, always re-validated against real slots
+}): Promise<{
+  ok: boolean;
+  slotStart?: string;
+  masterIds?: string[];
+  nearest: string[];
+  reason?: "slot_not_free" | "bad_time";
+}> {
+  const tz = opts.input.salon.timezone;
+  const slots = await loadFreeSlotsForDay({
+    db: opts.db,
+    input: opts.input,
+    serviceId: opts.serviceId,
+    date: opts.date,
+    masterId: opts.masterId ?? undefined,
+    branchId: opts.branchId ?? undefined,
   });
-  const target = new Date(slotStartIso).getTime();
-  return (data ?? []).some((s: any) => new Date(s.slot_start).getTime() === target);
+  const nearest = slots.map((s) => formatTimeInTz(s.start, tz)).slice(0, 6);
+
+  // Legacy path: model passed only an ISO. Accept ONLY if it matches a real free slot's
+  // exact instant (blocks a fabricated / tz-shifted timestamp from being booked).
+  if (opts.slotStartIso && !opts.time) {
+    const target = new Date(opts.slotStartIso).getTime();
+    const hit = slots.find((s) => new Date(s.start).getTime() === target);
+    return hit
+      ? { ok: true, slotStart: hit.start, masterIds: hit.master_ids, nearest }
+      : { ok: false, nearest, reason: "slot_not_free" };
+  }
+
+  const hhmm = normHHMM(opts.time ?? "");
+  if (!hhmm) return { ok: false, nearest, reason: "bad_time" };
+  const hit = slots.find((s) => formatTimeInTz(s.start, tz) === hhmm);
+  return hit
+    ? { ok: true, slotStart: hit.start, masterIds: hit.master_ids, nearest }
+    : { ok: false, nearest, reason: "slot_not_free" };
 }
 
 // Load the FULL list of free start-times for a service on a date (all masters merged, or a
@@ -448,8 +511,13 @@ async function executeV4Tool(
         branchId: (args.branch_id as string | null) ?? flags.selectedBranchId ?? null,
       });
       const times = slots.map((s) => formatTimeInTz(s.start, tz));
+      const reason =
+        slots.length > 0
+          ? "ok"
+          : classifyEmptyDay(args.date as string, input.salonInfo?.working_hours);
       return {
         date: args.date,
+        reason, // ok | closed_that_day | fully_booked
         // Full, non-truncated list of free start-times for this date. If a time is NOT here,
         // it is genuinely unavailable (booked or doesn't fit the service duration).
         free_times: times,
@@ -459,18 +527,19 @@ async function executeV4Tool(
           master_ids: s.master_ids,
         })),
         note:
-          slots.length === 0
-            ? "На эту дату свободного времени нет."
-            : "Это ПОЛНЫЙ список свободных времён начала на эту дату. Клиенту покажи 2–4 удобно расставленных варианта, а не все подряд.",
+          reason === "closed_that_day"
+            ? "В этот день салон не работает (выходной). Предложи другой день — не говори «занято»."
+            : reason === "fully_booked"
+              ? "На эту дату всё занято. Предложи ближайший другой день."
+              : "Это ПОЛНЫЙ список свободных времён начала на эту дату. Клиенту покажи 2–4 удобно расставленных варианта, а не все подряд.",
       };
     }
 
     case "check_time": {
       // Definitive yes/no for a specific requested time (e.g. «17:00 барбы?»). Never guess —
       // this returns the truth from the calendar, plus nearby free times if it's taken.
-      const m = String(args.time ?? "").match(/(\d{1,2})[:.\s]*(\d{2})?/);
-      if (!m) return { available: false, error: "не понял время" };
-      const hhmm = `${String(Number(m[1])).padStart(2, "0")}:${m[2] ?? "00"}`;
+      const hhmm = normHHMM(String(args.time ?? ""));
+      if (!hhmm) return { available: false, error: "не понял время" };
       const slots = await loadFreeSlotsForDay({
         db,
         input,
@@ -481,28 +550,43 @@ async function executeV4Tool(
       });
       const times = slots.map((s) => formatTimeInTz(s.start, tz));
       const hit = slots.find((s) => formatTimeInTz(s.start, tz) === hhmm);
+      // Distinguish "closed that day" from "occupied" so the assistant phrases it correctly.
+      const reason = hit
+        ? "ok"
+        : slots.length === 0
+          ? classifyEmptyDay(args.date as string, input.salonInfo?.working_hours)
+          : "time_taken";
       return {
         requested: hhmm,
         date: args.date,
         available: Boolean(hit),
+        reason, // ok | time_taken | closed_that_day | fully_booked
         ...(hit ? { slot_start: hit.start, master_ids: hit.master_ids } : {}),
         nearby_free_times: times.slice(0, 8),
       };
     }
 
     case "create_appointment": {
-      const free = await isSlotStillFree(
+      // Server owns the clock→instant conversion. The model passes date + HH:MM; we find the
+      // matching real free slot. (Legacy: it may still pass slot_start — re-validated too.)
+      const resolved = await resolveRequestedSlot({
         db,
-        args.master_id as string,
-        args.service_id as string,
-        args.slot_start as string,
-      );
-      if (!free) return { success: false, error: "slot_taken" };
+        input,
+        serviceId: args.service_id as string,
+        masterId: args.master_id as string,
+        branchId: (args.branch_id as string | null) ?? flags.selectedBranchId ?? null,
+        date: (args.date as string) ?? String(args.slot_start ?? "").slice(0, 10),
+        time: (args.time as string) ?? null,
+        slotStartIso: (args.slot_start as string) ?? null,
+      });
+      if (!resolved.ok) {
+        return { success: false, reason: resolved.reason ?? "slot_not_free", nearest: resolved.nearest };
+      }
       const rpcArgs: any = {
         _salon_id: input.salon.salonId,
         _master_id: args.master_id,
         _service_id: args.service_id,
-        _starts_at: args.slot_start,
+        _starts_at: resolved.slotStart,
         _client_name: args.client_name,
         _client_phone: input.client.phone,
         _client_notes: null,
@@ -569,24 +653,30 @@ async function executeV4Tool(
       if (withinCutoff((appt as any).starts_at))
         return { success: false, error: "cutoff", cutoff_hours: cutoffHours };
       const targetMaster = (args.new_master_id as string) || (appt as any).master_id;
-      const free = await isSlotStillFree(
+      const resolved = await resolveRequestedSlot({
         db,
-        targetMaster,
-        (appt as any).service_id,
-        args.new_slot_start as string,
-      );
-      if (!free) return { success: false, error: "slot_taken" };
+        input,
+        serviceId: (appt as any).service_id,
+        masterId: targetMaster,
+        branchId: flags.selectedBranchId ?? null,
+        date: (args.new_date as string) ?? String(args.new_slot_start ?? "").slice(0, 10),
+        time: (args.new_time as string) ?? null,
+        slotStartIso: (args.new_slot_start as string) ?? null,
+      });
+      if (!resolved.ok) {
+        return { success: false, reason: resolved.reason ?? "slot_not_free", nearest: resolved.nearest };
+      }
       const movingMaster =
         args.new_master_id && args.new_master_id !== (appt as any).master_id;
       const { error } = movingMaster
         ? await db.rpc("reschedule_appointment_v2" as any, {
             _appointment_id: args.appointment_id,
-            _new_starts_at: args.new_slot_start,
+            _new_starts_at: resolved.slotStart,
             _new_master_id: args.new_master_id,
           } as any)
         : await db.rpc("reschedule_appointment" as any, {
             _appointment_id: args.appointment_id,
-            _new_starts_at: args.new_slot_start,
+            _new_starts_at: resolved.slotStart,
           } as any);
       if (error) return { success: false, error: error.message };
       return { success: true };
