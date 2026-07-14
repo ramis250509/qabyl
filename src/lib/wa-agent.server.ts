@@ -2811,8 +2811,25 @@ export async function callGeminiTools(opts: {
   // with backoff so a one-off hiccup never reaches the client. 429 gets short retries too: the
   // free tier limit is per-minute, and a brief wait often clears it. Only a persistent failure
   // (real quota exhaustion, malformed request) falls through to the caller's fallback message.
+  const MAX_ATTEMPTS = 4; // was 3: one more retry survives brief 429/503 bursts
+  const BACKOFF_CAP_MS = 4000; // per-wait cap so the webhook doesn't stall too long
+  const lastAttempt = MAX_ATTEMPTS - 1;
+  // Wait suggested by the server (429/503): Retry-After header (seconds) or Gemini's RetryInfo
+  // (`"retryDelay":"7s"` in the body). Falls back to exponential backoff with jitter.
+  const waitFor = (retryAfterHdr: string | null, bodyTxt: string, attempt: number) => {
+    let ms = 0;
+    const hdr = Number(retryAfterHdr);
+    if (Number.isFinite(hdr) && hdr > 0) ms = hdr * 1000;
+    if (!ms) {
+      const m = bodyTxt.match(/retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/);
+      if (m) ms = Math.round(Number(m[1]) * 1000);
+    }
+    if (!ms) ms = 600 * 2 ** attempt; // 600, 1200, 2400…
+    return Math.min(ms, BACKOFF_CAP_MS) + Math.floor(Math.random() * 250); // + jitter
+  };
+
   let lastErr = "gemini unknown";
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     try {
       const r = await fetch(url, {
         method: "POST",
@@ -2822,8 +2839,8 @@ export async function callGeminiTools(opts: {
       const txt = await r.text();
       if (r.status === 429 || r.status >= 500) {
         lastErr = `gemini ${r.status}: ${txt.slice(0, 300)}`;
-        if (attempt < 2) {
-          await new Promise((res) => setTimeout(res, 500 * (attempt + 1)));
+        if (attempt < lastAttempt) {
+          await new Promise((res) => setTimeout(res, waitFor(r.headers.get("retry-after"), txt, attempt)));
           continue;
         }
         return { ok: false, error: lastErr };
@@ -2841,8 +2858,8 @@ export async function callGeminiTools(opts: {
       return { ok: true, parts };
     } catch (e: any) {
       lastErr = e?.message ?? String(e);
-      if (attempt < 2) {
-        await new Promise((res) => setTimeout(res, 500 * (attempt + 1)));
+      if (attempt < lastAttempt) {
+        await new Promise((res) => setTimeout(res, waitFor(null, "", attempt)));
         continue;
       }
       return { ok: false, error: lastErr };
