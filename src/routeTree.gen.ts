@@ -23,7 +23,6 @@ import { Route as AdminSalonsIndexRouteImport } from './routes/admin/salons/inde
 import { Route as PreviewSalonSalonIdRouteImport } from './routes/preview.salon.$salonId'
 import { Route as AdminSalonsSalonIdRouteImport } from './routes/admin/salons/$salonId'
 import { Route as ApiPublicWaSalonIdRouteImport } from './routes/api/public/wa.$salonId'
-import { Route as ApiPublicWaCloudSalonIdRouteImport } from './routes/api/public/wa-cloud.$salonId'
 
 const PrivacyRoute = PrivacyRouteImport.update({
   id: '/privacy',
@@ -95,11 +94,6 @@ const ApiPublicWaSalonIdRoute = ApiPublicWaSalonIdRouteImport.update({
   path: '/api/public/wa/$salonId',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiPublicWaCloudSalonIdRoute = ApiPublicWaCloudSalonIdRouteImport.update({
-  id: '/api/public/wa-cloud/$salonId',
-  path: '/api/public/wa-cloud/$salonId',
-  getParentRoute: () => rootRouteImport,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -115,7 +109,6 @@ export interface FileRoutesByFullPath {
   '/admin/salons/$salonId': typeof AdminSalonsSalonIdRoute
   '/preview/salon/$salonId': typeof PreviewSalonSalonIdRoute
   '/admin/salons/': typeof AdminSalonsIndexRoute
-  '/api/public/wa-cloud/$salonId': typeof ApiPublicWaCloudSalonIdRoute
   '/api/public/wa/$salonId': typeof ApiPublicWaSalonIdRoute
 }
 export interface FileRoutesByTo {
@@ -131,7 +124,6 @@ export interface FileRoutesByTo {
   '/admin/salons/$salonId': typeof AdminSalonsSalonIdRoute
   '/preview/salon/$salonId': typeof PreviewSalonSalonIdRoute
   '/admin/salons': typeof AdminSalonsIndexRoute
-  '/api/public/wa-cloud/$salonId': typeof ApiPublicWaCloudSalonIdRoute
   '/api/public/wa/$salonId': typeof ApiPublicWaSalonIdRoute
 }
 export interface FileRoutesById {
@@ -149,7 +141,6 @@ export interface FileRoutesById {
   '/admin/salons/$salonId': typeof AdminSalonsSalonIdRoute
   '/preview/salon/$salonId': typeof PreviewSalonSalonIdRoute
   '/admin/salons/': typeof AdminSalonsIndexRoute
-  '/api/public/wa-cloud/$salonId': typeof ApiPublicWaCloudSalonIdRoute
   '/api/public/wa/$salonId': typeof ApiPublicWaSalonIdRoute
 }
 export interface FileRouteTypes {
@@ -168,7 +159,6 @@ export interface FileRouteTypes {
     | '/admin/salons/$salonId'
     | '/preview/salon/$salonId'
     | '/admin/salons/'
-    | '/api/public/wa-cloud/$salonId'
     | '/api/public/wa/$salonId'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -184,7 +174,6 @@ export interface FileRouteTypes {
     | '/admin/salons/$salonId'
     | '/preview/salon/$salonId'
     | '/admin/salons'
-    | '/api/public/wa-cloud/$salonId'
     | '/api/public/wa/$salonId'
   id:
     | '__root__'
@@ -201,7 +190,6 @@ export interface FileRouteTypes {
     | '/admin/salons/$salonId'
     | '/preview/salon/$salonId'
     | '/admin/salons/'
-    | '/api/public/wa-cloud/$salonId'
     | '/api/public/wa/$salonId'
   fileRoutesById: FileRoutesById
 }
@@ -212,7 +200,6 @@ export interface RootRouteChildren {
   PrivacyRoute: typeof PrivacyRoute
   BookSlugRoute: typeof BookSlugRoute
   PreviewSalonSalonIdRoute: typeof PreviewSalonSalonIdRoute
-  ApiPublicWaCloudSalonIdRoute: typeof ApiPublicWaCloudSalonIdRoute
   ApiPublicWaSalonIdRoute: typeof ApiPublicWaSalonIdRoute
 }
 
@@ -316,13 +303,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicWaSalonIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/public/wa-cloud/$salonId': {
-      id: '/api/public/wa-cloud/$salonId'
-      path: '/api/public/wa-cloud/$salonId'
-      fullPath: '/api/public/wa-cloud/$salonId'
-      preLoaderRoute: typeof ApiPublicWaCloudSalonIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
   }
 }
 
@@ -355,7 +335,6 @@ const rootRouteChildren: RootRouteChildren = {
   PrivacyRoute: PrivacyRoute,
   BookSlugRoute: BookSlugRoute,
   PreviewSalonSalonIdRoute: PreviewSalonSalonIdRoute,
-  ApiPublicWaCloudSalonIdRoute: ApiPublicWaCloudSalonIdRoute,
   ApiPublicWaSalonIdRoute: ApiPublicWaSalonIdRoute,
 }
 export const routeTree = rootRouteImport
