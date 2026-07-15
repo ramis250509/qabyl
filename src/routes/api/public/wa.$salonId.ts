@@ -836,9 +836,11 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
 // failure (unpaid instance, bad number, network) went unnoticed, and the alert lived ONLY as a
 // WhatsApp message — if it didn't land, it was gone forever.
 //
-// Now: a row is ALWAYS written to `notifications` first, so the alert survives in the admin panel
-// regardless of phone config or Green-API health; the WhatsApp send is best-effort on top, its
-// result is checked, retried once, and every failure is logged.
+// WhatsApp is the owner's channel — when it works, the alert lands there and nowhere else, so the
+// admin panel stays clean. The `notifications` row is a FALLBACK, written only if WhatsApp could
+// not be delivered (no owner_notify_phone, or Green-API rejected/failed). That keeps the safety
+// net that caught this exact outage — the alert is never lost silently — without duplicating every
+// working alert into the panel.
 async function notifyOwner(opts: {
   salonId: string;
   creds: GreenApiCreds;
@@ -848,28 +850,29 @@ async function notifyOwner(opts: {
   text: string;
   mediaUrl?: string;
 }): Promise<void> {
-  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  // Last-resort record so an undelivered alert still reaches a human via the admin panel.
+  const persistFallback = async (why: string) => {
+    try {
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      await supabaseAdmin.from("notifications").insert({
+        salon_id: opts.salonId,
+        type: `wa.${opts.kind}`,
+        title: opts.title,
+        body: `${opts.text}\n\n[WhatsApp не доставлен: ${why}]`.slice(0, 2000),
+      } as any);
+    } catch (e: any) {
+      console.error(`[wa] notifyOwner: fallback notification insert failed: ${e?.message ?? e}`);
+    }
+  };
 
-  // 1) Durable channel — never depends on a phone number or WhatsApp being healthy.
-  try {
-    await supabaseAdmin.from("notifications").insert({
-      salon_id: opts.salonId,
-      type: `wa.${opts.kind}`,
-      title: opts.title,
-      body: opts.text.slice(0, 2000),
-    } as any);
-  } catch (e: any) {
-    console.error(`[wa] notifyOwner: failed to persist notification: ${e?.message ?? e}`);
-  }
-
-  // 2) Best-effort WhatsApp push to the owner.
   const ownerPhone = opts.ownerNotifyPhoneRaw
     ? normalizeChatIdToPhone(opts.ownerNotifyPhoneRaw)
     : "";
   if (!ownerPhone) {
     console.error(
-      `[wa] notifyOwner(${opts.kind}) salon=${opts.salonId}: owner_notify_phone is NOT configured — WhatsApp alert skipped (saved in the admin panel only). Set it in salon settings.`,
+      `[wa] notifyOwner(${opts.kind}) salon=${opts.salonId}: owner_notify_phone is NOT configured — WhatsApp alert impossible; saved to the admin panel instead. Set it in salon settings.`,
     );
+    await persistFallback("номер владельца не указан в настройках салона");
     return;
   }
   const chat = `${ownerPhone}@c.us`;
@@ -885,15 +888,16 @@ async function notifyOwner(opts: {
     await new Promise((r) => setTimeout(r, 600));
     res = await send();
   }
-  if (!res.ok) {
-    console.error(
-      `[wa] notifyOwner(${opts.kind}) → ${ownerPhone} FAILED after retry: ${res.error}. Alert is still visible in the admin panel.`,
-    );
-  } else {
+  if (res.ok) {
     // Log the success too: a silent success and a silent skip look identical in the logs
     // otherwise, which is what made this outage hard to pin down.
     console.log(`[wa] notifyOwner(${opts.kind}) → ${ownerPhone} delivered to Green-API`);
+    return;
   }
+  console.error(
+    `[wa] notifyOwner(${opts.kind}) → ${ownerPhone} FAILED after retry: ${res.error}. Falling back to the admin panel.`,
+  );
+  await persistFallback(res.error ?? "неизвестная ошибка Green-API");
 }
 
 async function tryAcquireLockWithWait(
