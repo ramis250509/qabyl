@@ -744,30 +744,33 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             // 5b) Relay the client's photo to the salon admin when the agent flagged low-
             // confidence pricing twice in a row. Reuses the same ai_paused mechanism as a
             // human takeover: the admin is now expected to handle this client directly.
-            if (result.notifyAdmin && secrets.owner_notify_phone) {
-              const ownerPhone = normalizeChatIdToPhone(secrets.owner_notify_phone);
-              if (ownerPhone) {
-                await greenApiSendFileByUrl(
-                  creds,
-                  `${ownerPhone}@c.us`,
-                  result.notifyAdmin.mediaUrl,
-                  "photo.jpg",
-                  result.notifyAdmin.caption,
-                );
-                await supabaseAdmin
-                  .from("wa_conversations")
-                  .update({ ai_paused: true, ai_paused_at: new Date().toISOString() })
-                  .eq("id", convId);
-              }
+            if (result.notifyAdmin) {
+              await notifyOwner({
+                salonId,
+                creds,
+                ownerNotifyPhoneRaw: secrets.owner_notify_phone,
+                kind: "photo",
+                title: "Клиент прислал фото — нужна оценка администратора",
+                text: result.notifyAdmin.caption,
+                mediaUrl: result.notifyAdmin.mediaUrl,
+              });
+              await supabaseAdmin
+                .from("wa_conversations")
+                .update({ ai_paused: true, ai_paused_at: new Date().toISOString() })
+                .eq("id", convId);
             }
 
-            // 5c) V4 escalation: forward a plain-text alert to the salon admin's WhatsApp so
-            // they know a live human is needed (the state update below also pauses the bot).
-            if (result.notifyAdminText && secrets.owner_notify_phone) {
-              const ownerPhone = normalizeChatIdToPhone(secrets.owner_notify_phone);
-              if (ownerPhone) {
-                await greenApiSendMessage(creds, `${ownerPhone}@c.us`, result.notifyAdminText);
-              }
+            // 5c) V4 escalation: alert the salon admin that a live human is needed (the state
+            // update below also pauses the bot).
+            if (result.notifyAdminText) {
+              await notifyOwner({
+                salonId,
+                creds,
+                ownerNotifyPhoneRaw: secrets.owner_notify_phone,
+                kind: "escalation",
+                title: "Клиенту нужен администратор",
+                text: result.notifyAdminText,
+              });
             }
 
             // 6) Mark these inbound messages as processed
@@ -823,6 +826,70 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
     },
   },
 });
+
+// Deliver an owner alert (escalation / photo hand-off) as reliably as we can.
+//
+// Escalation is the one path that MUST NOT fail silently — it is the salon's safety net when the
+// assistant can't help. Three defects made it unreliable: the WhatsApp send was skipped without a
+// trace when owner_notify_phone was empty (the settings form saves "" as NULL, so one save with a
+// blank field silently disabled every future alert), the send result was discarded so a Green-API
+// failure (unpaid instance, bad number, network) went unnoticed, and the alert lived ONLY as a
+// WhatsApp message — if it didn't land, it was gone forever.
+//
+// Now: a row is ALWAYS written to `notifications` first, so the alert survives in the admin panel
+// regardless of phone config or Green-API health; the WhatsApp send is best-effort on top, its
+// result is checked, retried once, and every failure is logged.
+async function notifyOwner(opts: {
+  salonId: string;
+  creds: GreenApiCreds;
+  ownerNotifyPhoneRaw: string | null | undefined;
+  kind: "escalation" | "photo";
+  title: string;
+  text: string;
+  mediaUrl?: string;
+}): Promise<void> {
+  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+  // 1) Durable channel — never depends on a phone number or WhatsApp being healthy.
+  try {
+    await supabaseAdmin.from("notifications").insert({
+      salon_id: opts.salonId,
+      type: `wa.${opts.kind}`,
+      title: opts.title,
+      body: opts.text.slice(0, 2000),
+    } as any);
+  } catch (e: any) {
+    console.error(`[wa] notifyOwner: failed to persist notification: ${e?.message ?? e}`);
+  }
+
+  // 2) Best-effort WhatsApp push to the owner.
+  const ownerPhone = opts.ownerNotifyPhoneRaw
+    ? normalizeChatIdToPhone(opts.ownerNotifyPhoneRaw)
+    : "";
+  if (!ownerPhone) {
+    console.error(
+      `[wa] notifyOwner(${opts.kind}) salon=${opts.salonId}: owner_notify_phone is NOT configured — WhatsApp alert skipped (saved in the admin panel only). Set it in salon settings.`,
+    );
+    return;
+  }
+  const chat = `${ownerPhone}@c.us`;
+  const send = () =>
+    opts.mediaUrl
+      ? greenApiSendFileByUrl(opts.creds, chat, opts.mediaUrl, "photo.jpg", opts.text)
+      : greenApiSendMessage(opts.creds, chat, opts.text);
+
+  let res = await send();
+  if (!res.ok) {
+    console.error(`[wa] notifyOwner(${opts.kind}) → ${ownerPhone} failed: ${res.error} — retrying`);
+    await new Promise((r) => setTimeout(r, 600));
+    res = await send();
+  }
+  if (!res.ok) {
+    console.error(
+      `[wa] notifyOwner(${opts.kind}) → ${ownerPhone} FAILED after retry: ${res.error}. Alert is still visible in the admin panel.`,
+    );
+  }
+}
 
 async function tryAcquireLockWithWait(
   db: any,

@@ -1648,6 +1648,15 @@ function IntegrationsTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => 
           <Label>Телефон владельца для уведомлений</Label>
           <Input value={ownerPhone} onChange={(e) => setOwnerPhone(e.target.value)} placeholder="79991234567" disabled={loading} />
           <p className="text-xs text-muted-foreground mt-1">При каждой новой записи владельцу салона придёт WhatsApp на этот номер. Формат: только цифры с кодом страны.</p>
+          {/* An empty field saves as NULL and silently disabled every escalation alert (and the
+              /restart test command). Make that consequence visible instead of losing it quietly. */}
+          {!loading && !ownerPhone.replace(/[^\d]/g, "") && (
+            <p className="text-xs text-amber-700 mt-1">
+              ⚠️ Номер не указан. WhatsApp-уведомления владельцу отправляться не будут — в том числе
+              когда ИИ передаёт диалог живому администратору. Такие случаи будут видны только во
+              вкладке «Уведомления».
+            </p>
+          )}
         </div>
         <Button onClick={save} disabled={saving || loading}>{saving ? "..." : "Сохранить"}</Button>
       </Card>
