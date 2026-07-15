@@ -57,6 +57,14 @@ describe("buildSystemPromptV4 — Phase C blocks", () => {
   test("prompt mandates offering a master choice before confirming (multi-master)", () => {
     expect(beauty).toContain("ВЫБОР МАСТЕРА (ОБЯЗАТЕЛЬНО перед подтверждением записи)");
   });
+
+  // The name was sometimes skipped: the old wording "Узнай имя (если не знаешь)" let the model
+  // decide it already knew. Asking must be unconditional, and the name must never be invented
+  // or lifted from the WhatsApp profile.
+  test("prompt makes asking the client's name mandatory before booking", () => {
+    expect(beauty).toContain("ИМЯ КЛИЕНТА (ОБЯЗАТЕЛЬНО, без него не записывать)");
+    expect(beauty).not.toContain("Узнай имя (если не знаешь)");
+  });
   // Hard guardrail: the assistant invented days off ("17-июль салон иштебейт") that existed
   // nowhere in the data. Saying «выходной» must require closed_that_day or an explicit fact.
   test("prompt forbids inventing days off / schedule", () => {
