@@ -49,6 +49,14 @@ describe("buildSystemPromptV4 — Phase C blocks", () => {
   test("prompt mandates offering a master choice before confirming (multi-master)", () => {
     expect(beauty).toContain("ВЫБОР МАСТЕРА (ОБЯЗАТЕЛЬНО перед подтверждением записи)");
   });
+  // Hard guardrail: the assistant invented days off ("17-июль салон иштебейт") that existed
+  // nowhere in the data. Saying «выходной» must require closed_that_day or an explicit fact.
+  test("prompt forbids inventing days off / schedule", () => {
+    for (const p of [beauty, dental]) {
+      expect(p).toContain("НИКОГДА не выдумывай выходные");
+      expect(p).toContain("hours_not_configured");
+    }
+  });
   test("salon knowledge_base (where promos live) is injected into the prompt", () => {
     const p = buildSystemPromptV4({
       ...inputFor("beauty"),

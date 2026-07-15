@@ -162,7 +162,9 @@ export function buildSystemPromptV4(input: WaAgentInput, closedDates: string[] =
     ``,
     `ИНФОРМАЦИЯ О САЛОНЕ:`,
     salonInfo?.address ? `Адрес: ${salonInfo.address}` : "",
-    hours ? `Часы работы: ${hours}` : "",
+    hours
+      ? `Часы работы (справочно, для ответа на вопрос «во сколько вы работаете»): ${hours}. Фактическую занятость и свободное время бери ТОЛЬКО из инструментов — не делай выводов о выходных из этой строки, если дня в ней просто нет.`
+      : "",
     branches.length > 1
       ? `Филиалы:\n${branches.map((b) => `- ${b.name}${b.address ? ` (${b.address})` : ""} [id: ${b.id}]`).join("\n")}`
       : "",
@@ -234,8 +236,8 @@ export function buildSystemPromptV4(input: WaAgentInput, closedDates: string[] =
     `КОГДА КЛИЕНТ ГОТОВ ЗАПИСАТЬСЯ (не раньше):`,
     branches.length > 1 ? `- Если филиал не выбран — уточни, куда удобнее.` : "",
     `- РАБОТА С КАЛЕНДАРЁМ (СТРОГО): о свободном времени говори ТОЛЬКО по данным инструментов, никогда не угадывай. Спросил про день — вызови get_available_slots на эту дату. Клиент назвал КОНКРЕТНЫЙ час («17:00 барбы?») — вызови check_time на эту дату и час и ответь по факту. НИКОГДА не говори, что время занято, пока не проверил его инструментом; если инструмент показал время свободным — оно свободно.`,
-    `- check_time возвращает reason: ok (свободно, можно записывать) / time_taken (это время уже занято — предложи из nearby_free_times) / outside_hours (в это время салон/мастер уже не работает или процедура не успеет закончиться — НЕ говори «занято»; скажи, что на этот час не получится, и предложи времена из nearby_free_times) / closed_that_day (выходной) / fully_booked (весь день занят). Никогда не называй «outside_hours» занятостью.`,
-    `- get_available_slots возвращает ПОЛНЫЙ список свободных времён начала на дату (учитывает длительность процедуры и занятость) плюс поле reason. reason=closed_that_day → в этот день салон НЕ работает (выходной): так и скажи и предложи другой день, НЕ говори «занято». reason=fully_booked → на эту дату всё занято, предложи ближайший день. reason=part_unavailable → на запрошенную часть дня (утро/день/вечер) окошек нет, НО в этот же день есть другое время: предложи эти времена из free_times («вечером всё занято, но есть днём в 14:00 или 16:00»), НЕ говори «всё занято» и НЕ перескакивай на другой день. Никогда не выдавай «выходной» за «занято» и наоборот.`,
+    `- check_time возвращает reason: ok (свободно, можно записывать) / time_taken (это время уже занято — предложи из nearby_free_times) / outside_hours (в это время салон/мастер уже не работает или процедура не успеет закончиться — НЕ говори «занято»; скажи, что на этот час не получится, и предложи времена из nearby_free_times) / closed_that_day (подтверждённый выходной) / fully_booked (весь день занят) / hours_not_configured (данных о работе в этот день НЕТ — это НЕ выходной). Никогда не называй «outside_hours» занятостью.`,
+    `- get_available_slots возвращает ПОЛНЫЙ список свободных времён начала на дату (учитывает длительность процедуры и занятость) плюс поле reason. reason=closed_that_day → в этот день салон НЕ работает (выходной): так и скажи и предложи другой день, НЕ говори «занято». reason=fully_booked → на эту дату всё занято, предложи ближайший день. reason=part_unavailable → на запрошенную часть дня (утро/день/вечер) окошек нет, НО в этот же день есть другое время: предложи эти времена из free_times («вечером всё занято, но есть днём в 14:00 или 16:00»), НЕ говори «всё занято» и НЕ перескакивай на другой день. reason=hours_not_configured → данных о работе в этот день НЕТ (график не заполнен): это НЕ выходной — НЕ говори «не работаем»/«выходной», скажи, что свободного времени на эту дату не видишь, предложи дни с окошками, а если клиенту нужна именно эта дата — передай администратору (escalate_to_human). Никогда не выдавай «выходной» за «занято» и наоборот.`,
     `- ВРЕМЯ ЗАКРЫТИЯ (СТРОГО): никогда не предлагай и не подтверждай время, если услуга не успеет закончиться до закрытия салона. Пример: салон работает до 20:00, услуга длится 3 часа — значит запись возможна не позже 17:00, а 18:00/19:00 предлагать нельзя. Не считай это в уме — get_available_slots уже отфильтровал такие времена, предлагай ТОЛЬКО из его ответа. Если клиент сам просит время, которое не помещается до закрытия, мягко объясни и предложи ближайшее подходящее из get_available_slots (в т.ч. на другой день).`,
     `- Клиенту показывай не весь список, а 2–4 удобно РАЗНЕСЁННЫХ варианта (например утро, день, вечер), а не подряд через 15 минут. Пример: «Есть 10:00, 13:00 и 16:00 — что удобнее?»`,
     `- ВЫБОР МАСТЕРА (ОБЯЗАТЕЛЬНО перед подтверждением записи): вызови get_masters. Если услугу выполняют НЕСКОЛЬКО мастеров — до записи ОБЯЗАТЕЛЬНО предложи клиенту выбрать мастера («К какому мастеру записать — к Айгерим или Нургуль? Или любой свободный?»). Если указана specialization/bio_short — порекомендуй по сильной стороне («по сложному окрашиванию лучше Айгерим, по маникюру — Нургуль»). Заверши запись ТОЛЬКО после выбора мастера. «Всё равно / любой» — выбери сам и назови, кого записал. Если мастер всего один — не спрашивай, просто веди к записи.`,
@@ -253,6 +255,7 @@ export function buildSystemPromptV4(input: WaAgentInput, closedDates: string[] =
     ``,
     `ЖЕЛЕЗНЫЕ ПРАВИЛА:`,
     `- Не выдумывай факты. Если не уверен в ответе или вопрос сложный/нестандартный — лучше передай администратору, чем сочини.`,
+    `- ВЫХОДНЫЕ И ГРАФИК (КАТЕГОРИЧЕСКИ): НИКОГДА не выдумывай выходные, нерабочие дни, праздники и часы работы. Утверждать «в этот день выходной / мы не работаем» можно ТОЛЬКО в двух случаях: (1) инструмент вернул reason=closed_that_day, либо (2) эта дата прямо указана в блоке «ВЫХОДНЫЕ ДНИ» или в фактах салона выше. Во всех остальных случаях — включая reason=hours_not_configured, отсутствие данных или пустой календарь — говорить о выходном ЗАПРЕЩЕНО. Нет данных → скажи, что не видишь свободного времени на эту дату, предложи другие дни или передай администратору. Не предполагай график «по логике» (например, что понедельник или воскресенье обычно выходной) — у тебя нет такой информации.`,
     `- ГАРАНТИЯ/СРОКИ: точную гарантию салона называй ТОЛЬКО если она есть в фактах о салоне выше. Не придумывай срок гарантии. И следи за логикой: гарантия не может быть длиннее, чем держится результат (напр. если кератин держится 3–5 месяцев, гарантия в «10 месяцев» — бессмыслица). Если салон не задал гарантию — честно скажи, что условия уточнит мастер, не выдумывай цифру.`,
     `- Здоровье и противопоказания (беременность, аллергии, заболевания, приём лекарств и т.п.): дай общую информацию из базы знаний, но без диагнозов и без медицинских гарантий; порекомендуй очную оценку специалиста или врача.`,
     `- Не обещай «100%» результат и не преувеличивай сроки.`,
@@ -474,14 +477,24 @@ function dowOf(date: string): number {
 // master (see SalonDayOverridesCard), NOT in salons.working_hours — so the old classifyEmptyDay,
 // which only read the weekly salons.working_hours map, wrongly reported "fully_booked".
 // Bookings are intentionally ignored here: this answers "is anyone scheduled to work at all?".
-export async function isDayWorkableForService(opts: {
+//
+// THREE outcomes, never two. Saying «выходной» is a factual claim about the salon, so it needs
+// POSITIVE evidence — an explicit per-date day-off, or a weekly schedule that deliberately omits
+// this weekday. The absence of schedule data is NOT evidence of a day off: an earlier version
+// returned a bare false whenever no master_schedules row existed for the weekday, and the caller
+// turned that into closed_that_day — so a salon whose schedule simply wasn't filled in had the
+// assistant inventing days off ("17-июль, жума күнү салон иштебейт") that exist nowhere in the
+// data. "unknown" keeps the assistant honest: it must not claim a day off it cannot prove.
+export type DayVerdict = "workable" | "closed" | "unknown";
+
+export async function classifyDayForService(opts: {
   db: AdminClient;
   input: WaAgentInput;
   serviceId: string;
   date: string;
   branchId?: string | null;
   masterId?: string | null; // when the client named a specific master, judge only that master
-}): Promise<boolean> {
+}): Promise<DayVerdict> {
   try {
     const branchId = opts.branchId ?? opts.input.selectedBranchId ?? null;
     let masters = await loadMastersForService(
@@ -490,10 +503,11 @@ export async function isDayWorkableForService(opts: {
       opts.serviceId,
       branchId,
     );
-    // Client asked for a specific master → the day is "workable" only if THAT master works,
-    // so "запишите к Айгерим в среду" (её выходной) reads as closed, not "всё занято".
+    // Client asked for a specific master → judge only that master, so "запишите к Айгерим в
+    // среду" (her day off) reads as closed for her rather than a blanket "всё занято".
     if (opts.masterId) masters = masters.filter((m) => m.id === opts.masterId);
-    if (masters.length === 0) return false;
+    // Nobody performs this service (or the named master doesn't) — that is NOT a day off.
+    if (masters.length === 0) return "unknown";
     const dow = dowOf(opts.date);
     const ids = masters.map((m) => m.id);
 
@@ -503,19 +517,34 @@ export async function isDayWorkableForService(opts: {
         .select("master_id, is_off, kind, intervals")
         .in("master_id", ids)
         .eq("date", opts.date),
-      opts.db
-        .from("master_schedules")
-        .select("master_id")
-        .in("master_id", ids)
-        .eq("weekday", dow),
+      // ALL weekdays, not just today's: a master with rows for other weekdays but none for this
+      // one has a configured schedule that deliberately excludes this day (positive evidence of
+      // closure). A master with no rows at all simply has no schedule configured (unknown).
+      opts.db.from("master_schedules").select("master_id, weekday").in("master_id", ids),
     ]);
     const overrides = new Map<string, any>();
     for (const o of ((overridesRes as any).data as any[]) ?? []) overrides.set(o.master_id, o);
-    const scheduled = new Set<string>();
-    for (const s of ((schedRes as any).data as any[]) ?? []) scheduled.add(s.master_id);
+    const hasAnySchedule = new Set<string>();
+    const worksThisDow = new Set<string>();
+    for (const s of ((schedRes as any).data as any[]) ?? []) {
+      hasAnySchedule.add(s.master_id);
+      if (Number(s.weekday) === dow) worksThisDow.add(s.master_id);
+    }
 
-    // Branch closed that weekday? branches.working_hours is keyed by numeric dow with an
-    // array-of-intervals value; an empty array means closed. null/absent = no constraint.
+    const isOff = (m: DbMaster) => {
+      const ov = overrides.get(m.id);
+      return Boolean(ov && (ov.is_off || ov.kind === "off"));
+    };
+    const hasWorkdayOverride = (m: DbMaster) => {
+      const ov = overrides.get(m.id);
+      return Boolean(
+        ov && ov.kind === "workday" && Array.isArray(ov.intervals) && ov.intervals.length > 0,
+      );
+    };
+
+    // 1) Branch explicitly closed this weekday OVERRIDES master schedules (the SQL bails out on
+    // it too), so it must be checked first. branches.working_hours is keyed by numeric dow; an
+    // EMPTY ARRAY means closed. null/absent = no constraint, which is NOT evidence of closure.
     if (branchId) {
       const { data: b } = await opts.db
         .from("branches")
@@ -523,23 +552,28 @@ export async function isDayWorkableForService(opts: {
         .eq("id", branchId)
         .maybeSingle();
       const wh = (b as any)?.working_hours;
-      if (wh && typeof wh === "object") {
-        const iv = wh[String(dow)];
-        if (Array.isArray(iv) && iv.length === 0) return false;
+      if (wh && typeof wh === "object" && Array.isArray(wh[String(dow)]) && wh[String(dow)].length === 0) {
+        return "closed";
       }
     }
 
-    for (const m of masters) {
-      const ov = overrides.get(m.id);
-      if (ov && (ov.is_off || ov.kind === "off")) continue; // this master off this date
-      const workdayOverride =
-        ov && ov.kind === "workday" && Array.isArray(ov.intervals) && ov.intervals.length > 0;
-      if (workdayOverride || scheduled.has(m.id)) return true; // at least one master works
+    // 2) Anyone actually working → workable (empty slots then mean genuinely booked out).
+    if (masters.some((m) => !isOff(m) && (hasWorkdayOverride(m) || worksThisDow.has(m.id)))) {
+      return "workable";
     }
-    return false;
+
+    // 3) Closed only with positive evidence for EVERY relevant master: either an explicit
+    // day-off override, or a configured weekly schedule that omits this weekday.
+    const provenClosed = masters.every(
+      (m) => isOff(m) || (hasAnySchedule.has(m.id) && !worksThisDow.has(m.id)),
+    );
+    if (provenClosed) return "closed";
+
+    // 4) At least one master has no schedule at all → we simply don't know. Never call it a day off.
+    return "unknown";
   } catch {
-    // On any query failure, don't wrongly claim "выходной" — fall back to "fully_booked".
-    return true;
+    // On any query failure, never claim «выходной» — treat as a normal working day.
+    return "workable";
   }
 }
 
@@ -587,7 +621,17 @@ export async function loadSalonClosedDates(
   }
 }
 
-// Kept for tests / legacy: weekly-map based day-off guess. Superseded by isDayWorkableForService
+// Map a day verdict to the tool reason the model sees when a day has no free slots.
+// "unknown" MUST NOT become closed_that_day — that is how invented days off happen.
+function emptyDayReason(verdict: DayVerdict): string {
+  return verdict === "closed"
+    ? "closed_that_day"
+    : verdict === "unknown"
+      ? "hours_not_configured"
+      : "fully_booked";
+}
+
+// Kept for tests / legacy: weekly-map based day-off guess. Superseded by classifyDayForService
 // for live reason codes. working_hours is keyed mon..sun with values like "10:00–20:00"/"Выходной".
 export function classifyEmptyDay(
   date: string,
@@ -796,22 +840,18 @@ export async function executeV4Tool(
           reason = "part_unavailable";
           slots = daySlots; // surface the day's other free times
         } else {
-          // Whole day empty: is it a day-off (schedule) or a booked-out working day?
-          reason = (await isDayWorkableForService(commonArgs))
-            ? "fully_booked"
-            : "closed_that_day";
+          // Whole day empty: proven day-off, booked-out working day, or schedule not configured.
+          reason = emptyDayReason(await classifyDayForService(commonArgs));
         }
       } else {
-        reason = (await isDayWorkableForService(commonArgs))
-          ? "fully_booked"
-          : "closed_that_day";
+        reason = emptyDayReason(await classifyDayForService(commonArgs));
       }
       const times = slots.map((s) => formatTimeInTz(s.start, tz));
       const partRu =
         part === "morning" ? "утром" : part === "afternoon" ? "днём" : "вечером";
       return {
         date: args.date,
-        reason, // ok | part_unavailable | closed_that_day | fully_booked
+        reason, // ok | part_unavailable | closed_that_day | fully_booked | hours_not_configured
         // Full, non-truncated list of free start-times for this date. If a time is NOT here,
         // it is genuinely unavailable (booked or doesn't fit the service duration).
         free_times: times,
@@ -822,12 +862,14 @@ export async function executeV4Tool(
         })),
         note:
           reason === "closed_that_day"
-            ? "В этот день салон не работает (выходной). Предложи другой день — не говори «занято»."
+            ? "В этот день салон не работает (выходной) — это подтверждено графиком. Предложи другой день, не говори «занято»."
             : reason === "fully_booked"
               ? "На эту дату всё занято. Предложи ближайший другой день."
-              : reason === "part_unavailable"
-                ? `${partRu.charAt(0).toUpperCase() + partRu.slice(1)} на эту дату свободных окошек нет, но в этот же день есть другое время (см. free_times). Предложи их — НЕ говори «всё занято» и не перескакивай на другой день.`
-                : "Это ПОЛНЫЙ список свободных времён начала на эту дату. Клиенту покажи 2–4 удобно расставленных варианта, а не все подряд.",
+              : reason === "hours_not_configured"
+                ? "НЕТ ДАННЫХ о работе в этот день (график не заполнен) — это НЕ выходной. КАТЕГОРИЧЕСКИ НЕЛЬЗЯ говорить клиенту, что это выходной или что салон не работает. Скажи, что на эту дату свободного времени не видишь, и предложи дни, где окошки есть; если клиенту важна именно эта дата — вызови escalate_to_human и передай администратору."
+                : reason === "part_unavailable"
+                  ? `${partRu.charAt(0).toUpperCase() + partRu.slice(1)} на эту дату свободных окошек нет, но в этот же день есть другое время (см. free_times). Предложи их — НЕ говори «всё занято» и не перескакивай на другой день.`
+                  : "Это ПОЛНЫЙ список свободных времён начала на эту дату. Клиенту покажи 2–4 удобно расставленных варианта, а не все подряд.",
       };
     }
 
@@ -846,27 +888,29 @@ export async function executeV4Tool(
       });
       const times = slots.map((s) => formatTimeInTz(s.start, tz));
       const hit = slots.find((s) => formatTimeInTz(s.start, tz) === hhmm);
-      // Tell apart four cases so the assistant never falsely says «занято»:
-      //  - ok            → time is free
-      //  - closed_that_day → nobody works that date (day-off)
-      //  - fully_booked  → working day, but no free slot at all
-      //  - outside_hours → there ARE free slots, but the asked time is beyond the window
-      //                    (past closing / service doesn't fit) — NOT booked
-      //  - time_taken    → free slots exist on both sides, so the asked time is a real gap (booked)
+      // Tell apart the cases so the assistant never falsely says «занято» — and never invents a
+      // day off:
+      //  - ok                   → time is free
+      //  - closed_that_day      → PROVEN day-off (explicit override / schedule omits this weekday)
+      //  - hours_not_configured → no schedule data at all — NOT a day off, don't claim one
+      //  - fully_booked         → working day, but no free slot at all
+      //  - outside_hours        → free slots exist, but the asked time is beyond the window
+      //                           (past closing / service doesn't fit) — NOT booked
+      //  - time_taken           → free slots on both sides, so the asked time is a real gap
       let reason: string;
       if (hit) {
         reason = "ok";
       } else if (slots.length === 0) {
-        reason = (await isDayWorkableForService({
-          db,
-          input,
-          serviceId: args.service_id as string,
-          date: args.date as string,
-          masterId: (args.master_id as string) || undefined,
-          branchId: (args.branch_id as string | null) ?? flags.selectedBranchId ?? null,
-        }))
-          ? "fully_booked"
-          : "closed_that_day";
+        reason = emptyDayReason(
+          await classifyDayForService({
+            db,
+            input,
+            serviceId: args.service_id as string,
+            date: args.date as string,
+            masterId: (args.master_id as string) || undefined,
+            branchId: (args.branch_id as string | null) ?? flags.selectedBranchId ?? null,
+          }),
+        );
       } else {
         // HH:MM strings are zero-padded, so lexicographic compare == chronological.
         const outside = hhmm > times[times.length - 1] || hhmm < times[0];
@@ -876,7 +920,12 @@ export async function executeV4Tool(
         requested: hhmm,
         date: args.date,
         available: Boolean(hit),
-        reason, // ok | time_taken | outside_hours | closed_that_day | fully_booked
+        reason, // ok | time_taken | outside_hours | closed_that_day | fully_booked | hours_not_configured
+        ...(reason === "hours_not_configured"
+          ? {
+              note: "НЕТ ДАННЫХ о работе в этот день — это НЕ выходной. Не говори клиенту, что салон не работает; предложи дни со свободным временем или передай администратору (escalate_to_human).",
+            }
+          : {}),
         ...(hit ? { slot_start: hit.start, master_ids: hit.master_ids } : {}),
         nearby_free_times: times.slice(0, 8),
       };
@@ -1376,13 +1425,15 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
           .filter(Boolean)
           .slice(-6)
           .join("\n");
+        // Staff-facing text: never brand this as "ИИ-Админ"/"бот" — for the salon's employees the
+        // handover should read like a normal internal note from the admin line.
         return (
-          `🔔 ИИ-администратор передаёт вам диалог — нужна ваша помощь.\n` +
+          `🔔 Клиенту нужна ваша помощь — диалог передан вам.\n` +
           `👤 Клиент: +${input.client.phone}${input.client.name ? ` (${input.client.name})` : ""}\n` +
           `📌 Причина: ${flags.escalateReason ?? "нужна помощь"}\n` +
           `🕒 Время: ${when}\n\n` +
           (historyLines ? `💬 Последние сообщения:\n${historyLines}\n\n` : "") +
-          `Откройте WhatsApp и ответьте клиенту — бот на паузе.`
+          `Откройте WhatsApp и ответьте клиенту — автоответы на паузе.`
         );
       })()
     : undefined;

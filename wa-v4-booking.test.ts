@@ -8,7 +8,7 @@ import {
   classifyEmptyDay,
   executeV4Tool,
   clampPriceOverride,
-  isDayWorkableForService,
+  classifyDayForService,
   loadSalonClosedDates,
   sanitizeGeminiHistory,
 } from "@/lib/wa-agent-v4.server";
@@ -264,54 +264,129 @@ const masterRow = (id: string, svc: string) => ({
   master_services: [{ service_id: svc }],
 });
 
-// The day-off bug fix: a one-off выходной is stored in master_day_overrides (kind='off'), NOT in
-// salons.working_hours — so availability reasons must consult the real schedule tables.
-describe("isDayWorkableForService — day-off vs working day (real sources)", () => {
-  const D = "2026-07-15"; // Wednesday
-  test("per-date override kind=off → NOT workable (→ closed_that_day)", async () => {
+// Day verdict must never INVENT a day off. «Выходной» requires positive evidence: an explicit
+// per-date override, or a configured weekly schedule that deliberately omits this weekday.
+// Missing schedule data → "unknown" (the bug: it used to read as closed_that_day, so the
+// assistant told clients "17-июль, жума күнү салон иштебейт" with nothing in the data).
+describe("classifyDayForService — workable / closed / unknown", () => {
+  const D = "2026-07-15"; // Wednesday → dow 3
+  const WED = 3;
+
+  test("per-date override kind=off → closed (proven day off)", async () => {
     const db = makeTableDb({
       masters: [masterRow("m1", "svc")],
       master_day_overrides: [{ master_id: "m1", is_off: true, kind: "off", intervals: null }],
-      master_schedules: [{ master_id: "m1" }], // has a weekly schedule, but the override wins
+      master_schedules: [{ master_id: "m1", weekday: WED }], // works Wed, but the override wins
     });
-    expect(await isDayWorkableForService({ db, input, serviceId: "svc", date: D })).toBe(false);
+    expect(await classifyDayForService({ db, input, serviceId: "svc", date: D })).toBe("closed");
   });
-  test("no override + has weekly schedule → workable (→ fully_booked when no free slot)", async () => {
+
+  test("has weekly schedule for this weekday → workable (empty slots = fully_booked)", async () => {
     const db = makeTableDb({
       masters: [masterRow("m1", "svc")],
       master_day_overrides: [],
-      master_schedules: [{ master_id: "m1" }],
+      master_schedules: [{ master_id: "m1", weekday: WED }],
     });
-    expect(await isDayWorkableForService({ db, input, serviceId: "svc", date: D })).toBe(true);
+    expect(await classifyDayForService({ db, input, serviceId: "svc", date: D })).toBe("workable");
   });
-  test("no schedule that weekday → NOT workable", async () => {
+
+  // THE reported bug: schedule simply not filled in must NOT read as a day off.
+  test("no schedule rows at all → unknown (never claim выходной)", async () => {
     const db = makeTableDb({
       masters: [masterRow("m1", "svc")],
       master_day_overrides: [],
       master_schedules: [],
     });
-    expect(await isDayWorkableForService({ db, input, serviceId: "svc", date: D })).toBe(false);
+    expect(await classifyDayForService({ db, input, serviceId: "svc", date: D })).toBe("unknown");
   });
+
+  test("schedule configured for OTHER weekdays but not this one → closed (deliberate day off)", async () => {
+    const db = makeTableDb({
+      masters: [masterRow("m1", "svc")],
+      master_day_overrides: [],
+      master_schedules: [{ master_id: "m1", weekday: 1 }, { master_id: "m1", weekday: 2 }], // Mon/Tue only
+    });
+    expect(await classifyDayForService({ db, input, serviceId: "svc", date: D })).toBe("closed");
+  });
+
+  test("nobody performs the service → unknown, NOT a day off", async () => {
+    const db = makeTableDb({ masters: [], master_day_overrides: [], master_schedules: [] });
+    expect(await classifyDayForService({ db, input, serviceId: "svc", date: D })).toBe("unknown");
+  });
+
+  test("branch closed that weekday beats the master's schedule → closed", async () => {
+    const db = makeTableDb({
+      masters: [masterRow("m1", "svc")],
+      master_day_overrides: [],
+      master_schedules: [{ master_id: "m1", weekday: WED }], // master works, but branch is shut
+      branches: [{ working_hours: { [String(WED)]: [] } }], // empty array = closed that dow
+    });
+    expect(
+      await classifyDayForService({ db, input, serviceId: "svc", date: D, branchId: "b1" }),
+    ).toBe("closed");
+  });
+
   test("one master off but another works → workable", async () => {
     const db = makeTableDb({
       masters: [masterRow("m1", "svc"), masterRow("m2", "svc")],
       master_day_overrides: [{ master_id: "m1", is_off: true, kind: "off", intervals: null }],
-      master_schedules: [{ master_id: "m2" }],
+      master_schedules: [{ master_id: "m2", weekday: WED }],
     });
-    expect(await isDayWorkableForService({ db, input, serviceId: "svc", date: D })).toBe(true);
+    expect(await classifyDayForService({ db, input, serviceId: "svc", date: D })).toBe("workable");
   });
-  test("named master is off (another works) → NOT workable for that master", async () => {
+
+  test("named master is off (another works) → closed for that master", async () => {
     const db = makeTableDb({
       masters: [masterRow("m1", "svc"), masterRow("m2", "svc")],
       master_day_overrides: [{ master_id: "m1", is_off: true, kind: "off", intervals: null }],
-      master_schedules: [{ master_id: "m2" }],
+      master_schedules: [{ master_id: "m2", weekday: WED }],
     });
-    // Client asked specifically for m1, who is off → closed for them, even though m2 works.
     expect(
-      await isDayWorkableForService({ db, input, serviceId: "svc", date: D, masterId: "m1" }),
-    ).toBe(false);
+      await classifyDayForService({ db, input, serviceId: "svc", date: D, masterId: "m1" }),
+    ).toBe("closed");
   });
 });
+
+// End-to-end through the tool: an unconfigured schedule must surface as hours_not_configured,
+// NOT closed_that_day — this is what stops the assistant inventing «выходной».
+describe("get_available_slots — unconfigured schedule is not a day off", () => {
+  const flags = { appointmentId: null, selectedBranchId: null, needsHuman: false, escalateReason: null, photoNotes: [] };
+  const cfgInput = { ...input, config: { manage_cutoff_hours: 0 } } as any;
+
+  test("no slots + no schedule data → reason=hours_not_configured", async () => {
+    const db = makeTableDb(
+      { masters: [masterRow("m1", "svc")], master_day_overrides: [], master_schedules: [] },
+      async () => ({ data: [] }), // rpc: no free slots
+    );
+    const r = await executeV4Tool(
+      "get_available_slots",
+      { service_id: "svc", date: "2026-07-17" },
+      cfgInput, db, flags as any,
+    );
+    expect(r.reason).toBe("hours_not_configured");
+    expect(r.note).toContain("НЕ выходной");
+  });
+
+  test("no slots but schedule says they work → reason=fully_booked", async () => {
+    const db = makeTableDb(
+      {
+        masters: [masterRow("m1", "svc")],
+        master_day_overrides: [],
+        master_schedules: [{ master_id: "m1", weekday: dowOfTest("2026-07-17") }],
+      },
+      async () => ({ data: [] }),
+    );
+    const r = await executeV4Tool(
+      "get_available_slots",
+      { service_id: "svc", date: "2026-07-17" },
+      cfgInput, db, flags as any,
+    );
+    expect(r.reason).toBe("fully_booked");
+  });
+});
+function dowOfTest(d: string) {
+  return new Date(`${d}T12:00:00Z`).getUTCDay();
+}
 
 describe("loadSalonClosedDates — whole-salon days off for the prompt", () => {
   test("date off for ALL active masters → listed; date off for only one → not listed", async () => {
