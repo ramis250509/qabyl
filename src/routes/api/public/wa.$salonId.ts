@@ -878,6 +878,7 @@ async function notifyOwner(opts: {
       ? greenApiSendFileByUrl(opts.creds, chat, opts.mediaUrl, "photo.jpg", opts.text)
       : greenApiSendMessage(opts.creds, chat, opts.text);
 
+  console.log(`[wa] notifyOwner(${opts.kind}) sending to ${ownerPhone} …`);
   let res = await send();
   if (!res.ok) {
     console.error(`[wa] notifyOwner(${opts.kind}) → ${ownerPhone} failed: ${res.error} — retrying`);
@@ -888,6 +889,10 @@ async function notifyOwner(opts: {
     console.error(
       `[wa] notifyOwner(${opts.kind}) → ${ownerPhone} FAILED after retry: ${res.error}. Alert is still visible in the admin panel.`,
     );
+  } else {
+    // Log the success too: a silent success and a silent skip look identical in the logs
+    // otherwise, which is what made this outage hard to pin down.
+    console.log(`[wa] notifyOwner(${opts.kind}) → ${ownerPhone} delivered to Green-API`);
   }
 }
 
