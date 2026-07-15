@@ -30,6 +30,14 @@ describe("buildSystemPromptV4 — Phase C blocks", () => {
     expect(beauty).toContain("КАК РАЗБИРАТЬ ФОТО");
   });
 
+  // Real miss in production: client's own nails were short, the reference photo showed long
+  // almond nails, and the assistant quoted a plain manicure ("Прекрасный выбор!") — a look that
+  // service physically cannot deliver. Must compare length and route to наращивание.
+  test("nails guide forces a length comparison against the reference photo", () => {
+    expect(beauty).toContain("ДЛИНА — ОБЯЗАТЕЛЬНО СРАВНИ");
+    expect(beauty).toContain("НАРАЩИВАНИЕ");
+  });
+
   test("non-beauty (dental) does NOT get hair-specific trees", () => {
     expect(dental).not.toContain("күйгөн чач");
     expect(dental).not.toContain("КАК РАЗБИРАТЬ ФОТО");
