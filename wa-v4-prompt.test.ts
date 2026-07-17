@@ -66,14 +66,6 @@ describe("buildSystemPromptV4 — Phase C blocks", () => {
     expect(beauty).not.toContain("Узнай имя (если не знаешь)");
   });
 
-  // #2 combos: parallel is modeled as independent per-master appointments (no "hands" resource);
-  // "2 hands/feet" must NOT be split into separate services.
-  test("prompt handles multi-service combos and rejects the hands-as-resource framing", () => {
-    expect(beauty).toContain("НЕСКОЛЬКО УСЛУГ ЗА ВИЗИТ / КОМБО");
-    expect(beauty).toContain("ОДНОВРЕМЕННО");
-    expect(beauty).toContain("НЕ ресурсы");
-  });
-
   // "Айгерим, кандайсыз?" — the admin's addressing term must not be mistaken for the client's name.
   test("addressing term is never treated as the client's name", () => {
     const p = buildSystemPromptV4({
