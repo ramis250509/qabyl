@@ -65,6 +65,16 @@ describe("buildSystemPromptV4 — Phase C blocks", () => {
     expect(beauty).toContain("ИМЯ КЛИЕНТА (ОБЯЗАТЕЛЬНО, без него не записывать)");
     expect(beauty).not.toContain("Узнай имя (если не знаешь)");
   });
+
+  // "Айгерим, кандайсыз?" — the admin's addressing term must not be mistaken for the client's name.
+  test("addressing term is never treated as the client's name", () => {
+    const p = buildSystemPromptV4({
+      ...inputFor("beauty"),
+      config: { industry: "beauty", languages: ["ru"], manage_cutoff_hours: 0, client_addressing: "Айгерим" },
+    } as any);
+    expect(p).toContain("КАК К ТЕБЕ ОБРАЩАЮТСЯ КЛИЕНТЫ");
+    expect(p).toContain("НИКОГДА не записывай его в client_name");
+  });
   // Hard guardrail: the assistant invented days off ("17-июль салон иштебейт") that existed
   // nowhere in the data. Saying «выходной» must require closed_that_day or an explicit fact.
   test("prompt forbids inventing days off / schedule", () => {

@@ -17,28 +17,35 @@ function StatsPage() {
   const { isSuperAdmin } = useAuth();
   const filters = useAdminFilters();
   const { salonId, branchId } = filters;
-  const [period, setPeriod] = useState<"today" | "7" | "30" | "90">("30");
+  const [period, setPeriod] = useState<"today" | "7" | "30" | "month" | "90">("month");
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
+    // Value/volume metrics are keyed on created_at (when the booking was MADE), NOT starts_at
+    // (the visit date). This matches the owner's "сколько записей за этот месяц" mental model and
+    // is the number that justifies the subscription — a booking made today for a visit next month
+    // still counts toward this month's value. All statuses are loaded (including cancelled) and
+    // split in JS, so a cancelled test booking is shown transparently rather than silently dropped
+    // (which is what made the page read "4" when there were far more).
     let sinceISO: string;
     let untilISO: string | null = null;
+    const now = new Date();
     if (period === "today") {
-      const now = new Date();
       const start = new Date(now); start.setHours(0, 0, 0, 0);
       const end = new Date(now); end.setHours(23, 59, 59, 999);
       sinceISO = start.toISOString();
       untilISO = end.toISOString();
+    } else if (period === "month") {
+      sinceISO = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0).toISOString();
     } else {
       sinceISO = new Date(Date.now() - Number(period) * 86400000).toISOString();
     }
     let q = supabase.from("appointments")
-      .select("price, master_id, service_id, branch_id, status, masters(name), services(name), branches(name)")
-      .gte("starts_at", sinceISO)
-      .in("status", ["confirmed", "completed"]);
-    if (untilISO) q = q.lte("starts_at", untilISO);
+      .select("price, master_id, service_id, branch_id, status, source, masters(name), services(name), branches(name)")
+      .gte("created_at", sinceISO);
+    if (untilISO) q = q.lte("created_at", untilISO);
     if (salonId !== "all") q = q.eq("salon_id", salonId);
     if (branchId !== "all") q = q.eq("branch_id", branchId);
     const { data } = await q;
@@ -51,23 +58,29 @@ function StatsPage() {
   useRegisterRefresh(load);
 
   const stats = useMemo(() => {
-    const revenue = rows.reduce((s, a) => s + Number(a.price), 0);
+    // "Active" = a booking that stuck (excludes client-cancelled). Revenue counts only these;
+    // the raw total is shown separately so nothing is hidden.
+    const isActive = (a: any) => a.status !== "cancelled";
+    const active = (rows as any[]).filter(isActive);
+    const cancelledCount = rows.length - active.length;
+    const aiCount = (rows as any[]).filter((a) => a.source === "ai_assistant" && isActive(a)).length;
+    const revenue = active.reduce((s, a) => s + Number(a.price || 0), 0);
     const byMaster: Record<string, { name: string; count: number; revenue: number }> = {};
     const byService: Record<string, { name: string; count: number; revenue: number }> = {};
     const byBranch: Record<string, { name: string; count: number; revenue: number }> = {};
-    for (const a of rows as any[]) {
+    for (const a of active) {
       const mk = a.master_id;
       byMaster[mk] ??= { name: a.masters?.name ?? "—", count: 0, revenue: 0 };
-      byMaster[mk].count++; byMaster[mk].revenue += Number(a.price);
+      byMaster[mk].count++; byMaster[mk].revenue += Number(a.price || 0);
       const sk = a.service_id;
       byService[sk] ??= { name: a.services?.name ?? "—", count: 0, revenue: 0 };
-      byService[sk].count++; byService[sk].revenue += Number(a.price);
+      byService[sk].count++; byService[sk].revenue += Number(a.price || 0);
       const bk = a.branch_id ?? "__none__";
       byBranch[bk] ??= { name: a.branches?.name ?? "Без филиала", count: 0, revenue: 0 };
-      byBranch[bk].count++; byBranch[bk].revenue += Number(a.price);
+      byBranch[bk].count++; byBranch[bk].revenue += Number(a.price || 0);
     }
     return {
-      revenue, count: rows.length,
+      revenue, count: active.length, cancelledCount, aiCount,
       byMaster: Object.values(byMaster).sort((a, b) => b.revenue - a.revenue),
       byService: Object.values(byService).sort((a, b) => b.revenue - a.revenue),
       byBranch: Object.values(byBranch).sort((a, b) => b.revenue - a.revenue),
@@ -86,6 +99,7 @@ function StatsPage() {
             <SelectItem value="today">Сегодня</SelectItem>
             <SelectItem value="7">7 дней</SelectItem>
             <SelectItem value="30">30 дней</SelectItem>
+            <SelectItem value="month">Этот месяц</SelectItem>
             <SelectItem value="90">90 дней</SelectItem>
           </SelectContent>
         </Select>
@@ -96,7 +110,8 @@ function StatsPage() {
 
       {loading && rows.length === 0 ? <Card><LoadingState /></Card> : null}
 
-      <div className="grid md:grid-cols-2 gap-4">
+      <p className="text-xs text-muted-foreground -mt-2">Считается по дате создания записи (когда её оформили), а не по дате визита.</p>
+      <div className="grid sm:grid-cols-3 gap-4">
         <Card className="p-6">
           <p className="text-sm text-muted-foreground">Выручка</p>
           <p className="text-3xl sm:text-4xl font-bold mt-1">{stats.revenue.toLocaleString("ru-RU")} сом</p>
@@ -104,6 +119,14 @@ function StatsPage() {
         <Card className="p-6">
           <p className="text-sm text-muted-foreground">Записей</p>
           <p className="text-3xl sm:text-4xl font-bold mt-1">{stats.count}</p>
+          {stats.cancelledCount > 0 && (
+            <p className="text-xs text-muted-foreground mt-1">+ {stats.cancelledCount} отменённых</p>
+          )}
+        </Card>
+        <Card className="p-6">
+          <p className="text-sm text-muted-foreground">Через ИИ-Администратора</p>
+          <p className="text-3xl sm:text-4xl font-bold mt-1">{stats.aiCount}</p>
+          <p className="text-xs text-muted-foreground mt-1">записей оформил ассистент</p>
         </Card>
       </div>
 
