@@ -16,6 +16,7 @@ import { useSalonTimezone, formatInTz, dayKeyInTz, minutesFromMidnightInTz, star
 import { CreateAppointmentDialog, MoveAppointmentDialog } from "@/components/admin/AppointmentDialogs";
 import { LoadingState } from "@/components/ui/loading-state";
 import { useRegisterRefresh } from "@/lib/refresh-context";
+import { rescheduleAppointment } from "@/lib/appointments.functions";
 
 export const Route = createFileRoute("/admin/calendar")({
   component: CalendarPage,
@@ -286,11 +287,21 @@ function CalendarPage() {
     }
     const end = new Date(start.getTime() + drag.durationMin * 60000);
     setAppointments((prev) => prev.map((a) => (a.id === drag.id ? { ...a, starts_at: start.toISOString(), ends_at: end.toISOString(), master_id: newMasterId ?? a.master_id } : a)));
-    const update: any = { starts_at: start.toISOString(), ends_at: end.toISOString() };
-    if (newMasterId) update.master_id = newMasterId;
-    const { error } = await supabase.from("appointments").update(update).eq("id", drag.id);
-    if (error) { toast.error(error.message); loadAppointments(); return; }
-    toast.success("Запись перенесена");
+    // Route through the validated server RPC (atomic double-booking / break / past-time checks)
+    // instead of writing straight to the table — and it notifies the client over WhatsApp.
+    try {
+      const res = await rescheduleAppointment({
+        data: {
+          appointmentId: drag.id,
+          newStartsAt: start.toISOString(),
+          newMasterId: newMasterId ?? null,
+        },
+      });
+      if (!res.ok) { toast.error(res.error); loadAppointments(); return; }
+      toast.success("Запись перенесена");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Не удалось перенести запись");
+    }
     loadAppointments();
   }
 
@@ -522,14 +533,17 @@ function CalendarPage() {
         tz={tz}
         onMoved={async (newStart) => {
           if (!moveTarget) return;
-          const durationMin = (new Date(moveTarget.ends_at).getTime() - new Date(moveTarget.starts_at).getTime()) / 60000;
-          const end = new Date(newStart.getTime() + durationMin * 60000);
-          const { error } = await supabase.from("appointments")
-            .update({ starts_at: newStart.toISOString(), ends_at: end.toISOString() })
-            .eq("id", moveTarget.id);
-          if (error) { toast.error(error.message); return; }
-          toast.success("Запись перенесена");
-          loadAppointments();
+          // Same validated, client-notifying server path as drag-to-move above.
+          try {
+            const res = await rescheduleAppointment({
+              data: { appointmentId: moveTarget.id, newStartsAt: newStart.toISOString(), newMasterId: null },
+            });
+            if (!res.ok) { toast.error(res.error); return; }
+            toast.success("Запись перенесена");
+            loadAppointments();
+          } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Не удалось перенести запись");
+          }
         }}
       />
     </div>
