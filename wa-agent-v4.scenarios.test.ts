@@ -17,7 +17,9 @@ mock.module("@/integrations/supabase/client.server", () => ({ supabaseAdmin: dbP
 
 process.env.GEMINI_API_KEY = "test-key";
 
-const { runWaAgentV4, humanizeReply } = await import("@/lib/wa-agent-v4.server");
+const { runWaAgentV4, humanizeReply, buildSystemPromptV4 } = await import(
+  "@/lib/wa-agent-v4.server"
+);
 
 const TZ = "Asia/Bishkek";
 const SALON = { salonId: "salon1", salonName: "Тест салон", timezone: TZ };
@@ -605,4 +607,57 @@ test("стойкое зависание: если модель зависла д
   expect(res.reply).not.toMatch(/подожд|сейчас проверю|секундоч|минуточ/i);
   expect(res.reply).toContain("не удалось получить данные");
   expect(res.debug.errors).toContain("stall_persisted_using_fallback");
+});
+
+// ============================================================
+// Industry vertical: medical clinic — system-prompt construction (deterministic, no Gemini).
+// These lock in that the medical persona + hard safety boundaries actually reach the prompt,
+// and that beauty-only guidance (photo pricing) is NOT leaked into a medical clinic.
+// ============================================================
+
+test("medical: промпт содержит персону клиники и жёсткие мед-границы", () => {
+  const prompt = buildSystemPromptV4(makeInput("болит голова", { config: { industry: "medical" } }));
+  expect(prompt).toContain("медицинской клиники"); // persona
+  expect(prompt).toContain("НЕ ставишь диагноз"); // safetyBoundaries
+});
+
+test("medical: неотложные симптомы — скорая (103/112) и эскалация к человеку", () => {
+  const prompt = buildSystemPromptV4(
+    makeInput("сильная боль в груди", { config: { industry: "medical" } }),
+  );
+  expect(prompt).toContain("103"); // emergency number
+  expect(prompt).toContain("escalate_to_human"); // triage → live human
+});
+
+test("medical: экспертная база — специальности и первичный/повторный приём", () => {
+  const prompt = buildSystemPromptV4(
+    makeInput("к какому врачу идти?", { config: { industry: "medical" } }),
+  );
+  expect(prompt).toContain("терапевт");
+  expect(prompt).toContain("Первичный");
+});
+
+test("medical: НЕ подмешивает бьюти-оценку по фото", () => {
+  const prompt = buildSystemPromptV4(makeInput("привет", { config: { industry: "medical" } }));
+  expect(prompt).not.toContain("ОЦЕНКА СТОИМОСТИ ПО ФОТО");
+});
+
+test("beauty (по умолчанию): без мед-границ, но с оценкой по фото", () => {
+  const prompt = buildSystemPromptV4(makeInput("хочу маникюр"));
+  expect(prompt).not.toContain("НЕ ставишь диагноз");
+  expect(prompt).toContain("ОЦЕНКА СТОИМОСТИ ПО ФОТО");
+});
+
+// ============================================================
+// Salesperson mode — the toggle injects an active-closing block only when enabled.
+// ============================================================
+
+test("режим продаж включён: в промпте есть блок активного закрытия", () => {
+  const prompt = buildSystemPromptV4(makeInput("сколько стоит?", { config: { sales_mode: true } }));
+  expect(prompt).toContain("РЕЖИМ АКТИВНЫХ ПРОДАЖ");
+});
+
+test("режим продаж выключен (по умолчанию): блока активного закрытия нет", () => {
+  const prompt = buildSystemPromptV4(makeInput("сколько стоит?"));
+  expect(prompt).not.toContain("РЕЖИМ АКТИВНЫХ ПРОДАЖ");
 });

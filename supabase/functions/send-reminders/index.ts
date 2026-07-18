@@ -5,7 +5,9 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// Called by cron every 15 min — sends WhatsApp reminders for appointments 24h ahead
+// Called by cron every 15 min — sends WhatsApp reminders ~2 hours before each appointment.
+// Source-agnostic: covers bookings made by the AI assistant, the public site widget and the
+// admin calendar alike (any confirmed appointment with reminder_sent=false).
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -20,9 +22,13 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    // ~2 hours ahead. The window (1h45m–2h15m) is wider than the 15-min cron cadence so every
+    // appointment is caught at least once; reminder_sent then guarantees exactly one reminder.
+    // Appointments booked less than ~1h45m before their start fall past this window and get no
+    // reminder — that's fine, the client just received the booking confirmation.
     const now = new Date();
-    const from = new Date(now.getTime() + 23 * 3600 * 1000);
-    const to = new Date(now.getTime() + 25 * 3600 * 1000);
+    const from = new Date(now.getTime() + 105 * 60 * 1000);
+    const to = new Date(now.getTime() + 135 * 60 * 1000);
 
     const { data: appts } = await supabase
       .from("appointments")

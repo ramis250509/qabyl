@@ -55,6 +55,10 @@ export type WaAssistantConfig = {
   // V4: answers to the industry-specific "knowledge book" questions, keyed by question id
   // (see src/lib/industries.ts). Rendered into the system prompt as labelled salon facts.
   knowledge_answers?: Record<string, string> | null;
+  // V4: "salesperson mode" — when true the agent proactively drives the conversation toward a
+  // booking (assumptive close, objection handling) instead of only answering. Off by default;
+  // medical/safety boundaries always outrank it. Only affects the V4 ("живой диалог") engine.
+  sales_mode?: boolean | null;
 };
 
 export type WaSalonContext = {

@@ -47,6 +47,7 @@ export function resolveAssistantRuntimeConfig(salon: any, assistant: any, secret
       client_addressing: assistant?.client_addressing ?? null,
       industry: assistant?.industry ?? null,
       knowledge_answers: assistant?.knowledge_answers ?? null,
+      sales_mode: assistant?.sales_mode ?? false,
     },
   };
 }
@@ -88,7 +89,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             .maybeSingle(),
           supabaseAdmin
             .from("salon_ai_assistant")
-            .select("enabled, greeting, tone_instructions, pricing_rules, languages, manage_cutoff_hours, engine, knowledge_base, client_addressing, industry, knowledge_answers")
+            .select("enabled, greeting, tone_instructions, pricing_rules, languages, manage_cutoff_hours, engine, knowledge_base, client_addressing, industry, knowledge_answers, sales_mode")
             .eq("salon_id", salonId)
             .maybeSingle(),
         ]);

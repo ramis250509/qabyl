@@ -35,6 +35,7 @@ type Assistant = {
   client_addressing: string | null;
   industry: IndustryKey;
   knowledge_answers: Record<string, string>;
+  sales_mode: boolean;
 };
 
 const DEFAULT_GREETING =
@@ -65,6 +66,7 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
     client_addressing: "",
     industry: DEFAULT_INDUSTRY,
     knowledge_answers: {},
+    sales_mode: false,
   });
 
   useEffect(() => {
@@ -92,6 +94,7 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
           client_addressing: (row as any).client_addressing ?? "",
           industry: normalizeIndustry((row as any).industry),
           knowledge_answers: ((row as any).knowledge_answers as Record<string, string>) ?? {},
+          sales_mode: !!(row as any).sales_mode,
         });
       }
       setLoading(false);
@@ -167,6 +170,7 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
         client_addressing: data.client_addressing || null,
         industry: data.industry,
         knowledge_answers: data.knowledge_answers ?? {},
+        sales_mode: data.sales_mode,
       } as any,
       { onConflict: "salon_id" },
     );
@@ -352,6 +356,22 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
             «Живой диалог» — ассистент общается свободным текстом, как человек: понимает
             голосовые сообщения, отвечает на вопросы о салоне и записывает без нумерованных
             меню. Переключение действует сразу, откат — в один клик.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center gap-3">
+            <Switch
+              checked={data.sales_mode}
+              onCheckedChange={(v) => setData({ ...data, sales_mode: v })}
+            />
+            <Label className="text-sm">Режим активных продаж</Label>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Ассистент активнее ведёт клиента к записи: сам предлагает удобное время, мягко
+            отрабатывает возражения («дорого», «подумаю») и доводит до записи — культурно, без
+            навязчивости. Работает в режиме «Живой диалог». Медицинские ограничения всегда важнее
+            продажи.
           </p>
         </div>
 
