@@ -1,5 +1,18 @@
 project_id = "khykprcdojksqvuqyajd"
+
+# IMPORTANT: these functions are invoked by DB triggers and pg_cron via net.http_post, which
+# send only an `x-cron-secret` header (their own auth) and NO `Authorization: Bearer <jwt>`.
+# They MUST keep verify_jwt = false, otherwise the Edge Function gateway rejects every internal
+# call with 401 UNAUTHORIZED_NO_AUTH_HEADER before the function code runs — silently breaking
+# booking confirmations, reschedule/cancel notifications and reminders.
+# NOTE: the Supabase DASHBOARD ignores this file and defaults new deploys to verify_jwt = TRUE.
+# If you ever redeploy one of these from the dashboard, immediately turn "Verify JWT" back OFF
+# in the function's Settings tab (or redeploy via the CLI, which honours this config).
 [functions.send-push]
 verify_jwt = false
 [functions.cleanup-wa-media]
+verify_jwt = false
+[functions.send-whatsapp]
+verify_jwt = false
+[functions.send-reminders]
 verify_jwt = false

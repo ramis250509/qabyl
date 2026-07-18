@@ -59,9 +59,18 @@ async function notifyClientReschedule(appointmentId: string): Promise<void> {
       console.warn("[reschedule] SUPABASE_URL missing — skipping WhatsApp notify");
       return;
     }
+    // Send BOTH the function's own auth (x-cron-secret) AND a real bearer JWT (the service-role
+    // key). The bearer makes this call pass the Edge gateway even if "Verify JWT" is ON for
+    // send-whatsapp — so an accidental dashboard redeploy that re-enables it can't silently break
+    // reschedule notifications (see supabase/config.toml for the full story).
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     const resp = await fetch(`${base}/functions/v1/send-whatsapp`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-cron-secret": String(secret) },
+      headers: {
+        "Content-Type": "application/json",
+        "x-cron-secret": String(secret),
+        ...(serviceKey ? { Authorization: `Bearer ${serviceKey}` } : {}),
+      },
       body: JSON.stringify({ appointment_id: appointmentId, kind: "reschedule" }),
     });
     if (!resp.ok) {
