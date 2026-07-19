@@ -14,10 +14,18 @@ import { getWaWebhookConfig, regenerateWaWebhookToken } from "@/lib/wa-config.fu
 import {
   INDUSTRIES_META,
   INDUSTRY_ORDER,
+  INDUSTRY_PRICING,
   DEFAULT_INDUSTRY,
   normalizeIndustry,
   type IndustryKey,
 } from "@/lib/industries";
+
+// Every industry's default "how to price" text, used to detect whether the owner has customised
+// the field. If the current text equals one of these, switching industry safely replaces it with
+// the new industry's text; a custom text is left untouched.
+const PRICING_DEFAULTS = new Set(
+  Object.values(INDUSTRY_PRICING).map((p) => p.default),
+);
 import { WaSimulator } from "./WaSimulator";
 import { AiServiceListEditor } from "./AiServiceListEditor";
 
@@ -42,8 +50,6 @@ const DEFAULT_GREETING =
   "Здравствуйте! 👋 Я помощник салона. Подскажу по услугам, ценам и помогу записаться на удобное время.";
 const DEFAULT_TONE =
   "Общайся вежливо, дружелюбно и по делу. Отвечай на русском или кыргызском — на том языке, на котором написал клиент. Если клиент пишет на другом языке, отвечай на русском. Не используй сложных терминов.";
-const DEFAULT_PRICING =
-  "Оценивай стоимость по фото как мастер с 20-летним опытом, а не выбирай середину диапазона. Учитывай длину волос (чем длиннее — тем дороже), густоту и объём, степень повреждения и пористость, следы прошлых окрашиваний и осветлений, сложность работы, расход состава и время мастера. Короткие или тонкие волосы — ближе к нижней границе, длинные/густые/повреждённые — ближе к верхней. Назови узкий диапазон примерно в 200–500 сом (например «по фото где-то 3200–3500 сом» или «ийинден болсо 3200–3700 эсептесеңиз болот, эже»), а не всю вилку, и обязательно добавь, что точную цену мастер подтвердит на месте.";
 
 export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salonId: string; salonName: string; onOpenWhatsAppTab?: () => void }) {
   const { isSuperAdmin } = useAuth();
@@ -58,7 +64,7 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
     whatsapp_phone: "",
     greeting: DEFAULT_GREETING,
     tone_instructions: DEFAULT_TONE,
-    pricing_rules: DEFAULT_PRICING,
+    pricing_rules: INDUSTRY_PRICING[DEFAULT_INDUSTRY].default,
     languages: ["ru", "ky"],
     manage_cutoff_hours: 0,
     engine: "v3",
@@ -86,7 +92,8 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
           whatsapp_phone: row.whatsapp_phone ?? "",
           greeting: row.greeting ?? DEFAULT_GREETING,
           tone_instructions: row.tone_instructions ?? DEFAULT_TONE,
-          pricing_rules: row.pricing_rules ?? DEFAULT_PRICING,
+          pricing_rules:
+            row.pricing_rules ?? INDUSTRY_PRICING[normalizeIndustry((row as any).industry)].default,
           languages: row.languages?.length ? row.languages : ["ru", "ky"],
           manage_cutoff_hours: (row as any).manage_cutoff_hours ?? 0,
           engine: (row as any).engine === "v4" ? "v4" : "v3",
@@ -299,7 +306,18 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
                   type="button"
                   variant={data.industry === key ? "default" : "outline"}
                   size="sm"
-                  onClick={() => setData({ ...data, industry: key })}
+                  onClick={() =>
+                    setData((d) => ({
+                      ...d,
+                      industry: key,
+                      // Swap in the new industry's pricing guidance, but only if the owner hasn't
+                      // written their own (current text is empty or is one of the presets).
+                      pricing_rules:
+                        !d.pricing_rules || PRICING_DEFAULTS.has(d.pricing_rules)
+                          ? INDUSTRY_PRICING[key].default
+                          : d.pricing_rules,
+                    }))
+                  }
                 >
                   <span className="mr-1">{m.emoji}</span>
                   {m.label}
@@ -403,16 +421,17 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
         </div>
 
         <div className="space-y-2">
-          <Label>Как оценивать стоимость по фото</Label>
+          <Label>{INDUSTRY_PRICING[data.industry].label}</Label>
           <Textarea
             rows={5}
             value={data.pricing_rules ?? ""}
             onChange={(e) => setData({ ...data, pricing_rules: e.target.value })}
           />
           <p className="text-xs text-muted-foreground">
-            Например: «Если волосы ниже плеч — это длинные, цена выше. Если на фото
-            сложный маникюр с дизайном — добавь +500 сом к базовой стоимости. Точную
-            цену всегда подтверждает мастер.»
+            Профессиональная подсказка для вашей ниши подставлена автоматически — отредактируйте
+            под свой салон или оставьте как есть.
+            {!INDUSTRY_PRICING[data.industry].photoPricing &&
+              " В вашей сфере оценка по фото не применяется — ассистент ведёт клиента к консультации/осмотру."}
           </p>
         </div>
 
