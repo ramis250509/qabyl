@@ -424,7 +424,7 @@ function SalonInfoTab({ salon, onSaved, onOpenBranchesTab }: { salon: any; onSav
         </p>
         {tzMismatch && (
           <div className="mt-2 text-xs rounded-md border border-yellow-500/40 bg-yellow-500/10 px-3 py-2 space-y-1">
-            <p>⚠️ Время выше не совпадает с часами на вашем устройстве ({browserTz}). Если салон находится там же, где и вы — нажмите кнопку ниже.</p>
+            <p>Время выше не совпадает с часами на вашем устройстве ({browserTz}). Если салон находится там же, где и вы — нажмите кнопку ниже.</p>
             <Button type="button" variant="outline" size="sm" onClick={() => setForm({ ...form, timezone: browserTz })}>
               Использовать моё время ({browserTz})
             </Button>
@@ -1901,7 +1901,7 @@ function IntegrationsTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => 
               /restart test command). Make that consequence visible instead of losing it quietly. */}
           {!loading && !ownerPhone.replace(/[^\d]/g, "") && (
             <p className="text-xs text-amber-700 mt-1">
-              ⚠️ Номер не указан. WhatsApp-уведомления владельцу отправляться не будут — в том числе
+              Номер не указан. WhatsApp-уведомления владельцу отправляться не будут — в том числе
               когда ИИ передаёт диалог живому администратору. Такие случаи будут видны только во
               вкладке «Уведомления».
             </p>

@@ -499,7 +499,7 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
                     </div>
                   </div>
                   <Button type="button" variant="outline" size="sm" onClick={fillKnowledgeExamples}>
-                    <Sparkles className="h-4 w-4 mr-1.5" /> Заполнить примером
+                    Подставить пример
                   </Button>
                 </div>
 

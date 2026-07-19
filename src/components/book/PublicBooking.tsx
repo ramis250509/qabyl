@@ -16,6 +16,7 @@ import {
   Folder,
   Sparkles,
   MapPin,
+  AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatPrice } from "@/lib/price";
@@ -621,9 +622,7 @@ export function PublicBooking({
             </div>
             <div className="rounded-xl border-2 border-red-500 bg-red-50 dark:bg-red-950/30 p-4 space-y-3">
               <div className="flex items-start gap-3">
-                <span className="text-3xl leading-none shrink-0" aria-hidden>
-                  ⚠️
-                </span>
+                <AlertTriangle className="h-6 w-6 shrink-0 text-red-600 dark:text-red-400" aria-hidden />
                 <div className="text-red-900 dark:text-red-100">
                   <div className="font-extrabold uppercase tracking-wide text-base">
                     {t("salonRuleTitle")}

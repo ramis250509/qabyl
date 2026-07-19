@@ -13,7 +13,7 @@ const TEMPLATES = [
   { id: "minimal", name: "Минимал", desc: "Белый фон, много воздуха, тонкая типографика" },
   { id: "premium", name: "Премиум", desc: "Тёмный фон, золотые акценты, serif-заголовки" },
   { id: "vivid", name: "Яркий", desc: "Градиенты на бренд-цветах, жирный шрифт, тени" },
-  { id: "custom", name: "Кастомный (HTML)", desc: "Вставь свой HTML, сгенерированный любой ИИ" },
+  { id: "custom", name: "Свой HTML", desc: "Полный контроль над оформлением — вставьте собственный HTML-код" },
 ];
 
 export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => void }) {
@@ -125,7 +125,7 @@ export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => v
               <p><code className="bg-muted px-1 rounded">{"{{hero_title}}"}</code> · <code className="bg-muted px-1 rounded">{"{{hero_subtitle}}"}</code> · <code className="bg-muted px-1 rounded">{"{{hero_image}}"}</code> · <code className="bg-muted px-1 rounded">{"{{salon_name}}"}</code> · <code className="bg-muted px-1 rounded">{"{{about}}"}</code> · <code className="bg-muted px-1 rounded">{"{{phone}}"}</code> · <code className="bg-muted px-1 rounded">{"{{address}}"}</code></p>
               <p><code className="bg-muted px-1 rounded">{"{{booking_button}}"}</code> · <code className="bg-muted px-1 rounded">{"{{services}}"}</code> · <code className="bg-muted px-1 rounded">{"{{masters}}"}</code> · <code className="bg-muted px-1 rounded">{"{{gallery}}"}</code> · <code className="bg-muted px-1 rounded">{"{{reviews}}"}</code> · <code className="bg-muted px-1 rounded">{"{{contacts}}"}</code></p>
               <p>URL соцсетей: <code className="bg-muted px-1 rounded">{"{{instagram}}"}</code> · <code className="bg-muted px-1 rounded">{"{{tiktok}}"}</code> · <code className="bg-muted px-1 rounded">{"{{whatsapp}}"}</code> · <code className="bg-muted px-1 rounded">{"{{telegram}}"}</code></p>
-              <p className="pt-1">⚠️ Скрипты вырезаются автоматически (для безопасности). Стили (CSS) и любая разметка — работают.</p>
+              <p className="pt-1">Скрипты вырезаются автоматически (для безопасности). Стили (CSS) и любая разметка — работают.</p>
             </div>
           </div>
         )}
