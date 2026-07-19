@@ -16,11 +16,6 @@ const TEMPLATES = [
   { id: "custom", name: "Кастомный (HTML)", desc: "Вставь свой HTML, сгенерированный любой ИИ" },
 ];
 
-const DAYS = [
-  { k: "mon", l: "Понедельник" }, { k: "tue", l: "Вторник" }, { k: "wed", l: "Среда" },
-  { k: "thu", l: "Четверг" }, { k: "fri", l: "Пятница" }, { k: "sat", l: "Суббота" }, { k: "sun", l: "Воскресенье" },
-];
-
 export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => void }) {
   const [form, setForm] = useState<any>({
     site_template: salon.site_template || "minimal",
@@ -35,7 +30,6 @@ export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => v
     tiktok_url: salon.tiktok_url ?? "",
     whatsapp_url: salon.whatsapp_url ?? "",
     telegram_url: salon.telegram_url ?? "",
-    working_hours: salon.working_hours ?? {},
     custom_html: salon.custom_html ?? "",
   });
   const [saving, setSaving] = useState(false);
@@ -206,21 +200,6 @@ export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => v
           <div><Label>WhatsApp</Label><Input value={form.whatsapp_url} onChange={(e) => setForm({ ...form, whatsapp_url: e.target.value })} placeholder="https://wa.me/7..." /></div>
           <div><Label>Telegram</Label><Input value={form.telegram_url} onChange={(e) => setForm({ ...form, telegram_url: e.target.value })} placeholder="https://t.me/..." /></div>
         </div>
-      </Card>
-
-      <Card className="p-6 space-y-3">
-        <h3 className="font-semibold">Часы работы</h3>
-        {DAYS.map(({ k, l }) => (
-          <div key={k} className="flex items-center gap-3 text-sm">
-            <div className="w-32">{l}</div>
-            <Input
-              value={form.working_hours[k] ?? ""}
-              onChange={(e) => setForm({ ...form, working_hours: { ...form.working_hours, [k]: e.target.value } })}
-              placeholder="10:00–20:00 или Выходной"
-              className="max-w-xs"
-            />
-          </div>
-        ))}
       </Card>
 
       <div className="flex gap-3 items-center">
