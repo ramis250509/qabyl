@@ -219,8 +219,9 @@ export function buildSystemPromptV4(input: WaAgentInput, closedDates: string[] =
         ]),
     config.pricing_rules ? `- Дополнительные правила по цене от бизнеса (учитывай их): ${config.pricing_rules}` : "",
     ``,
-    // Photo-technologist framework + complex-service safety trees (beauty). Absent for other
-    // industries, so medical/other verticals don't get hair advice.
+    // How to read a client's photo, written per industry — not for pricing but to consult and
+    // steer to a booking (beauty reads hair/nails, dental/medical acknowledge without diagnosing,
+    // etc.). complexServices (hair-damage safety trees) stays beauty-only.
     ind.photoAnalysisGuide ?? "",
     ind.complexServices ?? "",
     // Feasibility of "make it like this photo" — general, all industries.

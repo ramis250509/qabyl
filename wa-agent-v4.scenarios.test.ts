@@ -642,6 +642,19 @@ test("medical: НЕ подмешивает бьюти-оценку по фото
   expect(prompt).not.toContain("ОЦЕНКА СТОИМОСТИ ПО ФОТО");
 });
 
+test("разбор фото есть у КАЖДОЙ отрасли (не только beauty) — для консультации, не для цены", () => {
+  // Every vertical must tell the agent how to use a client's photo to consult and book.
+  for (const industry of ["barbershop", "massage", "cosmetology", "epilation", "dental", "medical"] as const) {
+    const prompt = buildSystemPromptV4(makeInput("фото", { config: { industry } }));
+    expect(prompt).toContain("КАК РАЗБИРАТЬ ФОТО");
+  }
+  // Medical/dental photo handling must forbid interpreting results / diagnosing.
+  const med = buildSystemPromptV4(makeInput("вот мои анализы", { config: { industry: "medical" } }));
+  expect(med).toContain("НЕ расшифровывай");
+  const dent = buildSystemPromptV4(makeInput("вот мои зубы", { config: { industry: "dental" } }));
+  expect(dent).toContain("НЕ ставь диагноз");
+});
+
 test("beauty (по умолчанию): без мед-границ, но с оценкой по фото", () => {
   const prompt = buildSystemPromptV4(makeInput("хочу маникюр"));
   expect(prompt).not.toContain("НЕ ставишь диагноз");
