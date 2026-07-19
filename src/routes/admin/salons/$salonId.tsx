@@ -14,7 +14,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
-import { ArrowLeft, Plus, Trash2, Edit, Copy, UserPlus, ChevronDown, FolderPlus, MapPin, GripVertical } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Edit, Copy, UserPlus, ChevronDown, FolderPlus, MapPin, GripVertical, CheckCircle2, Circle, ArrowRight, X } from "lucide-react";
 import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, DragOverlay, type DragEndEvent, type DragStartEvent, useDroppable } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -60,6 +60,161 @@ const TIMEZONES: { value: string; label: string }[] = [
   { value: "Europe/Istanbul", label: "Стамбул (UTC+3)" },
 ];
 
+// Guided first-run setup. Complements (does not replace) the full tab config: it surfaces the
+// four things a salon must have before it can take bookings — contacts, a branch, a service and
+// a master — with live progress, and disappears once they're all in place. Pattern: the
+// dismissible onboarding checklist used by Stripe/Notion, not a blocking modal.
+function OnboardingChecklist({
+  salon,
+  activeTab,
+  onGoTo,
+}: {
+  salon: any;
+  activeTab: string;
+  onGoTo: (tab: string) => void;
+}) {
+  const [counts, setCounts] = useState<{ branches: number; services: number; masters: number } | null>(null);
+  const dismissKey = `qabyl:onboarding-dismissed:${salon.id}`;
+  const [dismissed, setDismissed] = useState(false);
+
+  useEffect(() => {
+    try {
+      setDismissed(localStorage.getItem(dismissKey) === "1");
+    } catch {
+      /* localStorage unavailable — just show the checklist */
+    }
+  }, [dismissKey]);
+
+  // Re-count whenever the salon changes or the user switches tabs (cheap HEAD queries), so the
+  // progress updates after they add a branch/service/master and come back.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [b, s, m] = await Promise.all([
+        supabase.from("branches").select("id", { count: "exact", head: true }).eq("salon_id", salon.id),
+        supabase.from("services").select("id", { count: "exact", head: true }).eq("salon_id", salon.id),
+        supabase.from("masters").select("id", { count: "exact", head: true }).eq("salon_id", salon.id),
+      ]);
+      if (cancelled) return;
+      setCounts({ branches: b.count ?? 0, services: s.count ?? 0, masters: m.count ?? 0 });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [salon.id, activeTab]);
+
+  if (!counts || dismissed) return null;
+
+  const steps = [
+    {
+      done: !!(salon.phone?.trim() || salon.address?.trim()),
+      title: "Контакты и часовой пояс",
+      desc: "Телефон, адрес и время салона — по нему клиенты видят слоты",
+      tab: "info",
+    },
+    {
+      done: counts.branches > 0,
+      title: "Филиал и график работы",
+      desc: "Где вы принимаете и в какие часы",
+      tab: "branches",
+    },
+    {
+      done: counts.services > 0,
+      title: "Услуги",
+      desc: "На что клиент может записаться",
+      tab: "services",
+    },
+    {
+      done: counts.masters > 0,
+      title: "Мастера",
+      desc: "Кто оказывает услуги и когда работает",
+      tab: "masters",
+    },
+  ];
+
+  const doneCount = steps.filter((s) => s.done).length;
+  // Fully configured — no reason to keep nudging.
+  if (doneCount === steps.length) return null;
+
+  const ready = counts.branches > 0 && counts.services > 0 && counts.masters > 0;
+  const nextStep = steps.find((s) => !s.done);
+
+  function dismiss() {
+    try {
+      localStorage.setItem(dismissKey, "1");
+    } catch {
+      /* ignore */
+    }
+    setDismissed(true);
+  }
+
+  return (
+    <Card className="p-5 sm:p-6 space-y-5">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold tracking-tight">Быстрый старт</h2>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            {ready
+              ? "Салон уже принимает записи. Осталось пара штрихов."
+              : "Настройте салон, чтобы начать принимать записи."}
+          </p>
+        </div>
+        <button
+          onClick={dismiss}
+          className="shrink-0 text-muted-foreground/70 hover:text-foreground transition-colors"
+          title="Скрыть"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <div className="h-1.5 flex-1 rounded-full bg-muted overflow-hidden">
+          <div
+            className="h-full rounded-full bg-primary transition-all duration-500"
+            style={{ width: `${(doneCount / steps.length) * 100}%` }}
+          />
+        </div>
+        <span className="text-sm font-medium tabular-nums text-muted-foreground shrink-0">
+          {doneCount} из {steps.length}
+        </span>
+      </div>
+
+      <div className="divide-y">
+        {steps.map((s) => {
+          const isNext = s === nextStep;
+          return (
+            <div key={s.tab} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
+              {s.done ? (
+                <CheckCircle2 className="h-5 w-5 shrink-0 text-primary" />
+              ) : (
+                <Circle className="h-5 w-5 shrink-0 text-muted-foreground/40" />
+              )}
+              <div className="min-w-0 flex-1">
+                <p className={`text-sm font-medium ${s.done ? "text-muted-foreground line-through" : ""}`}>
+                  {s.title}
+                </p>
+                {!s.done && <p className="text-xs text-muted-foreground mt-0.5">{s.desc}</p>}
+              </div>
+              {!s.done && (
+                <Button
+                  size="sm"
+                  variant={isNext ? "default" : "outline"}
+                  onClick={() => onGoTo(s.tab)}
+                  className="shrink-0"
+                >
+                  Настроить
+                  <ArrowRight className="h-3.5 w-3.5 ml-1" />
+                </Button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
 function SalonEdit() {
   const { salonId } = Route.useParams();
   const navigate = useNavigate();
@@ -86,6 +241,8 @@ function SalonEdit() {
       </div>
 
       <SalonShareCard slug={salon.slug} name={salon.name} />
+
+      <OnboardingChecklist salon={salon} activeTab={activeTab} onGoTo={setActiveTab} />
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">

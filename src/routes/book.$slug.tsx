@@ -4,38 +4,87 @@ import { supabase } from "@/integrations/supabase/client";
 import { PublicBooking } from "@/components/book/PublicBooking";
 import { SalonSite } from "@/components/site/SalonSite";
 
+// The canonical home of a salon is its custom domain when configured, otherwise /book/{slug}
+// on the platform domain. Used for <link rel=canonical> and og:url so a salon with a custom
+// domain doesn't compete with itself for the same content.
+function salonCanonical(salon: { slug: string; custom_domain?: string | null }): string {
+  return salon.custom_domain
+    ? `https://${salon.custom_domain}/`
+    : `https://qabyl.com/book/${salon.slug}`;
+}
+
 export const Route = createFileRoute("/book/$slug")({
-  head: () => ({ meta: [{ title: "Онлайн-запись" }] }),
+  // Fetch the salon on the server so title / description / canonical / OG are present in the
+  // initial HTML for crawlers and link unfurlers — not set after client-side hydration.
+  loader: async ({ params }) => {
+    const { data } = await supabase
+      .from("salons")
+      .select("*")
+      .eq("slug", params.slug)
+      .eq("is_active", true)
+      .maybeSingle();
+    return { salon: data ?? null };
+  },
+  head: ({ loaderData }) => {
+    const salon = loaderData?.salon;
+    if (!salon) {
+      return {
+        meta: [{ title: "Салон не найден — Qabyl" }, { name: "robots", content: "noindex" }],
+      };
+    }
+    const desc: string =
+      salon.description ||
+      `Онлайн-запись в «${salon.name}». Выберите услугу, мастера и удобное время.`;
+    const canonical = salonCanonical(salon);
+    const image: string =
+      salon.hero_image_url || salon.logo_url || "https://qabyl.com/og-image.png";
+    const title = `${salon.name} — онлайн-запись`;
+    return {
+      meta: [
+        { title },
+        { name: "description", content: desc },
+        { property: "og:title", content: title },
+        { property: "og:description", content: desc },
+        { property: "og:type", content: "website" },
+        { property: "og:url", content: canonical },
+        { property: "og:image", content: image },
+        { name: "twitter:card", content: "summary_large_image" },
+        { name: "twitter:title", content: title },
+        { name: "twitter:description", content: desc },
+        { name: "twitter:image", content: image },
+      ],
+      links: [{ rel: "canonical", href: canonical }],
+    };
+  },
   component: BookBySlug,
 });
 
 function BookBySlug() {
-  const { slug } = Route.useParams();
-  const [salon, setSalon] = useState<any | null>(null);
+  const { salon } = Route.useLoaderData();
   const [branches, setBranches] = useState<any[]>([]);
-  const [notFound, setNotFound] = useState(false);
 
   useEffect(() => {
-    supabase.from("salons").select("*").eq("slug", slug).eq("is_active", true).maybeSingle()
-      .then(({ data }) => {
-        if (!data) { setNotFound(true); return; }
-        setSalon(data);
-        document.title = `${data.name} — онлайн-запись`;
-        const desc = data.description || `Онлайн-запись в ${data.name}. Выберите услугу, мастера и удобное время.`;
-        let meta = document.querySelector('meta[name="description"]');
-        if (!meta) { meta = document.createElement("meta"); meta.setAttribute("name", "description"); document.head.appendChild(meta); }
-        meta.setAttribute("content", desc);
-        supabase.from("branches").select("*").eq("salon_id", data.id).eq("is_active", true).order("sort_order")
-          .then(({ data: br }) => setBranches(br ?? []));
-      });
-  }, [slug]);
+    if (!salon) return;
+    supabase
+      .from("branches")
+      .select("*")
+      .eq("salon_id", salon.id)
+      .eq("is_active", true)
+      .order("sort_order")
+      .then(({ data: br }) => setBranches(br ?? []));
+  }, [salon]);
 
-  if (notFound) {
-    return <div className="min-h-screen flex items-center justify-center text-muted-foreground">Салон не найден</div>;
+  if (!salon) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-muted-foreground">
+        Салон не найден
+      </div>
+    );
   }
-  if (!salon) return <div className="min-h-screen flex items-center justify-center text-muted-foreground">Загрузка...</div>;
 
-  return salon.site_enabled !== false
-    ? <SalonSite salon={salon} />
-    : <PublicBooking salon={salon} branches={branches} />;
+  return salon.site_enabled !== false ? (
+    <SalonSite salon={salon} />
+  ) : (
+    <PublicBooking salon={salon} branches={branches} />
+  );
 }
