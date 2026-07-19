@@ -58,6 +58,8 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
   const [premiumEnabled, setPremiumEnabled] = useState(false);
   const [webhookUrl, setWebhookUrl] = useState<string | null>(null);
   const [webhookBusy, setWebhookBusy] = useState(false);
+  // Knowledge book: show only the essential questions first; the rest expand on demand.
+  const [showAllKnowledge, setShowAllKnowledge] = useState(false);
   const [data, setData] = useState<Assistant>({
     salon_id: salonId,
     enabled: false,
@@ -191,6 +193,23 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
 
   const setAnswer = (id: string, val: string) =>
     setData((d) => ({ ...d, knowledge_answers: { ...d.knowledge_answers, [id]: val } }));
+
+  // One-click starter: fill every still-empty knowledge field with an editable draft derived from
+  // its example placeholder, so the owner edits instead of facing a wall of blanks. Never
+  // overwrites what they've already typed.
+  const fillKnowledgeExamples = () => {
+    const qs = INDUSTRIES_META[data.industry].questions;
+    setData((d) => {
+      const next = { ...d.knowledge_answers };
+      for (const q of qs) {
+        if (!(next[q.id] ?? "").trim() && q.placeholder) {
+          next[q.id] = q.placeholder.replace(/^Например:\s*/i, "").trim();
+        }
+      }
+      return { ...d, knowledge_answers: next };
+    });
+    toast.success("Поля заполнены примерами — отредактируйте под свой салон");
+  };
 
   if (loading) return <div className="p-4 text-muted-foreground">Загрузка...</div>;
 
@@ -435,19 +454,13 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
           </p>
         </div>
 
-        {data.engine === "v4" && (
-          <div className="space-y-4 rounded-lg border p-4">
-            <div>
-              <h4 className="font-medium text-sm">
-                Книга знаний · {INDUSTRIES_META[data.industry].label}
-              </h4>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Ответьте своими словами — чем подробнее, тем профессиональнее ассистент
-                консультирует клиентов именно вашей сферы. Любой вопрос можно пропустить.
-                Общие знания о процедурах у ассистента уже встроены.
-              </p>
-            </div>
-            {INDUSTRIES_META[data.industry].questions.map((q) => (
+        {data.engine === "v4" &&
+          (() => {
+            const kqs = INDUSTRIES_META[data.industry].questions;
+            const essential = kqs.slice(0, 4);
+            const rest = kqs.slice(4);
+            const filled = kqs.filter((q) => (data.knowledge_answers[q.id] ?? "").trim()).length;
+            const renderQ = (q: (typeof kqs)[number]) => (
               <div key={q.id} className="space-y-1.5">
                 <Label className="text-sm">{q.label}</Label>
                 {q.long ? (
@@ -466,21 +479,71 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
                 )}
                 {q.help ? <p className="text-xs text-muted-foreground">{q.help}</p> : null}
               </div>
-            ))}
-            <div className="space-y-1.5">
-              <Label className="text-sm">Дополнительно (прочие факты)</Label>
-              <Textarea
-                rows={3}
-                placeholder="Например: парковка бесплатная во дворе, оплата картой и QR, работаем без выходных."
-                value={data.knowledge_base ?? ""}
-                onChange={(e) => setData({ ...data, knowledge_base: e.target.value })}
-              />
-              <p className="text-xs text-muted-foreground">
-                Любые факты о бизнесе, не вошедшие в вопросы выше.
-              </p>
-            </div>
-          </div>
-        )}
+            );
+            return (
+              <div className="space-y-4 rounded-lg border p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h4 className="font-medium text-sm">
+                      Книга знаний · {INDUSTRIES_META[data.industry].label}
+                    </h4>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Пара минут — и ассистент консультирует как опытный администратор вашей сферы.
+                      Услуги, цены и мастеров он уже знает из системы. Любой вопрос можно пропустить.
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2 mt-2 text-xs">
+                      <span className="rounded-full bg-muted px-2 py-0.5">≈ 2–3 минуты</span>
+                      <span className="text-muted-foreground">
+                        Заполнено {filled} из {kqs.length}
+                      </span>
+                    </div>
+                  </div>
+                  <Button type="button" variant="outline" size="sm" onClick={fillKnowledgeExamples}>
+                    <Sparkles className="h-4 w-4 mr-1.5" /> Заполнить примером
+                  </Button>
+                </div>
+
+                {essential.map(renderQ)}
+
+                {rest.length > 0 && !showAllKnowledge && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="w-full"
+                    onClick={() => setShowAllKnowledge(true)}
+                  >
+                    Показать ещё {rest.length} вопросов (необязательно)
+                  </Button>
+                )}
+                {showAllKnowledge && rest.map(renderQ)}
+                {showAllKnowledge && rest.length > 0 && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="w-full"
+                    onClick={() => setShowAllKnowledge(false)}
+                  >
+                    Свернуть
+                  </Button>
+                )}
+
+                <div className="space-y-1.5">
+                  <Label className="text-sm">Дополнительно (прочие факты)</Label>
+                  <Textarea
+                    rows={3}
+                    placeholder="Например: парковка бесплатная во дворе, оплата картой и QR, работаем без выходных."
+                    value={data.knowledge_base ?? ""}
+                    onChange={(e) => setData({ ...data, knowledge_base: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Любые факты о бизнесе, не вошедшие в вопросы выше.
+                  </p>
+                </div>
+              </div>
+            );
+          })()}
 
         {data.engine === "v4" && (
           <div className="space-y-2">
