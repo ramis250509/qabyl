@@ -142,6 +142,13 @@ export function PublicBooking({
   const [clientPhone, setClientPhone] = useState("");
   // Set when the WhatsApp registration check rejected the entered number.
   const [phoneWaError, setPhoneWaError] = useState(false);
+  // Set once the user leaves the phone field, so we only flag a bad format after they've had a
+  // chance to finish typing (never red mid-entry).
+  const [phoneTouched, setPhoneTouched] = useState(false);
+  // Full, well-formed Kyrgyz mobile number: +996 followed by 9 digits, first digit 2–9
+  // (rejects empty, too-short, and impossible leading 0/1). The public widget is KG-only.
+  const phoneFormatOk = /^\+996[2-9]\d{8}$/.test(clientPhone);
+  const phoneInvalid = phoneTouched && clientPhone.length > 0 && !phoneFormatOk;
   const [clientNotes, setClientNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -578,8 +585,20 @@ export function PublicBooking({
                   setClientPhone(v);
                   setPhoneWaError(false);
                 }}
+                onBlur={() => setPhoneTouched(true)}
+                aria-invalid={phoneInvalid || phoneWaError}
+                className={
+                  phoneInvalid || phoneWaError
+                    ? "border-red-500 focus-within:ring-red-500 dark:border-red-500"
+                    : ""
+                }
                 required
               />
+              {phoneInvalid && !phoneWaError && (
+                <p className="mt-1 text-sm text-red-600 dark:text-red-400">
+                  Введите корректный номер: +996 и 9 цифр, например +996 (555) 12-34-56.
+                </p>
+              )}
               {phoneWaError && (
                 <p className="mt-1 text-sm text-red-600 dark:text-red-400">
                   Этот номер не зарегистрирован в WhatsApp. Укажите номер, привязанный к WhatsApp —
@@ -638,7 +657,7 @@ export function PublicBooking({
                 submitting ||
                 !rulesAccepted ||
                 !clientName.trim() ||
-                clientPhone.replace(/\D/g, "").length < 12
+                !phoneFormatOk
               }
               onClick={async () => {
                 setSubmitting(true);
