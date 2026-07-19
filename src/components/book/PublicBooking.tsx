@@ -21,6 +21,7 @@ import { toast } from "sonner";
 import { formatPrice } from "@/lib/price";
 import { normalizeWhatsApp } from "@/lib/social";
 import { checkPhoneWhatsapp } from "@/lib/wa-check.functions";
+import { useT, LanguageSwitcher } from "@/lib/i18n";
 
 type Salon = {
   id: string;
@@ -79,6 +80,7 @@ export function PublicBooking({
   theme?: "light" | "dark" | "vivid";
   onClose?: () => void;
 }) {
+  const { t } = useT();
   const multiBranch = branches.length > 1;
   const [selectedBranch, setSelectedBranch] = useState<Branch | null>(
     multiBranch ? null : (branches[0] ?? null),
@@ -274,17 +276,19 @@ export function PublicBooking({
           >
             <Check className="h-8 w-8" />
           </div>
-          <h1 className="text-2xl font-bold">Ваша запись успешно создана!</h1>
+          <h1 className="text-2xl font-bold">{t("bookingCreated")}</h1>
           <p className="text-muted-foreground mt-2">
             {waOn ? (
-              <>Мы отправили подтверждение в WhatsApp на номер {clientPhone}.</>
+              <>
+                {t("sentWhatsappTo")} {clientPhone}.
+              </>
             ) : (
               <>
-                Ждём вас в <b>{salon.name}</b>
+                {t("weWaitYouAt")} <b>{salon.name}</b>
                 {slotTime ? (
                   <>
                     {" "}
-                    в <b>{slotTime}</b>
+                    {t("atTime")} <b>{slotTime}</b>
                   </>
                 ) : null}
                 .
@@ -306,7 +310,7 @@ export function PublicBooking({
               if (multiBranch) setSelectedBranch(null);
             }}
           >
-            Записаться ещё раз
+            {t("bookAgain")}
           </Button>
         </Card>
       </div>
@@ -332,28 +336,31 @@ export function PublicBooking({
       style={wrapperBg}
     >
       <header className={headerCls}>
-        <button
-          type="button"
-          onClick={goHome}
-          className="mx-auto w-full max-w-3xl px-3 sm:px-4 py-3 sm:py-4 flex items-center gap-3 text-left hover:opacity-90 transition"
-          aria-label="На главную"
-        >
-          {salon.logo_url && (
-            <img
-              src={salon.logo_url}
-              alt={salon.name}
-              className="h-9 w-9 sm:h-10 sm:w-10 rounded-full object-cover shrink-0"
-            />
-          )}
-          <div className="min-w-0 flex-1">
-            <h1 className="font-bold text-sm sm:text-lg truncate">{salon.name}</h1>
-            {selectedBranch?.address ? (
-              <p className={`text-xs truncate ${subTextCls}`}>{selectedBranch.address}</p>
-            ) : (
-              salon.address && <p className={`text-xs truncate ${subTextCls}`}>{salon.address}</p>
+        <div className="mx-auto w-full max-w-3xl px-3 sm:px-4 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={goHome}
+            className="min-w-0 flex-1 py-3 sm:py-4 flex items-center gap-3 text-left hover:opacity-90 transition"
+            aria-label={t("toHome")}
+          >
+            {salon.logo_url && (
+              <img
+                src={salon.logo_url}
+                alt={salon.name}
+                className="h-9 w-9 sm:h-10 sm:w-10 rounded-full object-cover shrink-0"
+              />
             )}
-          </div>
-        </button>
+            <div className="min-w-0 flex-1">
+              <h1 className="font-bold text-sm sm:text-lg truncate">{salon.name}</h1>
+              {selectedBranch?.address ? (
+                <p className={`text-xs truncate ${subTextCls}`}>{selectedBranch.address}</p>
+              ) : (
+                salon.address && <p className={`text-xs truncate ${subTextCls}`}>{salon.address}</p>
+              )}
+            </div>
+          </button>
+          <LanguageSwitcher className="shrink-0" />
+        </div>
         {/* Контакты выбранного филиала (или салона если филиал не выбран) */}
         <BranchContactsBar branch={selectedBranch} salon={salon} primary={primary} />
       </header>
@@ -363,7 +370,7 @@ export function PublicBooking({
 
         {step === 0 && multiBranch && (
           <div className="space-y-3">
-            <h2 className="text-xl font-semibold mb-4">Выберите филиал</h2>
+            <h2 className="text-xl font-semibold mb-4">{t("chooseBranch")}</h2>
             {branches.map((b) => (
               <button
                 key={b.id}
@@ -413,13 +420,12 @@ export function PublicBooking({
           <div className="space-y-3">
             {multiBranch && (
               <Button variant="ghost" size="sm" onClick={() => setStep(0)}>
-                <ArrowLeft className="h-4 w-4 mr-1" />К выбору филиала
+                <ArrowLeft className="h-4 w-4 mr-1" />
+                {t("toBranchChoice")}
               </Button>
             )}
-            <h2 className="text-xl font-semibold mb-4">Выберите услугу</h2>
-            {services.length === 0 && (
-              <p className="text-muted-foreground">Услуги пока не добавлены</p>
-            )}
+            <h2 className="text-xl font-semibold mb-4">{t("selectService")}</h2>
+            {services.length === 0 && <p className="text-muted-foreground">{t("servicesEmpty")}</p>}
             <ServicesList
               services={services}
               primary={primary}
@@ -437,13 +443,13 @@ export function PublicBooking({
           <div className="space-y-3">
             <Button variant="ghost" size="sm" onClick={() => setStep(1)}>
               <ArrowLeft className="h-4 w-4 mr-1" />
-              Назад
+              {t("back")}
             </Button>
-            <h2 className="text-xl font-semibold mb-4">Выберите мастера</h2>
+            <h2 className="text-xl font-semibold mb-4">{t("selectMaster")}</h2>
             {masters.length === 0 && (
               <p className="text-muted-foreground">
-                Нет мастеров для этой услуги
-                {selectedBranch ? ` в филиале «${selectedBranch.name}»` : ""}
+                {t("noMastersForService")}
+                {selectedBranch ? ` «${selectedBranch.name}»` : ""}
               </p>
             )}
             {masters.map((m) => (
@@ -501,24 +507,26 @@ export function PublicBooking({
           <div className="space-y-4">
             <Button variant="ghost" size="sm" onClick={() => setStep(3)}>
               <ArrowLeft className="h-4 w-4 mr-1" />
-              Назад
+              {t("back")}
             </Button>
-            <h2 className="text-xl font-semibold">Ваши контакты</h2>
+            <h2 className="text-xl font-semibold">{t("yourContacts")}</h2>
             <Card className="p-4 bg-muted/50">
               <div className="text-sm space-y-0.5">
                 <div>
                   <b>{selectedService?.name}</b> —{" "}
                   {selectedService ? formatPrice(selectedService) : ""}
                 </div>
-                <div>Мастер: {selectedMaster?.name}</div>
+                <div>
+                  {t("stepMaster")}: {selectedMaster?.name}
+                </div>
                 {selectedBranch && (
                   <div>
-                    Филиал: {selectedBranch.name}
+                    {t("stepBranch")}: {selectedBranch.name}
                     {selectedBranch.address ? `, ${selectedBranch.address}` : ""}
                   </div>
                 )}
                 <div>
-                  Время:{" "}
+                  {t("stepTime")}:{" "}
                   {selectedSlot &&
                     new Date(selectedSlot).toLocaleString("ru-RU", {
                       dateStyle: "full",
@@ -528,8 +536,8 @@ export function PublicBooking({
                 </div>
                 {selectedAddonIds.length > 0 && selectedService && (
                   <div className="pt-1 mt-1 border-t border-border/50">
-                    <b>Итого:</b> {Number(selectedService.price) + addonsTotal.price} ·{" "}
-                    {formatDuration(selectedService.duration_min || 0)}
+                    <b>{t("total")}:</b> {Number(selectedService.price) + addonsTotal.price} ·{" "}
+                    {formatDuration(selectedService.duration_min || 0, t)}
                   </div>
                 )}
               </div>
@@ -537,12 +545,12 @@ export function PublicBooking({
             {addons.length > 0 && (
               <Card className="p-4">
                 <div className="font-medium mb-1">
-                  Дополнительно{" "}
-                  <span className="text-xs text-muted-foreground font-normal">(по желанию)</span>
+                  {t("additionally")}{" "}
+                  <span className="text-xs text-muted-foreground font-normal">
+                    ({t("optionalHint")})
+                  </span>
                 </div>
-                <p className="text-[11px] text-muted-foreground mb-2">
-                  Выполняется одновременно с основной услугой — общее время записи не увеличивается.
-                </p>
+                <p className="text-[11px] text-muted-foreground mb-2">{t("addonSameTime")}</p>
                 <div className="space-y-2">
                   {addons.map((a) => {
                     const checked = selectedAddonIds.includes(a.id);
@@ -569,7 +577,7 @@ export function PublicBooking({
             )}
 
             <div>
-              <Label>Имя</Label>
+              <Label>{t("nameLabel")}</Label>
               <Input
                 value={clientName}
                 onChange={(e) => setClientName(e.target.value)}
@@ -578,7 +586,7 @@ export function PublicBooking({
               />
             </div>
             <div>
-              <Label>{waOn ? "Телефон (WhatsApp)" : "Телефон"}</Label>
+              <Label>{waOn ? t("phoneWhatsapp") : t("phone")}</Label>
               <PhoneInput
                 value={clientPhone}
                 onChange={(v) => {
@@ -595,19 +603,16 @@ export function PublicBooking({
                 required
               />
               {phoneInvalid && !phoneWaError && (
-                <p className="mt-1 text-sm text-red-600 dark:text-red-400">
-                  Введите корректный номер: +996 и 9 цифр, например +996 (555) 12-34-56.
-                </p>
+                <p className="mt-1 text-sm text-red-600 dark:text-red-400">{t("phoneInvalid")}</p>
               )}
               {phoneWaError && (
                 <p className="mt-1 text-sm text-red-600 dark:text-red-400">
-                  Этот номер не зарегистрирован в WhatsApp. Укажите номер, привязанный к WhatsApp —
-                  на него придёт подтверждение записи.
+                  {t("phoneNotWhatsapp")}
                 </p>
               )}
             </div>
             <div>
-              <Label>Комментарий (необязательно)</Label>
+              <Label>{t("commentOptional")}</Label>
               <Textarea
                 value={clientNotes}
                 onChange={(e) => setClientNotes(e.target.value)}
@@ -621,15 +626,10 @@ export function PublicBooking({
                 </span>
                 <div className="text-red-900 dark:text-red-100">
                   <div className="font-extrabold uppercase tracking-wide text-base">
-                    Внимание! Важное правило салона
+                    {t("salonRuleTitle")}
                   </div>
-                  <p className="mt-1 text-sm font-medium leading-snug">
-                    Если вы опоздаете более чем на <b>10 минут</b>, ваша запись будет автоматически{" "}
-                    <b>АННУЛИРОВАНА</b>, если в салоне будут присутствовать другие клиенты.
-                  </p>
-                  <p className="mt-1 text-sm font-medium leading-snug">
-                    Пожалуйста, уважайте время мастеров и приходите вовремя.
-                  </p>
+                  <p className="mt-1 text-sm font-medium leading-snug">{t("lateRuleBody")}</p>
+                  <p className="mt-1 text-sm font-medium leading-snug">{t("lateRuleAsk")}</p>
                 </div>
               </div>
               <label className="flex items-start gap-3 cursor-pointer rounded-lg bg-white dark:bg-red-950/50 border border-red-300 dark:border-red-800 p-3">
@@ -639,26 +639,19 @@ export function PublicBooking({
                   className="mt-0.5 h-5 w-5 border-red-600 data-[state=checked]:bg-red-600 data-[state=checked]:text-white"
                 />
                 <span className="text-sm sm:text-base font-bold text-red-900 dark:text-red-100 leading-snug">
-                  Я подтверждаю, что приду вовремя и согласен с правилом отмены при опоздании на 10
-                  минут.
+                  {t("agreeLate")}
                 </span>
               </label>
               {waOn && (
                 <p className="text-[11px] text-red-900/70 dark:text-red-100/70 leading-snug">
-                  Подтверждая запись, вы соглашаетесь на получение уведомлений в WhatsApp по
-                  указанному номеру.
+                  {t("agreeWhatsapp")}
                 </p>
               )}
             </div>
             <Button
               className="w-full"
               style={{ background: primary }}
-              disabled={
-                submitting ||
-                !rulesAccepted ||
-                !clientName.trim() ||
-                !phoneFormatOk
-              }
+              disabled={submitting || !rulesAccepted || !clientName.trim() || !phoneFormatOk}
               onClick={async () => {
                 setSubmitting(true);
                 try {
@@ -672,9 +665,7 @@ export function PublicBooking({
                       });
                       if (status === "not_registered") {
                         setPhoneWaError(true);
-                        toast.error(
-                          "Номер не зарегистрирован в WhatsApp. Укажите номер с WhatsApp.",
-                        );
+                        toast.error(t("phoneNotWhatsapp"));
                         setSubmitting(false);
                         return;
                       }
@@ -703,7 +694,7 @@ export function PublicBooking({
                 }
               }}
             >
-              {submitting ? "Записываем..." : "Подтвердить запись"}
+              {submitting ? t("submitting") : t("confirmBooking")}
             </Button>
           </div>
         )}
@@ -721,9 +712,10 @@ function Stepper({
   primary: string;
   multiBranch: boolean;
 }) {
+  const { t } = useT();
   const steps = multiBranch
-    ? ["Филиал", "Услуга", "Мастер", "Время", "Контакты"]
-    : ["Услуга", "Мастер", "Время", "Контакты"];
+    ? [t("stepBranch"), t("stepService"), t("stepMaster"), t("stepTime"), t("stepContacts")]
+    : [t("stepService"), t("stepMaster"), t("stepTime"), t("stepContacts")];
   const offset = multiBranch ? 0 : 1;
   return (
     <div className="flex items-center w-full mb-5 sm:mb-8">
@@ -780,6 +772,7 @@ function SlotPicker({
   onBack: () => void;
   onPick: (slotISO: string) => void;
 }) {
+  const { t } = useT();
   const salonTz = tz || "UTC";
 
   // Build the 14-day strip starting from "today" in the SALON's timezone.
@@ -888,9 +881,9 @@ function SlotPicker({
     <div className="space-y-4">
       <Button variant="ghost" size="sm" onClick={onBack}>
         <ArrowLeft className="h-4 w-4 mr-1" />
-        Назад
+        {t("back")}
       </Button>
-      <h2 className="text-xl font-semibold">Выберите время</h2>
+      <h2 className="text-xl font-semibold">{t("selectTime")}</h2>
 
       <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1">
         {dates.map((d) => {
@@ -901,7 +894,7 @@ function SlotPicker({
               key={d.key}
               onClick={() => !isOff && setDayKey(d.key)}
               disabled={isOff}
-              title={isOff ? "Выходной у мастера" : undefined}
+              title={isOff ? t("masterDayOff") : undefined}
               className={`flex flex-col items-center px-3 py-2 rounded-lg border min-w-[60px] shrink-0 ${isOff ? "opacity-40 cursor-not-allowed line-through" : ""}`}
               style={{
                 background: active && !isOff ? primary : "transparent",
@@ -922,24 +915,22 @@ function SlotPicker({
       </div>
 
       {isCurrentDayOff ? (
-        <p className="text-muted-foreground">
-          У мастера в этот день выходной — выберите другую дату.
-        </p>
+        <p className="text-muted-foreground">{t("masterDayOffPick")}</p>
       ) : loading ? (
-        <p className="text-muted-foreground">Загрузка слотов...</p>
+        <p className="text-muted-foreground">{t("loadingSlots")}</p>
       ) : filteredSlots.length === 0 ? (
-        <p className="text-muted-foreground">На этот день свободного времени нет</p>
+        <p className="text-muted-foreground">{t("noFreeTime")}</p>
       ) : (
         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
           {filteredSlots.map((s) => {
-            const t = new Date(s.slot_start);
+            const dt = new Date(s.slot_start);
             return (
               <button
                 key={s.slot_start}
                 onClick={() => onPick(s.slot_start)}
                 className="px-3 py-2 rounded-lg border hover:border-primary transition text-sm"
               >
-                {t.toLocaleTimeString("ru-RU", {
+                {dt.toLocaleTimeString("ru-RU", {
                   hour: "2-digit",
                   minute: "2-digit",
                   timeZone: tz,
@@ -964,6 +955,7 @@ function ServicesList({
   collapsed?: Set<string>;
   onPick: (s: Service) => void;
 }) {
+  const { t } = useT();
   const byCat = new Map<string, Service[]>();
   for (const s of services) {
     const key = (s.category && s.category.trim()) || "";
@@ -976,7 +968,7 @@ function ServicesList({
   const sections: { id: string; title: string; services: Service[] }[] = [
     ...cats.map((c, i) => ({ id: `c-${i}`, title: c, services: byCat.get(c)! })),
     ...(uncategorized.length > 0
-      ? [{ id: "c-other", title: "Прочее", services: uncategorized }]
+      ? [{ id: "c-other", title: t("other"), services: uncategorized }]
       : []),
   ];
 
@@ -997,7 +989,7 @@ function ServicesList({
           )}
           <div className="flex items-center gap-1 mt-1.5 text-xs sm:text-sm text-muted-foreground">
             <Clock className="h-3.5 w-3.5" />
-            {formatDuration(s.duration_min)}
+            {formatDuration(s.duration_min, t)}
           </div>
         </div>
       </div>
@@ -1023,6 +1015,7 @@ function ServicesList({
 }
 
 function FaqSection({ salonId, primary }: { salonId: string; primary: string }) {
+  const { t } = useT();
   const [faqs, setFaqs] = useState<Faq[]>([]);
   const [open, setOpen] = useState<string | null>(null);
   useEffect(() => {
@@ -1039,7 +1032,7 @@ function FaqSection({ salonId, primary }: { salonId: string; primary: string }) 
   return (
     <section className="mt-10 pt-6 border-t">
       <h3 className="text-lg sm:text-xl font-bold mb-3" style={{ color: primary }}>
-        Частые вопросы
+        {t("faqTitle")}
       </h3>
       <div className="space-y-2">
         {faqs.map((f) => {
@@ -1228,10 +1221,12 @@ function ServicesFlatList({
   );
 }
 
-function formatDuration(min: number) {
-  if (min >= 60 && min % 60 === 0) return `${min / 60} ч`;
-  if (min >= 60) return `${Math.floor(min / 60)} ч ${min % 60} мин`;
-  return `${min} мин`;
+function formatDuration(min: number, t: (k: "hour" | "min") => string) {
+  const h = t("hour");
+  const m = t("min");
+  if (min >= 60 && min % 60 === 0) return `${min / 60} ${h}`;
+  if (min >= 60) return `${Math.floor(min / 60)} ${h} ${min % 60} ${m}`;
+  return `${min} ${m}`;
 }
 
 function pluralServices(n: number) {
