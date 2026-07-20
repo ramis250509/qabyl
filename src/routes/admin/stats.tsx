@@ -50,17 +50,22 @@ function StatsPage() {
     if (salonId !== "all") q = q.eq("salon_id", salonId);
     if (branchId !== "all") q = q.eq("branch_id", branchId);
 
-    // Assistant funnel needs the number of WhatsApp conversations STARTED in the period (top of
-    // funnel). wa_conversations has no branch dimension, so the branch filter doesn't apply here.
-    let cq = supabase.from("wa_conversations").select("id", { count: "exact", head: true }).gte("created_at", sinceISO);
-    if (untilISO) cq = cq.lte("created_at", untilISO);
-    if (salonId !== "all") cq = cq.eq("salon_id", salonId);
+    // Assistant funnel is a super-admin-only view, so only fetch its top-of-funnel number
+    // (WhatsApp conversations started in the period) for super admins. wa_conversations has no
+    // branch dimension, so the branch filter doesn't apply here.
+    let convPromise: Promise<{ count: number | null }> = Promise.resolve({ count: 0 });
+    if (isSuperAdmin) {
+      let cq = supabase.from("wa_conversations").select("id", { count: "exact", head: true }).gte("created_at", sinceISO);
+      if (untilISO) cq = cq.lte("created_at", untilISO);
+      if (salonId !== "all") cq = cq.eq("salon_id", salonId);
+      convPromise = cq as any;
+    }
 
-    const [{ data }, conv] = await Promise.all([q, cq]);
+    const [{ data }, conv] = await Promise.all([q, convPromise]);
     setRows(data ?? []);
     setConvCount((conv as any).count ?? 0);
     setLoading(false);
-  }, [salonId, branchId, period]);
+  }, [salonId, branchId, period, isSuperAdmin]);
 
 
   useEffect(() => { load(); }, [load]);
@@ -158,7 +163,8 @@ function StatsPage() {
         </Card>
       </div>
 
-      {/* Assistant funnel: how many WhatsApp conversations turned into bookings. */}
+      {/* Assistant funnel: how many WhatsApp conversations turned into bookings. Super-admin only. */}
+      {isSuperAdmin && (
       <Card className="p-6">
         <h3 className="font-semibold mb-4">Воронка ассистента</h3>
         <div className="grid grid-cols-3 gap-4 text-center">
@@ -184,6 +190,7 @@ function StatsPage() {
           Диалог — это клиент, написавший в WhatsApp. Конверсия показывает, какую долю из них ассистент довёл до записи.
         </p>
       </Card>
+      )}
 
       {/* No-show analytics — only meaningful once visits are being marked in the calendar. */}
       <Card className="p-6">
