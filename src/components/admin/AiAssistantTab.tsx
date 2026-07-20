@@ -315,7 +315,7 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
         </div>
 
         <div className="space-y-2">
-          <Label>Тип бизнеса (ИИ-администратор)</Label>
+          <Label>Тип бизнеса (Ассистент)</Label>
           <div className="flex flex-wrap gap-2">
             {INDUSTRY_ORDER.map((key) => {
               const m = INDUSTRIES_META[key];
@@ -440,7 +440,20 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
         </div>
 
         <div className="space-y-2">
-          <Label>{INDUSTRY_PRICING[data.industry].label}</Label>
+          <div className="flex items-center justify-between gap-3">
+            <Label>{INDUSTRY_PRICING[data.industry].label}</Label>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={() =>
+                setData((d) => ({ ...d, pricing_rules: INDUSTRY_PRICING[d.industry].default }))
+              }
+            >
+              Подставить пример
+            </Button>
+          </div>
           <Textarea
             rows={5}
             value={data.pricing_rules ?? ""}

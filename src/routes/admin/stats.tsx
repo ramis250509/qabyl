@@ -124,7 +124,7 @@ function StatsPage() {
           )}
         </Card>
         <Card className="p-6">
-          <p className="text-sm text-muted-foreground">Через ИИ-Администратора</p>
+          <p className="text-sm text-muted-foreground">Через Ассистента</p>
           <p className="text-3xl sm:text-4xl font-bold mt-1">{stats.aiCount}</p>
           <p className="text-xs text-muted-foreground mt-1">записей оформил ассистент</p>
         </Card>
