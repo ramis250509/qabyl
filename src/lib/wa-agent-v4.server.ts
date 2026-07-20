@@ -117,7 +117,11 @@ function renderPhotoNotes(notes: PhotoNote[] | undefined): string {
     .join("\n");
 }
 
-export function buildSystemPromptV4(input: WaAgentInput, closedDates: string[] = []): string {
+export function buildSystemPromptV4(
+  input: WaAgentInput,
+  closedDates: string[] = [],
+  mastersRoster = "",
+): string {
   const { salon, config, branches, salonInfo } = input;
   const { isoLocalDate, humanDate, hour, minute } = nowInTz(salon.timezone);
   const industryKey = normalizeIndustry(config.industry);
@@ -170,6 +174,9 @@ export function buildSystemPromptV4(input: WaAgentInput, closedDates: string[] =
       : "",
     branches.length > 1
       ? `Филиалы:\n${branches.map((b) => `- ${b.name}${b.address ? ` (${b.address})` : ""} [id: ${b.id}]`).join("\n")}`
+      : "",
+    mastersRoster
+      ? `МАСТЕРА САЛОНА (ЕДИНСТВЕННО ВЕРНЫЙ список — называй ТОЛЬКО эти имена, НИКОГДА не выдумывай других мастеров): ${mastersRoster}. Если клиент называет мастера НЕ из этого списка — скажи, что такого мастера нет, и назови реальных отсюда. Точный master_id для записи всё равно бери из get_masters (он отфильтрует по услуге и филиалу), но имена — только из этого списка.`
       : "",
     knowledgeBook
       ? `ЧТО ВЛАДЕЛЕЦ РАССКАЗАЛ ОБ ЭТОМ БИЗНЕСЕ (используй эти факты естественно, когда уместно; не зачитывай списком):\n${knowledgeBook}`
@@ -1320,7 +1327,31 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     nowInTz(input.salon.timezone).isoLocalDate,
     14,
   );
-  const systemPrompt = buildSystemPromptV4(input, closedDates);
+  // Real active masters + the services each performs, injected into the prompt so the model can
+  // NEVER invent master names (it repeatedly offered non-existent masters when it skipped
+  // get_masters). Names come from here; get_masters is still used for the exact id per service.
+  const mastersRoster = await (async (): Promise<string> => {
+    const [{ data: mRows }, { data: sRows }] = await Promise.all([
+      db
+        .from("masters")
+        .select("id, name, master_services(service_id)")
+        .eq("salon_id", input.salon.salonId)
+        .eq("is_active", true)
+        .order("sort_order"),
+      db.from("services").select("id, name").eq("salon_id", input.salon.salonId).eq("is_active", true),
+    ]);
+    if (!mRows?.length) return "";
+    const svcName = new Map((sRows ?? []).map((s: any) => [s.id, s.name as string]));
+    return (mRows as any[])
+      .map((m) => {
+        const svcs = (m.master_services ?? [])
+          .map((ms: any) => svcName.get(ms.service_id))
+          .filter(Boolean);
+        return svcs.length ? `${m.name} (${svcs.join(", ")})` : m.name;
+      })
+      .join("; ");
+  })();
+  const systemPrompt = buildSystemPromptV4(input, closedDates, mastersRoster);
   const contents: GeminiV2Content[] = [...v4History, { role: "user", parts: clientParts }];
 
   // One agentic pass: loop tool-calls until the model returns a plain-text reply. Mutates
