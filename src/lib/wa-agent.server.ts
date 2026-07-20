@@ -1629,7 +1629,7 @@ type MergedSlot = {
 export async function loadServicesForSalon(db: AdminClient, salonId: string) {
   const { data } = await db
     .from("services")
-    .select("id, name, category, price, price_max, price_type, duration_min")
+    .select("id, name, category, price, price_max, price_type, duration_min, duration_max_min")
     .eq("salon_id", salonId)
     .eq("is_active", true)
     .order("sort_order");

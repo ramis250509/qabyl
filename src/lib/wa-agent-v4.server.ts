@@ -232,7 +232,7 @@ export function buildSystemPromptV4(input: WaAgentInput, closedDates: string[] =
     ``,
     `ЦЕНЫ, УСЛУГИ, ВРЕМЯ, МАСТЕРА — только из инструментов:`,
     `- Перед тем как назвать цену или записать — вызови get_services и опирайся на реальные названия/цены. Услуги, слоты, имена мастеров НЕ выдумывай.`,
-    `- ДЛИТЕЛЬНОСТЬ, ЦЕНУ И ЛЮБЫЕ ДИАПАЗОНЫ называй ТОЧНО как в данных. Если указано «3–4 часа» — так и говори «3–4 часа», НИКОГДА не округляй до «3 часа» и не сужай диапазон до одного числа. Диапазон цены — тоже дословно из данных. Ничего не додумывай и не «усредняй».`,
+    `- ДЛИТЕЛЬНОСТЬ бери ТОЛЬКО из get_services, не выдумывай и не усредняй. Услуга с ДИАПАЗОНОМ длительности (duration_range=true, есть duration_min и duration_max в минутах): пока фото клиента НЕ видел — называй диапазон честно («примерно 3–4 часа, зависит от объёма работы»). Но КАК ТОЛЬКО оценил объём по фото — назови ОДНУ точную длительность (меньший объём → duration_min, больший → duration_max), НЕ диапазон, и при записи передай выбранную длительность в create_appointment полем duration_min (в минутах). Услуга с фиксированной длительностью — просто называй её как есть. Цену-диапазон бери так же дословно из данных, ничего не округляя.`,
     `- Если нужной процедуры в салоне нет — честно скажи и предложи ближайшую из имеющихся.`,
     ``,
     `ПРОДАЖИ БЕЗ НАВЯЗЧИВОСТИ (мягко веди к записи, не дави):`,
@@ -361,6 +361,11 @@ const V4_TOOL_DECLARATIONS = [
         client_name: { type: "string" },
         branch_id: { type: "string" },
         price_override: { type: "number", description: "Согласованная цена для range-услуг" },
+        duration_min: {
+          type: "number",
+          description:
+            "Только для услуг с диапазоном длительности (duration_min_max задан): длительность в МИНУТАХ, которую ты выбрал по фото клиента — меньший объём работы → duration_min, больший → duration_max. Не передавай, если фото не оценивал или у услуги фиксированная длительность.",
+        },
       },
       required: ["service_id", "master_id", "date", "time", "client_name"],
     },
@@ -811,6 +816,10 @@ export async function executeV4Tool(
             price_type: s.price_type,
             price_label: isRange ? `${s.price}–${s.price_max} сом` : `${s.price} сом`,
             duration_min: s.duration_min,
+            // Range-duration service: exact length depends on work volume the assistant judges
+            // from the photo. duration_max == duration_min → fixed length.
+            duration_max: s.duration_max_min ?? s.duration_min,
+            duration_range: s.duration_max_min != null && s.duration_max_min > s.duration_min,
           };
         }),
       };
@@ -987,6 +996,12 @@ export async function executeV4Tool(
           args.service_id as string,
           Number(args.price_override),
         );
+      }
+      // Photo-assessed duration for range-duration services. The RPC clamps it into the service's
+      // [duration_min, duration_max_min] and ignores it for fixed-duration services, so it is safe
+      // to pass through verbatim.
+      if (args.duration_min != null) {
+        rpcArgs._duration_override_min = Number(args.duration_min);
       }
       const { data: newId, error } = await db.rpc("create_appointment", rpcArgs);
       if (error) {

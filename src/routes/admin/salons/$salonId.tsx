@@ -1722,9 +1722,13 @@ function ServiceDialog({ editing, setEditing, salonId, categories, onSaved }: {
     const priceType = editing.price_type === "range" ? "range" : "fixed";
     const priceMax = priceType === "range" && editing.price_max != null && Number(editing.price_max) > Number(editing.price)
       ? Number(editing.price_max) : null;
+    // Range-duration: kept only when the max is a real number above the base duration; otherwise
+    // the service has a single fixed duration (duration_max_min = null).
+    const durationMax = editing.duration_max_min != null && Number(editing.duration_max_min) > Number(editing.duration_min)
+      ? Number(editing.duration_max_min) : null;
     const payload = {
       name: editing.name, category, description: editing.description,
-      duration_min: editing.duration_min, buffer_after_min: editing.buffer_after_min ?? 0,
+      duration_min: editing.duration_min, duration_max_min: durationMax, buffer_after_min: editing.buffer_after_min ?? 0,
       price: editing.price, price_max: priceMax, price_type: priceType, color: editing.color,
     };
     let serviceId = editing.id;
@@ -1782,6 +1786,27 @@ function ServiceDialog({ editing, setEditing, salonId, categories, onSaved }: {
               <Input type="number" min={0} value={editing.buffer_after_min ?? 0} onChange={(e) => setEditing({ ...editing, buffer_after_min: Math.max(0, Number(e.target.value)) })} />
               <p className="text-xs text-muted-foreground mt-1">Только для CRM: клиент видит чистую длительность</p>
             </div>
+          </div>
+
+          <div>
+            <Label>Макс. длительность (мин) — опционально</Label>
+            <Input
+              type="number"
+              min={0}
+              value={editing.duration_max_min ?? ""}
+              onChange={(e) =>
+                setEditing({
+                  ...editing,
+                  duration_max_min: e.target.value === "" ? null : Number(e.target.value),
+                })
+              }
+              placeholder="напр. 240 — для услуг «3–4 часа»"
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Если работа занимает по-разному (напр. 3–4 часа) — укажите верхнюю границу. Ассистент
+              выберет точную длительность по фото клиента; запись через сайт всегда на обычную
+              длительность.
+            </p>
           </div>
 
           <div className="space-y-2">
