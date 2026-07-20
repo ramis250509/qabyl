@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { INDUSTRY_SITE, normalizeIndustry, type IndustryKey } from "@/lib/industries";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -34,6 +35,31 @@ export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => v
   });
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  // Industry drives the "Подставить пример" content. Lives on the AI-assistant config; default
+  // to beauty until loaded so the button always works.
+  const [industry, setIndustry] = useState<IndustryKey>("beauty");
+
+  useEffect(() => {
+    supabase
+      .from("salon_ai_assistant")
+      .select("industry")
+      .eq("salon_id", salon.id)
+      .maybeSingle()
+      .then(({ data }) => setIndustry(normalizeIndustry(data?.industry)));
+  }, [salon.id]);
+
+  // Fill the site's text (hero + about) with industry-specific example copy, without ever
+  // overwriting what the owner already wrote.
+  function fillSiteExamples() {
+    const ex = INDUSTRY_SITE[industry];
+    setForm((f: any) => ({
+      ...f,
+      hero_title: f.hero_title?.trim() ? f.hero_title : ex.hero_title,
+      hero_subtitle: f.hero_subtitle?.trim() ? f.hero_subtitle : ex.hero_subtitle,
+      about_text: f.about_text?.trim() ? f.about_text : ex.about_text,
+    }));
+    toast.success("Текст сайта заполнен примером под вашу нишу — отредактируйте под свой салон");
+  }
 
   async function uploadFile(file: File, kind: "hero" | "gallery") {
     setUploading(true);
@@ -132,7 +158,17 @@ export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => v
       </Card>
 
       <Card className="p-6 space-y-4">
-        <h3 className="font-semibold">Hero (первый экран)</h3>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="font-semibold">Hero (первый экран)</h3>
+            <p className="text-sm text-muted-foreground">
+              Заголовок, подзаголовок и «О салоне» можно заполнить готовым текстом под вашу нишу.
+            </p>
+          </div>
+          <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={fillSiteExamples}>
+            Подставить пример
+          </Button>
+        </div>
         <div>
           <Label>Заголовок</Label>
           <Input value={form.hero_title} onChange={(e) => setForm({ ...form, hero_title: e.target.value })} placeholder={salon.name} />

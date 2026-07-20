@@ -217,7 +217,9 @@ export function buildSystemPromptV4(input: WaAgentInput, closedDates: string[] =
       : [
           `ЦЕНА: называй цены и вилки ТОЛЬКО из get_services. Фиксированная цена — назови её; вилка — назови диапазон и объясни, от чего зависит итог (используй факты о бизнесе). Точную стоимость подтвердит специалист на месте (а для медицинских услуг — после осмотра); так и говори, не выдумывай точную цифру.`,
         ]),
-    config.pricing_rules ? `- Дополнительные правила по цене от бизнеса (учитывай их): ${config.pricing_rules}` : "",
+    config.pricing_rules
+      ? `- Правила бизнеса по цене, фото и консультации (обязательно учитывай их): ${config.pricing_rules}`
+      : "",
     ``,
     // How to read a client's photo, written per industry — not for pricing but to consult and
     // steer to a booking (beauty reads hair/nails, dental/medical acknowledge without diagnosing,
