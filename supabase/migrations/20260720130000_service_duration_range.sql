@@ -148,3 +148,9 @@ $function$;
 GRANT EXECUTE ON FUNCTION public.create_appointment(
   uuid, uuid, uuid, timestamptz, text, text, text, uuid, uuid[], text, numeric, int
 ) TO anon, authenticated, service_role;
+
+-- Changing a function's signature (drop + recreate) leaves PostgREST's schema cache pointing at
+-- the OLD signature, so rpc('create_appointment', …) fails ("could not find function in schema
+-- cache") until the cache reloads. Force the reload as part of the migration so bookings never
+-- break after applying it.
+NOTIFY pgrst, 'reload schema';
