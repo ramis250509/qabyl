@@ -32,7 +32,60 @@ import { BranchHoursEditor, defaultBranchHours, type BranchHours } from "@/compo
 import { MasterDayOverrides } from "@/components/admin/MasterDayOverrides";
 import { SalonDayOverridesCard } from "@/components/admin/SalonDayOverridesCard";
 import { AiAssistantTab } from "@/components/admin/AiAssistantTab";
+import { INDUSTRIES_META, INDUSTRY_ORDER, normalizeIndustry, type IndustryKey } from "@/lib/industries";
 // WaChatsTab tab hidden from UI by request; component kept for future use.
+
+// Business industry — the single source of truth chosen here in the "Салон" tab and read by the
+// whole cabinet (Assistant expertise, Site example copy, per-industry photo instructions). Stored
+// on salon_ai_assistant.industry so the WhatsApp agent (which already reads that row) needs no
+// change; the Assistant tab shows it read-only.
+function IndustrySelectCard({ salonId }: { salonId: string }) {
+  const [industry, setIndustry] = useState<IndustryKey | null>(null);
+
+  useEffect(() => {
+    supabase
+      .from("salon_ai_assistant")
+      .select("industry")
+      .eq("salon_id", salonId)
+      .maybeSingle()
+      .then(({ data }) => setIndustry(normalizeIndustry(data?.industry)));
+  }, [salonId]);
+
+  async function change(v: IndustryKey) {
+    setIndustry(v);
+    const { error } = await supabase
+      .from("salon_ai_assistant")
+      .upsert({ salon_id: salonId, industry: v }, { onConflict: "salon_id" });
+    if (error) return toast.error(error.message);
+    toast.success("Сфера бизнеса сохранена — применится во всём кабинете");
+  }
+
+  if (!industry) return null;
+
+  return (
+    <Card className="p-4 sm:p-6 space-y-3">
+      <div>
+        <h2 className="font-semibold">Сфера бизнеса</h2>
+        <p className="text-xs text-muted-foreground">
+          Один выбор для всего кабинета: экспертиза Ассистента, тексты сайта и примеры под нишу
+          берутся отсюда.
+        </p>
+      </div>
+      <Select value={industry} onValueChange={(v) => change(v as IndustryKey)}>
+        <SelectTrigger className="max-w-sm">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {INDUSTRY_ORDER.map((k) => (
+            <SelectItem key={k} value={k}>
+              {INDUSTRIES_META[k].emoji} {INDUSTRIES_META[k].label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </Card>
+  );
+}
 
 export const Route = createFileRoute("/admin/salons/$salonId")({
   component: SalonEdit,
@@ -274,6 +327,7 @@ function SalonEdit() {
 
           <TabsContent value="salon">
             <div className="space-y-6">
+              <IndustrySelectCard salonId={salonId} />
               <SalonInfoTab
                 salon={salon}
                 onSaved={(s) => setSalon(s)}

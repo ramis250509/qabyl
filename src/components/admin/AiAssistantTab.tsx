@@ -13,19 +13,11 @@ import { Sparkles, Lock, Copy, RefreshCw, Webhook, MessageCircle } from "lucide-
 import { getWaWebhookConfig, regenerateWaWebhookToken } from "@/lib/wa-config.functions";
 import {
   INDUSTRIES_META,
-  INDUSTRY_ORDER,
   INDUSTRY_PRICING,
   DEFAULT_INDUSTRY,
   normalizeIndustry,
   type IndustryKey,
 } from "@/lib/industries";
-
-// Every industry's default "how to price" text, used to detect whether the owner has customised
-// the field. If the current text equals one of these, switching industry safely replaces it with
-// the new industry's text; a custom text is left untouched.
-const PRICING_DEFAULTS = new Set(
-  Object.values(INDUSTRY_PRICING).map((p) => p.default),
-);
 import { WaSimulator } from "./WaSimulator";
 import { AiServiceListEditor } from "./AiServiceListEditor";
 
@@ -315,38 +307,14 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
         </div>
 
         <div className="space-y-2">
-          <Label>Тип бизнеса (Ассистент)</Label>
-          <div className="flex flex-wrap gap-2">
-            {INDUSTRY_ORDER.map((key) => {
-              const m = INDUSTRIES_META[key];
-              return (
-                <Button
-                  key={key}
-                  type="button"
-                  variant={data.industry === key ? "default" : "outline"}
-                  size="sm"
-                  onClick={() =>
-                    setData((d) => ({
-                      ...d,
-                      industry: key,
-                      // Swap in the new industry's pricing guidance, but only if the owner hasn't
-                      // written their own (current text is empty or is one of the presets).
-                      pricing_rules:
-                        !d.pricing_rules || PRICING_DEFAULTS.has(d.pricing_rules)
-                          ? INDUSTRY_PRICING[key].default
-                          : d.pricing_rules,
-                    }))
-                  }
-                >
-                  <span className="mr-1">{m.emoji}</span>
-                  {m.label}
-                </Button>
-              );
-            })}
+          <Label>Сфера бизнеса</Label>
+          <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 max-w-sm">
+            <span>{INDUSTRIES_META[data.industry].emoji}</span>
+            <span className="text-sm font-medium">{INDUSTRIES_META[data.industry].label}</span>
           </div>
           <p className="text-xs text-muted-foreground">
-            Определяет экспертизу, терминологию и сценарии консультаций ассистента.{" "}
-            {INDUSTRIES_META[data.industry].tagline}.
+            Сфера выбирается один раз во вкладке «Салон» и здесь менять нельзя — она определяет
+            экспертизу, терминологию и сценарии Ассистента. {INDUSTRIES_META[data.industry].tagline}.
           </p>
           {data.engine === "v3" && (
             <p className="text-xs text-amber-600 dark:text-amber-500">
