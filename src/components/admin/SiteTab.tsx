@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { INDUSTRY_SITE, normalizeIndustry, type IndustryKey } from "@/lib/industries";
+import { useServerFn } from "@tanstack/react-start";
+import { generateSiteContent } from "@/lib/site-content.functions";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -35,30 +36,27 @@ export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => v
   });
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
-  // Industry drives the "Подставить пример" content. Lives on the AI-assistant config; default
-  // to beauty until loaded so the button always works.
-  const [industry, setIndustry] = useState<IndustryKey>("beauty");
+  const [generating, setGenerating] = useState(false);
+  const genContent = useServerFn(generateSiteContent);
 
-  useEffect(() => {
-    supabase
-      .from("salon_ai_assistant")
-      .select("industry")
-      .eq("salon_id", salon.id)
-      .maybeSingle()
-      .then(({ data }) => setIndustry(normalizeIndustry(data?.industry)));
-  }, [salon.id]);
-
-  // Fill the site's text (hero + about) with industry-specific example copy, without ever
-  // overwriting what the owner already wrote.
-  function fillSiteExamples() {
-    const ex = INDUSTRY_SITE[industry];
-    setForm((f: any) => ({
-      ...f,
-      hero_title: f.hero_title?.trim() ? f.hero_title : ex.hero_title,
-      hero_subtitle: f.hero_subtitle?.trim() ? f.hero_subtitle : ex.hero_subtitle,
-      about_text: f.about_text?.trim() ? f.about_text : ex.about_text,
-    }));
-    toast.success("Текст сайта заполнен примером под вашу нишу — отредактируйте под свой салон");
+  // Generate site text (hero + about) in the salon's niche voice — unique each time (the server
+  // uses the LLM, falling back to a per-industry example). Never overwrites what the owner wrote.
+  async function fillSiteExamples() {
+    setGenerating(true);
+    try {
+      const ex = await genContent({ data: { salonId: salon.id } });
+      setForm((f: any) => ({
+        ...f,
+        hero_title: f.hero_title?.trim() ? f.hero_title : ex.hero_title,
+        hero_subtitle: f.hero_subtitle?.trim() ? f.hero_subtitle : ex.hero_subtitle,
+        about_text: f.about_text?.trim() ? f.about_text : ex.about_text,
+      }));
+      toast.success("Текст сайта сгенерирован под вашу нишу — отредактируйте под свой салон");
+    } catch (e: any) {
+      toast.error(e?.message ?? "Не удалось сгенерировать текст");
+    } finally {
+      setGenerating(false);
+    }
   }
 
   async function uploadFile(file: File, kind: "hero" | "gallery") {
@@ -162,11 +160,19 @@ export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => v
           <div className="min-w-0">
             <h3 className="font-semibold">Hero (первый экран)</h3>
             <p className="text-sm text-muted-foreground">
-              Заголовок, подзаголовок и «О салоне» можно заполнить готовым текстом под вашу нишу.
+              Заголовок, подзаголовок и «О салоне» можно сгенерировать под вашу нишу — каждый раз
+              по-новому.
             </p>
           </div>
-          <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={fillSiteExamples}>
-            Подставить пример
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            onClick={fillSiteExamples}
+            disabled={generating}
+          >
+            {generating ? "Генерирую…" : "Сгенерировать текст"}
           </Button>
         </div>
         <div>
