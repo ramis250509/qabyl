@@ -9,6 +9,38 @@ async function getAdmin() {
   return supabaseAdmin;
 }
 
+// Public base URL for the client's self-service booking link. Read per-call (Cloudflare binds
+// env at request time); production default is qabyl.com.
+function appBaseUrl(): string {
+  try {
+    return (process.env.PUBLIC_APP_URL ?? "https://qabyl.com").replace(/\/+$/, "");
+  } catch {
+    return "https://qabyl.com";
+  }
+}
+
+// Look up a freshly-created appointment's manage_token and build its self-service URL. Best-effort:
+// a failure here must never break the booking confirmation, so it returns null on any error.
+async function fetchManageUrl(db: AdminClient, appointmentId: string): Promise<string | null> {
+  try {
+    const { data } = await db
+      .from("appointments")
+      .select("manage_token")
+      .eq("id", appointmentId)
+      .maybeSingle();
+    const token = (data as any)?.manage_token as string | undefined;
+    return token ? `${appBaseUrl()}/manage/${token}` : null;
+  } catch {
+    return null;
+  }
+}
+
+// "I'll go check / one moment" filler the client must never see (see the v4 twin). v3 already
+// builds the full answer in `factual` before composing, so this is a defense-in-depth catch on
+// the rare case Gemini prepends filler while phrasing — we then render `factual` deterministically.
+const V3_STALL_RE =
+  /(сейчас\s+(проверю|гляну|узна|посмотрю|уточню|выясню|определю|подберу|рассчита|загляну)|\b(проверю|проверяю|уточняю|уточню|выясняю|посмотрю|гляну|подберу)\b|секундоч|минуточ|минутку|подожд|обожд|ожидайте|одну\s+секунд|азыр\s+(текшер|кара|көр|бил)|текшерип\s+көр|күтө\s+тур|бир\s+аз\s+күт|let me (check|see)|one moment|hold on|bear with)/i;
+
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 // Note: gemini-1.5-* models were retired on Sept 24, 2025 → 404 on new API keys.
 const MODEL_TEXT = "gemini-2.5-flash";
@@ -2063,6 +2095,10 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
   let selectedBranchId: string | null = input.selectedBranchId;
   let appointmentId: string | null = null;
   let factual = "";
+  // Self-service link appended to the booking-confirmation reply. The INSERT confirmation
+  // trigger skips ai_assistant bookings (the agent replies itself), so the link would never
+  // reach WhatsApp-booked clients otherwise — the agent's own reply carries it.
+  let bookingManageUrl: string | null = null;
 
   const tone = input.config.tone_instructions;
   const islamicGreeting = /ассаламу?\s*а?лейку?м|ассалму|салам\s+а?ллейку?м/i.test(
@@ -2708,6 +2744,7 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
   }
 
   appointmentId = newId as string;
+  bookingManageUrl = await fetchManageUrl(db, appointmentId);
   const dateHuman = formatDateInTz(sd.slot_start!, input.salon.timezone);
   const timeHuman = formatTimeInTz(sd.slot_start!, input.salon.timezone);
   factual = `Скажи тепло и радостно: клиент успешно записан. Салон «${input.salon.salonName}», ${dateHuman} в ${timeHuman}, мастер ${sd.master_name}, услуга «${sd.service_name}». Поблагодари, скажи что ждём в гости, добавь один-два дружелюбных эмодзи.`;
@@ -2765,6 +2802,12 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
     let reply: string;
     try {
       reply = await compose1(factual);
+      // Defense-in-depth: if the composer slipped in "сейчас проверю…"-style filler, drop it and
+      // render the already-computed answer deterministically — the client always gets the result.
+      if (V3_STALL_RE.test(reply)) {
+        debug.errors.push("v3_stall_filtered");
+        reply = instructionFallbackReply(factual, language, input.salon.salonName);
+      }
     } catch (e: any) {
       const raw = instructionFallbackReply(factual, language, input.salon.salonName);
       if (isFirstContact && !/^\s*(здрав|привет|саламат|салам|hello|hi|hey|добр)/iu.test(raw)) {
@@ -2776,6 +2819,11 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
         reply = raw;
       }
       debug.errors.push(`compose: ${e?.message ?? String(e)}`);
+    }
+    // Append the self-service link to the booking confirmation (deterministic — never let the
+    // model paraphrase or drop the URL).
+    if (bookingManageUrl && !reply.includes(bookingManageUrl)) {
+      reply = `${reply}\n\n🔗 Перенести или отменить запись: ${bookingManageUrl}`;
     }
     return {
       reply,

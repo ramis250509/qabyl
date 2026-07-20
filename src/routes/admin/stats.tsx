@@ -19,6 +19,7 @@ function StatsPage() {
   const { salonId, branchId } = filters;
   const [period, setPeriod] = useState<"today" | "7" | "30" | "month" | "90">("month");
   const [rows, setRows] = useState<any[]>([]);
+  const [convCount, setConvCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -48,8 +49,16 @@ function StatsPage() {
     if (untilISO) q = q.lte("created_at", untilISO);
     if (salonId !== "all") q = q.eq("salon_id", salonId);
     if (branchId !== "all") q = q.eq("branch_id", branchId);
-    const { data } = await q;
+
+    // Assistant funnel needs the number of WhatsApp conversations STARTED in the period (top of
+    // funnel). wa_conversations has no branch dimension, so the branch filter doesn't apply here.
+    let cq = supabase.from("wa_conversations").select("id", { count: "exact", head: true }).gte("created_at", sinceISO);
+    if (untilISO) cq = cq.lte("created_at", untilISO);
+    if (salonId !== "all") cq = cq.eq("salon_id", salonId);
+
+    const [{ data }, conv] = await Promise.all([q, cq]);
     setRows(data ?? []);
+    setConvCount((conv as any).count ?? 0);
     setLoading(false);
   }, [salonId, branchId, period]);
 
@@ -58,16 +67,20 @@ function StatsPage() {
   useRegisterRefresh(load);
 
   const stats = useMemo(() => {
-    // "Active" = a booking that stuck (excludes client-cancelled). Revenue counts only these;
-    // the raw total is shown separately so nothing is hidden.
-    const isActive = (a: any) => a.status !== "cancelled";
+    // "Active" = a booking that will (or did) happen: confirmed or completed. Revenue counts only
+    // these — a no-show earned nothing and a cancel never happened, so both are excluded from money
+    // and shown separately, hiding nothing.
+    const isActive = (a: any) => a.status === "confirmed" || a.status === "completed";
     const active = (rows as any[]).filter(isActive);
-    const cancelledCount = rows.length - active.length;
+    const cancelledCount = (rows as any[]).filter((a) => a.status === "cancelled").length;
+    const noShowRows = (rows as any[]).filter((a) => a.status === "no_show");
+    const noShowCount = noShowRows.length;
     const aiCount = (rows as any[]).filter((a) => a.source === "ai_assistant" && isActive(a)).length;
     const revenue = active.reduce((s, a) => s + Number(a.price || 0), 0);
     const byMaster: Record<string, { name: string; count: number; revenue: number }> = {};
     const byService: Record<string, { name: string; count: number; revenue: number }> = {};
     const byBranch: Record<string, { name: string; count: number; revenue: number }> = {};
+    const noShowByMaster: Record<string, { name: string; count: number }> = {};
     for (const a of active) {
       const mk = a.master_id;
       byMaster[mk] ??= { name: a.masters?.name ?? "—", count: 0, revenue: 0 };
@@ -79,13 +92,27 @@ function StatsPage() {
       byBranch[bk] ??= { name: a.branches?.name ?? "Без филиала", count: 0, revenue: 0 };
       byBranch[bk].count++; byBranch[bk].revenue += Number(a.price || 0);
     }
+    for (const a of noShowRows) {
+      const mk = a.master_id;
+      noShowByMaster[mk] ??= { name: a.masters?.name ?? "—", count: 0 };
+      noShowByMaster[mk].count++;
+    }
+    // No-show rate = no-shows / non-cancelled bookings. Cancellations are excluded — a booking
+    // called off in advance is not a no-show. (Future confirmed visits sit in the base too; they
+    // can only lower the rate, never inflate it, so the number is never alarmist.)
+    const nonCancelled = active.length + noShowCount;
+    const noShowRate = nonCancelled > 0 ? Math.round((noShowCount / nonCancelled) * 100) : 0;
+    // Assistant funnel: conversations → bookings the assistant closed.
+    const aiConversion = convCount > 0 ? Math.round((aiCount / convCount) * 100) : 0;
     return {
-      revenue, count: active.length, cancelledCount, aiCount,
+      revenue, count: active.length, cancelledCount, aiCount, noShowCount, noShowRate,
+      convCount, aiConversion,
       byMaster: Object.values(byMaster).sort((a, b) => b.revenue - a.revenue),
       byService: Object.values(byService).sort((a, b) => b.revenue - a.revenue),
       byBranch: Object.values(byBranch).sort((a, b) => b.revenue - a.revenue),
+      noShowByMaster: Object.values(noShowByMaster).sort((a, b) => b.count - a.count),
     };
-  }, [rows]);
+  }, [rows, convCount]);
 
   const showBranchTable = branchId === "all" && stats.byBranch.length > 1;
 
@@ -119,9 +146,10 @@ function StatsPage() {
         <Card className="p-6">
           <p className="text-sm text-muted-foreground">Записей</p>
           <p className="text-3xl sm:text-4xl font-bold mt-1">{stats.count}</p>
-          {stats.cancelledCount > 0 && (
-            <p className="text-xs text-muted-foreground mt-1">+ {stats.cancelledCount} отменённых</p>
-          )}
+          <p className="text-xs text-muted-foreground mt-1 space-x-2">
+            {stats.cancelledCount > 0 && <span>+ {stats.cancelledCount} отменённых</span>}
+            {stats.noShowCount > 0 && <span>+ {stats.noShowCount} не пришли</span>}
+          </p>
         </Card>
         <Card className="p-6">
           <p className="text-sm text-muted-foreground">Через Ассистента</p>
@@ -129,6 +157,57 @@ function StatsPage() {
           <p className="text-xs text-muted-foreground mt-1">записей оформил ассистент</p>
         </Card>
       </div>
+
+      {/* Assistant funnel: how many WhatsApp conversations turned into bookings. */}
+      <Card className="p-6">
+        <h3 className="font-semibold mb-4">Воронка ассистента</h3>
+        <div className="grid grid-cols-3 gap-4 text-center">
+          <div>
+            <p className="text-2xl sm:text-3xl font-bold">{stats.convCount}</p>
+            <p className="text-xs text-muted-foreground mt-1">Диалогов в WhatsApp</p>
+          </div>
+          <div>
+            <p className="text-2xl sm:text-3xl font-bold">{stats.aiCount}</p>
+            <p className="text-xs text-muted-foreground mt-1">Записались через бота</p>
+          </div>
+          <div>
+            <p className="text-2xl sm:text-3xl font-bold">{stats.aiConversion}%</p>
+            <p className="text-xs text-muted-foreground mt-1">Конверсия в запись</p>
+          </div>
+        </div>
+        {stats.convCount > 0 && (
+          <div className="mt-4 h-2 rounded-full bg-muted overflow-hidden">
+            <div className="h-full bg-primary" style={{ width: `${Math.min(100, stats.aiConversion)}%` }} />
+          </div>
+        )}
+        <p className="text-xs text-muted-foreground mt-3">
+          Диалог — это клиент, написавший в WhatsApp. Конверсия показывает, какую долю из них ассистент довёл до записи.
+        </p>
+      </Card>
+
+      {/* No-show analytics — only meaningful once visits are being marked in the calendar. */}
+      <Card className="p-6">
+        <div className="flex items-baseline justify-between flex-wrap gap-2">
+          <h3 className="font-semibold">Неявки (No-Show)</h3>
+          <span className="text-sm text-muted-foreground">
+            {stats.noShowCount} неявок · {stats.noShowRate}% записей
+          </span>
+        </div>
+        {stats.noShowByMaster.length > 0 ? (
+          <div className="space-y-2 mt-3">
+            {stats.noShowByMaster.slice(0, 10).map((m, i) => (
+              <div key={i} className="flex items-center justify-between text-sm border-b last:border-0 pb-1.5">
+                <span>{m.name}</span>
+                <span className="font-medium text-red-600">{m.count}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground mt-2">
+            Неявок нет. Отмечайте «Не пришёл» в календаре после визита — здесь появится статистика.
+          </p>
+        )}
+      </Card>
 
       {showBranchTable && (
         <Card className="p-6">

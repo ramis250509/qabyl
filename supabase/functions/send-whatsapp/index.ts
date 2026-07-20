@@ -18,6 +18,14 @@ function normalizeGreenApiChatId(rawPhone: string | null | undefined) {
   return `${phone}@c.us`;
 }
 
+// Public base URL of the app, for the client's self-service management link. Override with
+// PUBLIC_APP_URL if the domain ever changes; production default is qabyl.com.
+function manageUrl(token: string | null | undefined) {
+  if (!token) return null;
+  const base = (Deno.env.get("PUBLIC_APP_URL") ?? "https://qabyl.com").replace(/\/+$/, "");
+  return `${base}/manage/${token}`;
+}
+
 async function readGreenApiBody(resp: Response) {
   const raw = await resp.text();
   try {
@@ -93,20 +101,40 @@ Deno.serve(async (req) => {
     const masterName = (appt.masters as any)?.name ?? "—";
     const priceStr = `${Number(appt.price ?? 0).toLocaleString("ru-RU")} сом`;
     const clientFirstName = String(appt.client_name ?? "").trim().split(/\s+/)[0] || "клиент";
+    const manage = manageUrl((appt as any).manage_token as string | undefined);
+    // Appended to messages the CLIENT receives, so they can self-manage without the assistant.
+    const manageLine = manage ? `\n\n🔗 Перенести или отменить запись: ${manage}` : "";
+
+    // Owner-only notes for client-initiated self-service changes. The client already saw the
+    // result on the manage page, so we don't re-message them — only the salon owner is informed.
+    if (kind === "self_reschedule" || kind === "self_cancel") {
+      const ownerPhone = salon.owner_notify_phone;
+      if (!ownerPhone) return jsonResponse({ skipped: true, reason: "no_owner_phone" });
+      const ownerChatId = normalizeGreenApiChatId(ownerPhone as string);
+      if (!ownerChatId) return jsonResponse({ error: "Invalid owner phone" }, 400);
+      const ownerText =
+        kind === "self_reschedule"
+          ? `🔄 Клиент сам перенёс запись (через ссылку) в "${salon.name}"\n\n👤 ${appt.client_name}\n📞 ${appt.client_phone}\n💇 ${serviceName}\n💅 Мастер: ${masterName}\n🕐 Новое время: ${when}`
+          : `❌ Клиент сам отменил запись (через ссылку) в "${salon.name}"\n\n👤 ${appt.client_name}\n📞 ${appt.client_phone}\n💇 ${serviceName}\n💅 Мастер: ${masterName}\n🕐 Было: ${when}`;
+      // sendGreenApi is a hoisted function declaration in this scope — safe to call before its text.
+      const res = await sendGreenApi(ownerChatId, ownerText, "owner");
+      if (!res.ok) return jsonResponse({ error: "Notification provider failed", target: "owner", status: res.status }, 502);
+      return jsonResponse({ ok: true, owner: res });
+    }
 
     let text = "";
     if (kind === "reminder") {
-      text = `Здравствуйте, ${clientFirstName}! ⏰\n\nНапоминаем: у вас запись примерно через 2 часа в "${salon.name}":\n\n💇 ${serviceName}\n💅 Мастер: ${masterName}\n🕐 ${timeStr} — ${weekday}, ${dateStr}${salon.address ? `\n📍 ${salon.address}` : ""}\n\nЖдём вас!`;
+      text = `Здравствуйте, ${clientFirstName}! ⏰\n\nНапоминаем: у вас запись примерно через 2 часа в "${salon.name}":\n\n💇 ${serviceName}\n💅 Мастер: ${masterName}\n🕐 ${timeStr} — ${weekday}, ${dateStr}${salon.address ? `\n📍 ${salon.address}` : ""}\n\nЖдём вас!${manageLine}`;
     } else if (kind === "reschedule") {
       // Sent when a salon admin moves an existing booking (new time and/or master) in the
       // calendar. The row already holds the NEW values, so we just state the current details.
-      text = `Здравствуйте, ${clientFirstName}! 🔄\n\nВаша запись в "${salon.name}" перенесена.\n\nНовое время:\n💇 ${serviceName}\n💅 Мастер: ${masterName}\n🕐 ${timeStr} — ${weekday}, ${dateStr}${salon.address ? `\n📍 ${salon.address}` : ""}\n\nЕсли новое время не подходит — просто напишите нам, подберём другое. Ждём вас!`;
+      text = `Здравствуйте, ${clientFirstName}! 🔄\n\nВаша запись в "${salon.name}" перенесена.\n\nНовое время:\n💇 ${serviceName}\n💅 Мастер: ${masterName}\n🕐 ${timeStr} — ${weekday}, ${dateStr}${salon.address ? `\n📍 ${salon.address}` : ""}\n\nЕсли новое время не подходит — просто напишите нам, подберём другое. Ждём вас!${manageLine}`;
     } else if (kind === "cancellation") {
       // Sent when a salon admin cancels a booking in the calendar. starts_at still points at
       // the (now cancelled) slot, which is exactly what the client needs to recognise it.
       text = `Здравствуйте, ${clientFirstName}.\n\nК сожалению, ваша запись в "${salon.name}" на ${timeStr} — ${weekday}, ${dateStr} (${serviceName}) была отменена.\n\nПриносим извинения за неудобства. Чтобы записаться на другое время — просто напишите нам. 🙏${salon.phone ? `\n📞 ${salon.phone}` : ""}`;
     } else {
-      text = `Здравствуйте, ${clientFirstName}! 🎉\n\nВы успешно записаны на ${serviceName} в ${timeStr} — ${weekday}, ${dateStr}.\n\nЖдём вас в ${salon.name}!${salon.address ? `\n📍 ${salon.address}` : ""}${salon.phone ? `\n📞 ${salon.phone}` : ""}`;
+      text = `Здравствуйте, ${clientFirstName}! 🎉\n\nВы успешно записаны на ${serviceName} в ${timeStr} — ${weekday}, ${dateStr}.\n\nЖдём вас в ${salon.name}!${salon.address ? `\n📍 ${salon.address}` : ""}${salon.phone ? `\n📞 ${salon.phone}` : ""}${manageLine}`;
     }
 
     async function sendGreenApi(chatId: string, message: string, target: "client" | "owner") {

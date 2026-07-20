@@ -37,6 +37,23 @@ async function getAdmin() {
   return supabaseAdmin;
 }
 
+// Public self-service booking link for a freshly-created appointment. Best-effort — a failure
+// here must never break the booking confirmation. Base URL overridable via PUBLIC_APP_URL.
+async function fetchManageUrlV4(db: AdminClient, appointmentId: string): Promise<string | null> {
+  try {
+    const base = (process.env.PUBLIC_APP_URL ?? "https://qabyl.com").replace(/\/+$/, "");
+    const { data } = await db
+      .from("appointments")
+      .select("manage_token")
+      .eq("id", appointmentId)
+      .maybeSingle();
+    const token = (data as any)?.manage_token as string | undefined;
+    return token ? `${base}/manage/${token}` : null;
+  } catch {
+    return null;
+  }
+}
+
 const MAX_TOOL_ITERS = 8;
 const HISTORY_CAP = 30; // Gemini contents kept in state_data.v4_history between turns
 const PHOTO_NOTES_CAP = 6; // structured photo analyses kept in state_data.photo_notes
@@ -483,6 +500,9 @@ type V4RunFlags = {
   needsHuman: boolean;
   escalateReason: string | null;
   photoNotes: PhotoNote[]; // structured photo analyses persisted across turns
+  // Set the turn a booking is created, so the final reply can append the self-service link. The
+  // INSERT confirmation trigger skips ai_assistant bookings, so this is the only delivery path.
+  justBookedManageUrl?: string | null;
 };
 
 // Normalize a loose clock string ("11", "11:0", "11.00", "11 00") → "HH:MM" or null.
@@ -1021,6 +1041,7 @@ export async function executeV4Tool(
       }
       flags.appointmentId = newId as string;
       if (args.branch_id) flags.selectedBranchId = args.branch_id as string;
+      flags.justBookedManageUrl = await fetchManageUrlV4(db, newId as string);
       console.log(
         `[wa-v4] create_appointment OK id=${newId} phone=${input.client.phone} at=${resolved.slotStart}`,
       );
@@ -1415,8 +1436,11 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   // "wait/checking" message without answering, the turn would end and leave the client hanging
   // (we send one message per webhook turn). Detect that stall and force a second pass that must
   // finish the job in the same turn. Fires on ANY such stall, regardless of which tools ran.
+  // First-person "I'll go check / one moment" stalls in ru/ky/en. Kept deliberately anchored to
+  // first-person verbs and wait-phrases so it never catches a legit imperative to the CLIENT
+  // ("уточните, пожалуйста, день" = "уточнИТЕ", not "уточню").
   const STALL_RE =
-    /(сейчас\s+(проверю|гляну|узна|посмотрю)|проверю\s+(распис|кален|свобод|нали)|секундоч|минуточ|минутку|подожд|ожидайте|одну\s+секунд|азыр\s+(текшер|кара)|текшерип\s+көр|күтө\s+тур|бир\s+аз\s+күт|let me check|checking the|one moment|hold on|bear with)/i;
+    /(сейчас\s+(проверю|гляну|узна|посмотрю|уточню|выясню|определю|подберу|рассчита|загляну|скажу)|\b(проверю|проверяю|уточняю|уточню|выясняю|посмотрю|гляну|подберу)\b|проверю\s+(распис|кален|свобод|нали)|секундоч|минуточ|минутку|пару\s+(секунд|минут)|подожд|обожд|погоди|ожидайте|одну\s+секунд|дайте\s+(мне\s+)?(секунд|минут|момент)|азыр\s+(текшер|кара|көр|бил|айт)|текшерип\s+көр|карап\s+көр|күтө\s+тур|бир\s+аз\s+күт|let me (check|see)|i['’]?ll check|i will check|checking\b|one moment|hold on|bear with|give me a (sec|moment|minute))/i;
   if (reply && STALL_RE.test(reply)) {
     debug.errors.push("stall_detected_forcing_completion");
     contents.push({
@@ -1458,6 +1482,12 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   const greeting = input.config.greeting?.trim();
   if (isFirstTurn && greeting && !reply.includes(greeting) && !REPLY_GREETING_RE.test(reply)) {
     reply = `${greeting}\n\n${reply}`;
+  }
+
+  // On the turn a booking was created, append the self-service link (deterministic — the model
+  // must never paraphrase or drop the URL). Only fires when create_appointment succeeded here.
+  if (flags.justBookedManageUrl && !reply.includes(flags.justBookedManageUrl)) {
+    reply = `${reply}\n\n🔗 Перенести или отменить запись: ${flags.justBookedManageUrl}`;
   }
 
   // Persist Gemini history without inline images (keep the DB row small). Sanitize AFTER the

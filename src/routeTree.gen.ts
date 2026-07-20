@@ -16,8 +16,10 @@ import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminIndexRouteImport } from './routes/admin/index'
+import { Route as ManageTokenRouteImport } from './routes/manage.$token'
 import { Route as BookSlugRouteImport } from './routes/book.$slug'
 import { Route as AdminStatsRouteImport } from './routes/admin/stats'
+import { Route as AdminOpsRouteImport } from './routes/admin/ops'
 import { Route as AdminNotificationsRouteImport } from './routes/admin/notifications'
 import { Route as AdminCalendarRouteImport } from './routes/admin/calendar'
 import { Route as AdminAccountRouteImport } from './routes/admin/account'
@@ -61,6 +63,11 @@ const AdminIndexRoute = AdminIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AdminRoute,
 } as any)
+const ManageTokenRoute = ManageTokenRouteImport.update({
+  id: '/manage/$token',
+  path: '/manage/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const BookSlugRoute = BookSlugRouteImport.update({
   id: '/book/$slug',
   path: '/book/$slug',
@@ -69,6 +76,11 @@ const BookSlugRoute = BookSlugRouteImport.update({
 const AdminStatsRoute = AdminStatsRouteImport.update({
   id: '/stats',
   path: '/stats',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminOpsRoute = AdminOpsRouteImport.update({
+  id: '/ops',
+  path: '/ops',
   getParentRoute: () => AdminRoute,
 } as any)
 const AdminNotificationsRoute = AdminNotificationsRouteImport.update({
@@ -117,8 +129,10 @@ export interface FileRoutesByFullPath {
   '/admin/account': typeof AdminAccountRoute
   '/admin/calendar': typeof AdminCalendarRoute
   '/admin/notifications': typeof AdminNotificationsRoute
+  '/admin/ops': typeof AdminOpsRoute
   '/admin/stats': typeof AdminStatsRoute
   '/book/$slug': typeof BookSlugRoute
+  '/manage/$token': typeof ManageTokenRoute
   '/admin/': typeof AdminIndexRoute
   '/admin/salons/$salonId': typeof AdminSalonsSalonIdRoute
   '/preview/salon/$salonId': typeof PreviewSalonSalonIdRoute
@@ -134,8 +148,10 @@ export interface FileRoutesByTo {
   '/admin/account': typeof AdminAccountRoute
   '/admin/calendar': typeof AdminCalendarRoute
   '/admin/notifications': typeof AdminNotificationsRoute
+  '/admin/ops': typeof AdminOpsRoute
   '/admin/stats': typeof AdminStatsRoute
   '/book/$slug': typeof BookSlugRoute
+  '/manage/$token': typeof ManageTokenRoute
   '/admin': typeof AdminIndexRoute
   '/admin/salons/$salonId': typeof AdminSalonsSalonIdRoute
   '/preview/salon/$salonId': typeof PreviewSalonSalonIdRoute
@@ -153,8 +169,10 @@ export interface FileRoutesById {
   '/admin/account': typeof AdminAccountRoute
   '/admin/calendar': typeof AdminCalendarRoute
   '/admin/notifications': typeof AdminNotificationsRoute
+  '/admin/ops': typeof AdminOpsRoute
   '/admin/stats': typeof AdminStatsRoute
   '/book/$slug': typeof BookSlugRoute
+  '/manage/$token': typeof ManageTokenRoute
   '/admin/': typeof AdminIndexRoute
   '/admin/salons/$salonId': typeof AdminSalonsSalonIdRoute
   '/preview/salon/$salonId': typeof PreviewSalonSalonIdRoute
@@ -173,8 +191,10 @@ export interface FileRouteTypes {
     | '/admin/account'
     | '/admin/calendar'
     | '/admin/notifications'
+    | '/admin/ops'
     | '/admin/stats'
     | '/book/$slug'
+    | '/manage/$token'
     | '/admin/'
     | '/admin/salons/$salonId'
     | '/preview/salon/$salonId'
@@ -190,8 +210,10 @@ export interface FileRouteTypes {
     | '/admin/account'
     | '/admin/calendar'
     | '/admin/notifications'
+    | '/admin/ops'
     | '/admin/stats'
     | '/book/$slug'
+    | '/manage/$token'
     | '/admin'
     | '/admin/salons/$salonId'
     | '/preview/salon/$salonId'
@@ -208,8 +230,10 @@ export interface FileRouteTypes {
     | '/admin/account'
     | '/admin/calendar'
     | '/admin/notifications'
+    | '/admin/ops'
     | '/admin/stats'
     | '/book/$slug'
+    | '/manage/$token'
     | '/admin/'
     | '/admin/salons/$salonId'
     | '/preview/salon/$salonId'
@@ -225,6 +249,7 @@ export interface RootRouteChildren {
   RobotsDottxtRoute: typeof RobotsDottxtRoute
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   BookSlugRoute: typeof BookSlugRoute
+  ManageTokenRoute: typeof ManageTokenRoute
   PreviewSalonSalonIdRoute: typeof PreviewSalonSalonIdRoute
   ApiPublicWaSalonIdRoute: typeof ApiPublicWaSalonIdRoute
 }
@@ -280,6 +305,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminIndexRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/manage/$token': {
+      id: '/manage/$token'
+      path: '/manage/$token'
+      fullPath: '/manage/$token'
+      preLoaderRoute: typeof ManageTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/book/$slug': {
       id: '/book/$slug'
       path: '/book/$slug'
@@ -292,6 +324,13 @@ declare module '@tanstack/react-router' {
       path: '/stats'
       fullPath: '/admin/stats'
       preLoaderRoute: typeof AdminStatsRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/ops': {
+      id: '/admin/ops'
+      path: '/ops'
+      fullPath: '/admin/ops'
+      preLoaderRoute: typeof AdminOpsRouteImport
       parentRoute: typeof AdminRoute
     }
     '/admin/notifications': {
@@ -350,6 +389,7 @@ interface AdminRouteChildren {
   AdminAccountRoute: typeof AdminAccountRoute
   AdminCalendarRoute: typeof AdminCalendarRoute
   AdminNotificationsRoute: typeof AdminNotificationsRoute
+  AdminOpsRoute: typeof AdminOpsRoute
   AdminStatsRoute: typeof AdminStatsRoute
   AdminIndexRoute: typeof AdminIndexRoute
   AdminSalonsSalonIdRoute: typeof AdminSalonsSalonIdRoute
@@ -360,6 +400,7 @@ const AdminRouteChildren: AdminRouteChildren = {
   AdminAccountRoute: AdminAccountRoute,
   AdminCalendarRoute: AdminCalendarRoute,
   AdminNotificationsRoute: AdminNotificationsRoute,
+  AdminOpsRoute: AdminOpsRoute,
   AdminStatsRoute: AdminStatsRoute,
   AdminIndexRoute: AdminIndexRoute,
   AdminSalonsSalonIdRoute: AdminSalonsSalonIdRoute,
@@ -376,6 +417,7 @@ const rootRouteChildren: RootRouteChildren = {
   RobotsDottxtRoute: RobotsDottxtRoute,
   SitemapDotxmlRoute: SitemapDotxmlRoute,
   BookSlugRoute: BookSlugRoute,
+  ManageTokenRoute: ManageTokenRoute,
   PreviewSalonSalonIdRoute: PreviewSalonSalonIdRoute,
   ApiPublicWaSalonIdRoute: ApiPublicWaSalonIdRoute,
 }
