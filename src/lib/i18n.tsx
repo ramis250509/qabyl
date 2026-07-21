@@ -47,6 +47,7 @@ const DICT = {
     en: "No services yet",
   },
   selectMaster: { ru: "Выберите мастера", ky: "Чеберди тандаңыз", en: "Choose a master" },
+  yearsExperienceShort: { ru: "лет опыта", ky: "жыл тажрыйба", en: "yrs experience" },
   noMastersForService: {
     ru: "Нет мастеров для этой услуги",
     ky: "Бул кызмат үчүн чеберлер жок",

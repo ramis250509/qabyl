@@ -1174,6 +1174,8 @@ function MasterDialog({ master, salonId, branches, onClose, onSaved }: { master:
     const payload = {
       name: form.name, specialization: form.specialization, photo_url: form.photo_url || null,
       is_active: form.is_active ?? true, branch_id: form.branch_id || null,
+      rating: form.rating === "" || form.rating == null ? null : Number(form.rating),
+      experience_years: form.experience_years === "" || form.experience_years == null ? null : Number(form.experience_years),
     };
     if (id) {
       const { error } = await supabase.from("masters").update(payload).eq("id", id);
@@ -1203,6 +1205,25 @@ function MasterDialog({ master, salonId, branches, onClose, onSaved }: { master:
         <div className="space-y-3">
           <div><Label>Имя</Label><Input value={form.name ?? ""} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
           <div><Label>Специализация</Label><Input value={form.specialization ?? ""} onChange={(e) => setForm({ ...form, specialization: e.target.value })} /></div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Опыт работы (лет)</Label>
+              <Input
+                type="number" min={0} max={80} placeholder="Например, 5"
+                value={form.experience_years ?? ""}
+                onChange={(e) => setForm({ ...form, experience_years: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label>Рейтинг (1–5)</Label>
+              <Input
+                type="number" min={1} max={5} step={0.1} placeholder="Например, 4.8"
+                value={form.rating ?? ""}
+                onChange={(e) => setForm({ ...form, rating: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground mt-1">Показывается звёздами клиентам. Пусто — рейтинг не отображается.</p>
+            </div>
+          </div>
           <div>
             <Label>Фото мастера</Label>
             <div className="flex items-center gap-3 mt-2">

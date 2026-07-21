@@ -17,6 +17,7 @@ import {
   Sparkles,
   MapPin,
   AlertTriangle,
+  Star,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatPrice } from "@/lib/price";
@@ -55,6 +56,8 @@ type Master = {
   specialization: string | null;
   photo_url: string | null;
   branch_id?: string | null;
+  rating?: number | null;
+  experience_years?: number | null;
 };
 type Branch = {
   id: string;
@@ -191,12 +194,18 @@ export function PublicBooking({
         .order("sort_order");
       let list = (allServices ?? []) as Service[];
       if (selectedBranch) {
+        // branch_id IS NULL means "works at every branch" everywhere else in the codebase (see
+        // loadMastersForService in wa-agent.server.ts, and the admin master editor's own "— Без
+        // филиала —" label). A plain .eq("branch_id", id) never matches a NULL row in SQL, so it
+        // silently hid every service performed only by a not-branch-assigned master — for a salon
+        // where NO master has branch_id set (a very common default), this hid ALL services and
+        // broke booking entirely, even though the master list & schedule were otherwise fine.
         const { data: links } = await supabase
           .from("masters")
           .select("master_services(service_id)")
           .eq("salon_id", salon.id)
           .eq("is_active", true)
-          .eq("branch_id", selectedBranch.id);
+          .or(`branch_id.is.null,branch_id.eq.${selectedBranch.id}`);
         const allowed = new Set<string>();
         for (const m of (links ?? []) as any[]) {
           for (const ms of m.master_services ?? []) allowed.add(ms.service_id);
@@ -219,14 +228,17 @@ export function PublicBooking({
     (async () => {
       let q = supabase
         .from("masters")
-        .select("id, name, specialization, photo_url, branch_id, master_services!inner(service_id)")
+        .select("id, name, specialization, photo_url, branch_id, rating, experience_years, master_services!inner(service_id)")
         .eq("salon_id", salon.id)
         .eq("is_active", true)
         .eq("master_services.service_id", selectedService.id)
         .order("sort_order");
-      if (selectedBranch) q = q.eq("branch_id", selectedBranch.id);
+      // Same NULL-branch-is-universal fix as the services filter above.
+      if (selectedBranch) q = q.or(`branch_id.is.null,branch_id.eq.${selectedBranch.id}`);
       const { data } = await q;
-      const list = (data ?? []) as Master[];
+      // Cast through `unknown`: rating/experience_years aren't in the generated Supabase types
+      // yet (added via a raw migration, regen pending) — same pattern used elsewhere in this repo.
+      const list = (data ?? []) as unknown as Master[];
       if (list.length === 0) {
         setMasters([]);
         return;
@@ -249,7 +261,36 @@ export function PublicBooking({
         if (!o.is_off && Array.isArray(o.intervals) && o.intervals.length > 0)
           hasSchedule.add(o.master_id);
       }
-      setMasters(list.filter((m) => hasSchedule.has(m.id)));
+      const visible = list.filter((m) => hasSchedule.has(m.id));
+      if (visible.length === 0) {
+        setMasters([]);
+        return;
+      }
+      // Prefer a REAL rating computed from published per-master reviews when any exist; otherwise
+      // fall back to the manually-set masters.rating. salon_reviews.master_id is nullable and no
+      // review form collects it yet, so this is inert today — the moment reviews start getting
+      // tagged with a master, ratings become real averages automatically, no further code change.
+      const { data: reviewRows } = await supabase
+        .from("salon_reviews")
+        .select("master_id, rating")
+        .eq("salon_id", salon.id)
+        .eq("is_published", true)
+        .in("master_id", visible.map((m) => m.id));
+      const ratingsByMaster = new Map<string, number[]>();
+      for (const r of (reviewRows ?? []) as any[]) {
+        if (!r.master_id) continue;
+        const arr = ratingsByMaster.get(r.master_id) ?? [];
+        arr.push(r.rating);
+        ratingsByMaster.set(r.master_id, arr);
+      }
+      setMasters(
+        visible.map((m) => {
+          const real = ratingsByMaster.get(m.id);
+          if (!real?.length) return m;
+          const avg = real.reduce((s, v) => s + v, 0) / real.length;
+          return { ...m, rating: Math.round(avg * 10) / 10 };
+        }),
+      );
     })();
   }, [selectedService, salon.id, selectedBranch]);
 
@@ -482,8 +523,18 @@ export function PublicBooking({
                     {m.specialization && (
                       <p className="text-sm text-muted-foreground truncate">{m.specialization}</p>
                     )}
+                    {(m.rating != null || m.experience_years != null) && (
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        {m.rating != null && <StarRating rating={m.rating} />}
+                        {m.experience_years != null && (
+                          <span className="text-xs text-muted-foreground whitespace-nowrap">
+                            {m.experience_years} {t("yearsExperienceShort")}
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
-                  <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                  <ChevronRight className="h-5 w-5 text-muted-foreground shrink-0" />
                 </div>
               </Card>
             ))}
@@ -1226,6 +1277,36 @@ function formatDuration(min: number, t: (k: "hour" | "min") => string) {
   if (min >= 60 && min % 60 === 0) return `${min / 60} ${h}`;
   if (min >= 60) return `${Math.floor(min / 60)} ${h} ${min % 60} ${m}`;
   return `${min} ${m}`;
+}
+
+// Compact star rating for a master's card: five outline stars with a filled overlay clipped to
+// the exact percentage (renders true half/partial stars, e.g. 4.3, without extra icon assets).
+function StarRating({ rating }: { rating: number }) {
+  const pct = Math.max(0, Math.min(100, (rating / 5) * 100));
+  return (
+    <span
+      className="inline-flex items-center gap-1 shrink-0"
+      role="img"
+      aria-label={`Рейтинг ${rating.toFixed(1)} из 5`}
+    >
+      <span className="relative inline-flex leading-none">
+        <span className="flex text-muted-foreground/30">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Star key={i} className="h-3.5 w-3.5" fill="currentColor" stroke="none" />
+          ))}
+        </span>
+        <span
+          className="absolute inset-0 flex overflow-hidden text-amber-400"
+          style={{ width: `${pct}%` }}
+        >
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Star key={i} className="h-3.5 w-3.5 shrink-0" fill="currentColor" stroke="none" />
+          ))}
+        </span>
+      </span>
+      <span className="text-xs font-medium text-foreground/80">{rating.toFixed(1)}</span>
+    </span>
+  );
 }
 
 function pluralServices(n: number) {
