@@ -124,7 +124,7 @@ Deno.serve(async (req) => {
 
     let text = "";
     if (kind === "reminder") {
-      text = `Здравствуйте, ${clientFirstName}! ⏰\n\nНапоминаем: у вас запись примерно через 2 часа в "${salon.name}":\n\n💇 ${serviceName}\n💅 Мастер: ${masterName}\n🕐 ${timeStr} — ${weekday}, ${dateStr}${salon.address ? `\n📍 ${salon.address}` : ""}\n\nЖдём вас!${manageLine}`;
+      text = `Здравствуйте, ${clientFirstName}! ⏰\n\nНапоминаем о вашей записи в "${salon.name}":\n\n💇 ${serviceName}\n💅 Мастер: ${masterName}\n🕐 ${timeStr} — ${weekday}, ${dateStr}${salon.address ? `\n📍 ${salon.address}` : ""}\n\nЖдём вас!${manageLine}`;
     } else if (kind === "reschedule") {
       // Sent when a salon admin moves an existing booking (new time and/or master) in the
       // calendar. The row already holds the NEW values, so we just state the current details.

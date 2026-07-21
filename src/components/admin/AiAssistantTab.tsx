@@ -30,6 +30,7 @@ type Assistant = {
   pricing_rules: string | null;
   languages: string[];
   manage_cutoff_hours: number;
+  reminder_lead_hours: number;
   engine: "v3" | "v4";
   knowledge_base: string | null;
   client_addressing: string | null;
@@ -61,6 +62,7 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
     pricing_rules: INDUSTRY_PRICING[DEFAULT_INDUSTRY].default,
     languages: ["ru", "ky"],
     manage_cutoff_hours: 0,
+    reminder_lead_hours: 2,
     engine: "v3",
     knowledge_base: "",
     client_addressing: "",
@@ -90,6 +92,7 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
             row.pricing_rules ?? INDUSTRY_PRICING[normalizeIndustry((row as any).industry)].default,
           languages: row.languages?.length ? row.languages : ["ru", "ky"],
           manage_cutoff_hours: (row as any).manage_cutoff_hours ?? 0,
+          reminder_lead_hours: (row as any).reminder_lead_hours ?? 2,
           engine: (row as any).engine === "v4" ? "v4" : "v3",
           knowledge_base: (row as any).knowledge_base ?? "",
           client_addressing: (row as any).client_addressing ?? "",
@@ -166,6 +169,7 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
         pricing_rules: data.pricing_rules || null,
         languages: data.languages,
         manage_cutoff_hours: data.manage_cutoff_hours,
+        reminder_lead_hours: data.reminder_lead_hours,
         engine: data.engine,
         knowledge_base: data.knowledge_base || null,
         client_addressing: data.client_addressing || null,
@@ -567,6 +571,30 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
           <p className="text-xs text-muted-foreground">
             Если до визита осталось меньше указанного времени, ассистент не будет отменять
             или переносить запись сам, а попросит клиента позвонить в салон. 0 — без ограничений.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <Label>Напоминание о записи</Label>
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              min={1}
+              max={72}
+              className="w-24"
+              value={data.reminder_lead_hours}
+              onChange={(e) =>
+                setData({
+                  ...data,
+                  reminder_lead_hours: Math.max(1, Math.min(72, Math.floor(Number(e.target.value) || 1))),
+                })
+              }
+            />
+            <span className="text-sm text-muted-foreground">часов до записи</span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            За сколько часов до визита клиенту автоматически придёт напоминание в WhatsApp. Изменение
+            действует сразу и применяется ко всем новым и уже созданным записям.
           </p>
         </div>
 

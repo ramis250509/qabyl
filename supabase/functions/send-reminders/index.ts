@@ -22,24 +22,20 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // ~2 hours ahead. The window (1h45m–2h15m) is wider than the 15-min cron cadence so every
-    // appointment is caught at least once; reminder_sent then guarantees exactly one reminder.
-    // Appointments booked less than ~1h45m before their start fall past this window and get no
-    // reminder — that's fine, the client just received the booking confirmation.
-    const now = new Date();
-    const from = new Date(now.getTime() + 105 * 60 * 1000);
-    const to = new Date(now.getTime() + 135 * 60 * 1000);
+    // Which appointments are due for a reminder is decided in one place — get_due_reminders() —
+    // using EACH salon's own configured lead time (salon_ai_assistant.reminder_lead_hours, default
+    // 2h) against each appointment's starts_at, with a ±15-min band so the 15-min cron always
+    // catches it and reminder_sent guarantees exactly one send. This keeps per-salon logic in the
+    // DB and scales to any number of salons in a single query.
+    const { data: appts, error: dueErr } = await supabase.rpc("get_due_reminders");
+    if (dueErr) {
+      console.error("send-reminders get_due_reminders failed", dueErr);
+      return new Response(JSON.stringify({ error: "due lookup failed", details: dueErr.message }), {
+        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
-    const { data: appts } = await supabase
-      .from("appointments")
-      .select("id")
-      .eq("status", "confirmed")
-      .eq("reminder_sent", false)
-      .gte("starts_at", from.toISOString())
-      .lte("starts_at", to.toISOString())
-      .limit(100);
-
-    const list = appts ?? [];
+    const list = (appts ?? []) as { id: string }[];
     const results: any[] = [];
     for (const a of list) {
       try {
