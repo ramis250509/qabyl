@@ -1525,8 +1525,19 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   }
 
   if (clientParts.length === 0) {
+    // Nothing usable to send to the model. The ONLY way this happens is a photo whose bytes we
+    // couldn't fetch (storage hiccup) with no accompanying text — the client must never be left in
+    // silence, so ask them to resend rather than returning an empty reply that gets swallowed.
+    const hadImage = input.lastMessages.some((m) => m.kind === "image");
+    const resend = hadImage
+      ? language === "ky"
+        ? "Кечиресиз, сүрөтүңүздү ача алган жокмун 🙏 Дагы бир жолу жөнөтүп көрүңүзчү."
+        : language === "en"
+          ? "Sorry, I couldn't open your photo 🙏 Could you send it once more?"
+          : "Извините, не получилось открыть ваше фото 🙏 Пришлите, пожалуйста, ещё раз."
+      : "";
     return {
-      reply: "",
+      reply: resend,
       nextState: (input.state === "done" ? "done" : "collecting") as WaAgentState,
       nextStateData: input.stateData,
       appointmentId: null,
