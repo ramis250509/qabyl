@@ -288,6 +288,8 @@ export function buildSystemPromptV4(
     `- ВРЕМЯ ЗАКРЫТИЯ (СТРОГО): никогда не предлагай и не подтверждай время, если услуга не успеет закончиться до закрытия салона. Пример: салон работает до 20:00, услуга длится 3 часа — значит запись возможна не позже 17:00, а 18:00/19:00 предлагать нельзя. Не считай это в уме — get_available_slots уже отфильтровал такие времена, предлагай ТОЛЬКО из его ответа. Если клиент сам просит время, которое не помещается до закрытия, мягко объясни и предложи ближайшее подходящее из get_available_slots (в т.ч. на другой день).`,
     `- Клиенту показывай не весь список, а 2–4 удобно РАЗНЕСЁННЫХ варианта (например утро, день, вечер), а не подряд через 15 минут. Пример: «Есть 10:00, 13:00 и 16:00 — что удобнее?»`,
     `- ВЫБОР ${sn.genSg.toUpperCase()} (ОБЯЗАТЕЛЬНО перед подтверждением записи): вызови get_masters и называй ${sn.accPl} ИСКЛЮЧИТЕЛЬНО их реальными именами из ответа get_masters. НИКОГДА не выдумывай имена ${sn.genPl} и НЕ бери имена из примеров этой инструкции — у каждого салона свои ${sn.nomPl}. Если услугу выполняют НЕСКОЛЬКО ${sn.genPl} — до записи ОБЯЗАТЕЛЬНО предложи выбрать из этих реальных имён («К какому ${sn.datSg} записать? Или любой свободный?»). Если у ${sn.genSg} указана specialization/bio_short — порекомендуй по сильной стороне. Когда клиент называет ${sn.accSg} — сопоставь его слова с реальным списком get_masters (учитывай склонения и опечатки); если ни с кем не совпало — покажи реальные имена и переспроси, НЕ придумывай. В create_appointment передавай master_id ТОЛЬКО реального ${sn.genSg} из get_masters. «Всё равно / любой» — выбери сам и назови, кого записал. Если ${sn.nomSg} один — не спрашивай, просто веди к записи.`,
+    `- СВОБОДНОЕ ВРЕМЯ ПРИВЯЗАНО К ${sn.datSg.toUpperCase()} (КРИТИЧНО): get_available_slots и check_time БЕЗ master_id показывают время, свободное У ЛЮБОГО ${sn.genSg} — это НЕ значит, что оно свободно у конкретного. Как только клиент выбрал конкретного ${sn.accSg}, а время уже обсуждалось (или наоборот — сначала время, потом ${sn.accSg}) — ОБЯЗАТЕЛЬНО перепроверь это время именно для выбранного ${sn.genSg}: вызови check_time с его master_id ПЕРЕД тем, как спрашивать имя и показывать сводку. Никогда не подтверждай время, не убедившись через инструмент, что оно свободно ИМЕННО у выбранного ${sn.genSg}.`,
+    `- ЕСЛИ ВЫБРАННЫЙ ${sn.nomSg.toUpperCase()} НА ЭТО ВРЕМЯ ЗАНЯТ, А ДРУГОЙ СВОБОДЕН: check_time вернёт other_masters_free_at_this_time (а create_appointment — masters_free_at_requested_time) — это реальные имена ${sn.genPl}, свободных на ТО ЖЕ время. Сразу предложи их клиенту («К Айгуль на 17:00 занято, но на это же время свободна Айжан — записать к ней? Или подобрать другое время у Айгуль?»). НЕ упирайся молча в «занято» и не заставляй клиента менять время, если тот же час доступен у другого ${sn.genSg}. Запиши только после согласия клиента.`,
     `- ЦЕНЫ: get_services даёт price_min, price_max (числа) и price_label. Для услуги с диапазоном называй вилку (price_label) и говори, что точную цену подтвердит ${sn.nomSg}; если согласовали конкретную сумму — передай её в create_appointment как price_override (сервер сам удержит её в пределах price_min…price_max). Никогда не называй цену вне вилки и не считай стоимость «на глаз» без этих чисел.`,
     `- АКЦИИ И СПЕЦПРЕДЛОЖЕНИЯ (ОБЯЗАТЕЛЬНО): если в фактах о салоне / книге знаний есть акция или подарок, связанные с услугой, о которой спрашивает или на которую записывается клиент, — упомяни её САМ, естественно и заранее (при обсуждении услуги и до подтверждения записи), НЕ дожидаясь вопроса клиента. Пример: клиент интересуется кератином, а есть акция «кератин + стрижка + СПА + ботокс в подарок» — расскажи о ней («кстати, сейчас на кератин действует акция — …»). Никогда не выдумывай акции, которых нет в фактах салона.`,
     `- ИМЯ КЛИЕНТА (ОБЯЗАТЕЛЬНО, без него не записывать): перед записью ВСЕГДА спроси имя клиента естественным вопросом — «Как вас зовут?» или «Подскажите, пожалуйста, ваше имя». НИКОГДА не используй формулировку «Как вас записать?» — она непонятна клиентам. Пропустить вопрос можно ТОЛЬКО если клиент сам назвал имя в этом диалоге. НИКОГДА не придумывай имя, не бери его из WhatsApp-профиля/названия чата и не подставляй заглушки вроде «Клиент» — в client_name должно попасть имя, которое клиент назвал сам.`,
@@ -321,7 +323,7 @@ ${sn.nomSg[0].toUpperCase() + sn.nomSg.slice(1)}: <имя ${sn.genSg}>
     `- Здоровье и противопоказания (беременность, аллергии, заболевания, приём лекарств и т.п.): дай общую информацию из базы знаний, но без диагнозов и без медицинских гарантий; порекомендуй очную оценку специалиста или врача.`,
     `- Не обещай «100%» результат и не преувеличивай сроки.`,
     `- create_appointment — только после явного «да» («да», «записывайте», «ооба», «макул»).`,
-    `- reason=slot_not_free при записи → извинись, что время только что заняли, и предложи времена из nearest.`,
+    `- reason=slot_not_free при записи → время только что заняли у выбранного ${sn.genSg}. Если ответ содержит masters_free_at_requested_time — предложи записаться на ТО ЖЕ время к этим ${sn.genPl} (назови их), иначе предложи времена из nearest у выбранного ${sn.genSg}. Извинись коротко и запиши только после согласия клиента.`,
     `- Не обещай «перезвонить»/«написать позже» — у тебя один ответ за ход.`,
     `- ЭСКАЛАЦИЯ: если клиент жалуется, конфликтует, просит живого человека, ситуация нестандартная или ты НЕ уверен в ответе — вызови escalate_to_human (в reason кратко опиши суть) и вежливо скажи, что передаёшь диалог администратору салона, он скоро ответит. Не придумывай ответ вместо этого.`,
     `- НО обычные вопросы о процедурах, ценах, времени и записи решай сам — уверенно, по базе знаний и инструментам. Эскалация только для действительно сложных/спорных случаев, не по мелочам.`,
@@ -850,6 +852,44 @@ async function loadFreeSlotsForDay(opts: {
   });
 }
 
+// Which OTHER masters are free at an EXACT requested clock time for this service/date. Turns the
+// dead-end "к Айгуль на 17:00 занято" into "…но на 17:00 свободна Айжан" — the salon's whole point
+// of having several masters. Returns [] when nobody else is free at that time. The merged day
+// slots already carry every free master per start-time, so one query answers it.
+async function mastersFreeAtRequestedTime(opts: {
+  db: AdminClient;
+  input: WaAgentInput;
+  serviceId: string;
+  date: string;
+  time: string;
+  branchId?: string | null;
+  excludeMasterId?: string | null;
+}): Promise<Array<{ id: string; name: string }>> {
+  const tz = opts.input.salon.timezone;
+  const hhmm = normHHMM(opts.time);
+  if (!hhmm) return [];
+  const slots = await loadFreeSlotsForDay({
+    db: opts.db,
+    input: opts.input,
+    serviceId: opts.serviceId,
+    date: opts.date,
+    branchId: opts.branchId,
+  });
+  const hit = slots.find((s) => formatTimeInTz(s.start, tz) === hhmm);
+  if (!hit) return [];
+  const masters = await loadMastersForService(
+    opts.db,
+    opts.input.salon.salonId,
+    opts.serviceId,
+    opts.branchId ?? opts.input.selectedBranchId ?? null,
+  );
+  const nameById = new Map(masters.map((m) => [m.id, m.name]));
+  return hit.master_ids
+    .filter((id) => id !== opts.excludeMasterId)
+    .map((id) => ({ id, name: nameById.get(id) ?? "" }))
+    .filter((m) => m.name);
+}
+
 export async function executeV4Tool(
   name: string,
   args: Record<string, any>,
@@ -1007,6 +1047,21 @@ export async function executeV4Tool(
         const outside = hhmm > times[times.length - 1] || hhmm < times[0];
         reason = outside ? "outside_hours" : "time_taken";
       }
+      // When the client asked about a SPECIFIC master and that master is busy at this time, find
+      // out whether ANOTHER master is free at exactly this time — so the assistant can offer them
+      // ("к Айгуль на 17:00 занято, но свободна Айжан") instead of only pushing other times.
+      const otherMastersFree =
+        !hit && args.master_id
+          ? await mastersFreeAtRequestedTime({
+              db,
+              input,
+              serviceId: args.service_id as string,
+              date: args.date as string,
+              time: hhmm,
+              branchId: (args.branch_id as string | null) ?? flags.selectedBranchId ?? null,
+              excludeMasterId: args.master_id as string,
+            })
+          : [];
       return {
         requested: hhmm,
         date: args.date,
@@ -1018,6 +1073,16 @@ export async function executeV4Tool(
             }
           : {}),
         ...(hit ? { slot_start: hit.start, master_ids: hit.master_ids } : {}),
+        ...(otherMastersFree.length
+          ? {
+              other_masters_free_at_this_time: otherMastersFree.map((m) => m.name),
+              note: `Запрошенный мастер на ${hhmm} занят, но на ЭТО ЖЕ время свободен(ы): ${otherMastersFree
+                .map((m) => m.name)
+                .join(
+                  ", ",
+                )}. Предложи клиенту записаться к ним на ${hhmm}, либо выбрать другое время у запрошенного мастера.`,
+            }
+          : {}),
         nearby_free_times: times.slice(0, 8),
       };
     }
@@ -1036,10 +1101,36 @@ export async function executeV4Tool(
         slotStartIso: (args.slot_start as string) ?? null,
       });
       if (!resolved.ok) {
+        // Safety net: the requested time is taken FOR THIS MASTER. Before falling back to "other
+        // times", check whether another master is free at exactly this time and offer them — the
+        // client asked for a specific hour, keeping the hour but switching master is often the best
+        // save. (This is the fix for confirming 17:00 with a master who's actually booked then.)
+        const alsoFree =
+          resolved.reason === "slot_not_free" && args.master_id && args.time
+            ? await mastersFreeAtRequestedTime({
+                db,
+                input,
+                serviceId: args.service_id as string,
+                date: (args.date as string) ?? String(args.slot_start ?? "").slice(0, 10),
+                time: args.time as string,
+                branchId: (args.branch_id as string | null) ?? flags.selectedBranchId ?? null,
+                excludeMasterId: args.master_id as string,
+              })
+            : [];
         return {
           success: false,
           reason: resolved.reason ?? "slot_not_free",
           nearest: resolved.nearest,
+          ...(alsoFree.length
+            ? {
+                masters_free_at_requested_time: alsoFree.map((m) => m.name),
+                note: `На запрошенное время у выбранного мастера занято, но на ЭТО ЖЕ время свободен(ы): ${alsoFree
+                  .map((m) => m.name)
+                  .join(
+                    ", ",
+                  )}. Предложи клиенту записаться к ним на это же время, либо выбрать другое время из nearest у выбранного мастера. НЕ записывай без согласия клиента.`,
+              }
+            : {}),
         };
       }
       const rpcArgs: any = {

@@ -17,9 +17,8 @@ mock.module("@/integrations/supabase/client.server", () => ({ supabaseAdmin: dbP
 
 process.env.GEMINI_API_KEY = "test-key";
 
-const { runWaAgentV4, humanizeReply, buildSystemPromptV4 } = await import(
-  "@/lib/wa-agent-v4.server"
-);
+const { runWaAgentV4, humanizeReply, buildSystemPromptV4 } =
+  await import("@/lib/wa-agent-v4.server");
 
 const TZ = "Asia/Bishkek";
 const SALON = { salonId: "salon1", salonName: "Тест салон", timezone: TZ };
@@ -300,6 +299,56 @@ test("занятый слот: create_appointment на несуществующ�
   expect(fr.functionResponse.response.reason).toBe("slot_not_free");
 });
 
+test("занятый мастер, свободный другой: create_appointment возвращает masters_free_at_requested_time", async () => {
+  // Repro of the reported bug: 17:00 was offered as free (merged over all masters), the client
+  // picked Айгуль, but Айгуль is actually booked at 17:00 while Айжан is free. The failure must
+  // name Айжан so the assistant can offer the same time with the other master.
+  const masters = [
+    { id: "m1", name: "Айгуль", branch_id: null, sort_order: 0, service_ids: ["svc1"] },
+    { id: "m2", name: "Айжан", branch_id: null, sort_order: 1, service_ids: ["svc1"] },
+  ];
+  const db = makeDb({ masters });
+  // 17:00 Bishkek (UTC+6) == 11:00 UTC. Айгуль (m1) only has 10:00; Айжан (m2) has 17:00.
+  const SEVENTEEN = "2099-01-01T11:00:00.000Z";
+  const TEN = "2099-01-01T04:00:00.000Z";
+  db.rpc = (async (name: string, args: any) => {
+    if (name === "get_available_slots") {
+      const starts = args._master_id === "m2" ? [SEVENTEEN] : [TEN];
+      return {
+        data: starts.map((s) => ({
+          slot_start: s,
+          slot_end: new Date(new Date(s).getTime() + 3600_000).toISOString(),
+        })),
+        error: null,
+      };
+    }
+    return { data: null, error: null };
+  }) as any;
+  (globalThis as any).__WA_DB__ = db;
+  geminiQueue = [
+    [
+      fc("create_appointment", {
+        service_id: "svc1",
+        master_id: "m1", // Айгуль — busy at 17:00
+        date: "2099-01-01",
+        time: "17:00",
+        client_name: "Анна",
+      }),
+    ],
+    [{ text: "На 17:00 к Айгуль занято, но свободна Айжан — записать к ней?" }],
+  ];
+  const res = await runWaAgentV4(makeInput("Да"));
+  expect(res.appointmentId).toBeNull();
+  expect(db.appointments).toHaveLength(0);
+  const lastReq = geminiRequests[geminiRequests.length - 1];
+  const fr = lastReq.contents
+    .flatMap((c: any) => c.parts)
+    .find((p: any) => p.functionResponse?.name === "create_appointment");
+  expect(fr.functionResponse.response.success).toBe(false);
+  expect(fr.functionResponse.response.reason).toBe("slot_not_free");
+  expect(fr.functionResponse.response.masters_free_at_requested_time).toContain("Айжан");
+});
+
 test("эскалация: escalate_to_human → needs_human + notifyAdminText с номером клиента", async () => {
   (globalThis as any).__WA_DB__ = makeDb();
   geminiQueue = [
@@ -493,9 +542,7 @@ test("залипший ru перебивается уверенным кыргы
   // Теперь уверенный кыргызский сигнал в текущем ходе перебивает залипший язык.
   (globalThis as any).__WA_DB__ = makeDb();
   geminiQueue = []; // fetch mock → ошибка Gemini
-  const res = await runWaAgentV4(
-    makeInput("Саат бешке жокпу", { stateData: { language: "ru" } }),
-  );
+  const res = await runWaAgentV4(makeInput("Саат бешке жокпу", { stateData: { language: "ru" } }));
   expect(res.reply).toContain("Кечиресиз"); // KY, не русское «Извините»
   expect(res.nextStateData.language).toBe("ky");
 });
@@ -616,7 +663,9 @@ test("стойкое зависание: если модель зависла д
 // ============================================================
 
 test("medical: промпт содержит персону клиники и жёсткие мед-границы", () => {
-  const prompt = buildSystemPromptV4(makeInput("болит голова", { config: { industry: "medical" } }));
+  const prompt = buildSystemPromptV4(
+    makeInput("болит голова", { config: { industry: "medical" } }),
+  );
   expect(prompt).toContain("медицинской клиники"); // persona
   expect(prompt).toContain("НЕ ставишь диагноз"); // safetyBoundaries
 });
@@ -644,12 +693,21 @@ test("medical: НЕ подмешивает бьюти-оценку по фото
 
 test("разбор фото есть у КАЖДОЙ отрасли (не только beauty) — для консультации, не для цены", () => {
   // Every vertical must tell the agent how to use a client's photo to consult and book.
-  for (const industry of ["barbershop", "massage", "cosmetology", "epilation", "dental", "medical"] as const) {
+  for (const industry of [
+    "barbershop",
+    "massage",
+    "cosmetology",
+    "epilation",
+    "dental",
+    "medical",
+  ] as const) {
     const prompt = buildSystemPromptV4(makeInput("фото", { config: { industry } }));
     expect(prompt).toContain("КАК РАЗБИРАТЬ ФОТО");
   }
   // Medical/dental photo handling must forbid interpreting results / diagnosing.
-  const med = buildSystemPromptV4(makeInput("вот мои анализы", { config: { industry: "medical" } }));
+  const med = buildSystemPromptV4(
+    makeInput("вот мои анализы", { config: { industry: "medical" } }),
+  );
   expect(med).toContain("НЕ расшифровывай");
   const dent = buildSystemPromptV4(makeInput("вот мои зубы", { config: { industry: "dental" } }));
   expect(dent).toContain("НЕ ставь диагноз");
