@@ -302,7 +302,8 @@ export async function greenApiDownloadFile(
     try {
       json = JSON.parse(txt);
     } catch {}
-    if (!r.ok) return { ok: false, error: `green-api downloadFile ${r.status}: ${txt.slice(0, 200)}` };
+    if (!r.ok)
+      return { ok: false, error: `green-api downloadFile ${r.status}: ${txt.slice(0, 200)}` };
     return { ok: true, downloadUrl: json?.downloadUrl };
   } catch (e: any) {
     return { ok: false, error: e?.message ?? String(e) };
@@ -2836,7 +2837,6 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
   }
 }
 
-
 // ============================================================
 // Gemini tool-calling helper (used by V4 engine)
 // ============================================================
@@ -2898,14 +2898,18 @@ export async function callGeminiTools(opts: {
       if (r.status === 429 || r.status >= 500) {
         lastErr = `gemini ${r.status}: ${txt.slice(0, 300)}`;
         if (attempt < lastAttempt) {
-          await new Promise((res) => setTimeout(res, waitFor(r.headers.get("retry-after"), txt, attempt)));
+          await new Promise((res) =>
+            setTimeout(res, waitFor(r.headers.get("retry-after"), txt, attempt)),
+          );
           continue;
         }
         return { ok: false, error: lastErr };
       }
       if (!r.ok) return { ok: false, error: `gemini ${r.status}: ${txt.slice(0, 300)}` };
       let json: any;
-      try { json = JSON.parse(txt); } catch {
+      try {
+        json = JSON.parse(txt);
+      } catch {
         return { ok: false, error: `gemini bad json: ${txt.slice(0, 200)}` };
       }
       const parts: any[] = (json?.candidates?.[0]?.content?.parts ?? []).filter(
@@ -3073,6 +3077,7 @@ type V3BookingState = {
   price_max?: number;
   price_override?: number;
   price_skipped?: boolean;
+  duration_min?: number; // service duration in minutes, shown in the confirmation summary
   photo_attempts?: number; // low-confidence photo pricing retries, before escalating to admin
   date?: string;
   slot_start?: string;
@@ -3365,8 +3370,14 @@ function buildPostBookingMsg(language: "ru" | "ky" | "en"): WaInteractiveMessage
         id: "postbook_reschedule",
         text: language === "ky" ? "🔄 Убакытты которуу" : "🔄 Перенести запись",
       },
-      { id: "postbook_cancel", text: language === "ky" ? "❌ Жокко чыгаруу" : "❌ Отменить запись" },
-      { id: "postbook_change", text: language === "ky" ? "✏️ Кызматты которуу" : "✏️ Изменить запись" },
+      {
+        id: "postbook_cancel",
+        text: language === "ky" ? "❌ Жокко чыгаруу" : "❌ Отменить запись",
+      },
+      {
+        id: "postbook_change",
+        text: language === "ky" ? "✏️ Кызматты которуу" : "✏️ Изменить запись",
+      },
     ],
   };
 }
@@ -3686,6 +3697,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       price_type: svcRow.price_type,
       price_min: svcRow.price,
       price_max: svcRow.price_max,
+      duration_min: svcRow.duration_min ?? undefined,
     };
     if (svcRow.price_type === "range" && !newV3.price_override && !newV3.price_skipped) {
       const ask =
@@ -3699,7 +3711,12 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       language === "ky"
         ? `*${svcRow.name}* — кайсы күнгө жазыласыз?`
         : `*${svcRow.name}* — выберите дату:`;
-    return finish(q, "awaiting_date_choice", newV3, buildDateListMsg(dateMap, language, { back: true }));
+    return finish(
+      q,
+      "awaiting_date_choice",
+      newV3,
+      buildDateListMsg(dateMap, language, { back: true }),
+    );
   }
 
   // Re-show the service menu after an unrecognized reply, honoring the category-first gating
@@ -3716,12 +3733,36 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     const timeLabel = nextV3.slot_start ? formatTimeInTz(nextV3.slot_start, tz) : "—";
     const masterLabel =
       nextV3.master_name ?? (language === "ky" ? "кез келген мастер" : "любой мастер");
-    const priceStr =
-      nextV3.price_override != null
-        ? language === "ky"
-          ? `\n💰 Болжолдуу баа: ${nextV3.price_override} сом`
-          : `\n💰 Ориентировочная стоимость: ${nextV3.price_override} сом`
-        : "";
+    // Price line — ALWAYS shown when the salon knows a price for this service (owner requirement).
+    // Priority: a photo-agreed sum (price_override) → a range → a fixed price. Only truly
+    // unknown prices (no data at all) omit the line.
+    const priceStr = (() => {
+      const rangeLabel =
+        language === "ky"
+          ? "Болжолдуу баа"
+          : language === "en"
+            ? "Estimated price"
+            : "Ориентировочная стоимость";
+      const fixedLabel = language === "ky" ? "Баасы" : language === "en" ? "Price" : "Стоимость";
+      if (nextV3.price_override != null) {
+        return `\n💰 ${rangeLabel}: ${nextV3.price_override} сом`;
+      }
+      if (nextV3.price_type === "range" && nextV3.price_min != null && nextV3.price_max != null) {
+        return `\n💰 ${rangeLabel}: ${nextV3.price_min}–${nextV3.price_max} сом`;
+      }
+      if (nextV3.price_min != null) {
+        return `\n💰 ${fixedLabel}: ${nextV3.price_min} сом`;
+      }
+      return "";
+    })();
+    const durationStrRaw = formatDurationV3(nextV3.duration_min, language);
+    const durationStr = durationStrRaw
+      ? language === "ky"
+        ? `\n⏳ Узактыгы: ${durationStrRaw}`
+        : language === "en"
+          ? `\n⏳ Duration: ${durationStrRaw}`
+          : `\n⏳ Продолжительность: ${durationStrRaw}`
+      : "";
     // Prefer the specific branch's address (multi-branch salon) over the salon-wide one.
     const branchAddress = nextV3.branch_id
       ? input.branches.find((b) => b.id === nextV3.branch_id)?.address
@@ -3730,8 +3771,8 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     const addressLine = address ? `\n📍 ${address}` : "";
     const details =
       language === "ky"
-        ? `✅ Жазылуу маалыматы:\n\n💇 ${nextV3.service_name}\n📅 ${dateLabel}\n⏰ ${timeLabel}\n👤 Мастер: ${masterLabel}\n🙍 Ат: ${nextV3.client_name}${priceStr}${addressLine}\n\nРастайсызбы?`
-        : `✅ Данные записи:\n\n💇 ${nextV3.service_name}\n📅 ${dateLabel}\n⏰ ${timeLabel}\n👤 Мастер: ${masterLabel}\n🙍 Имя: ${nextV3.client_name}${priceStr}${addressLine}\n\nПодтверждаете?`;
+        ? `✅ Жазылуу маалыматы:\n\n💇 ${nextV3.service_name}\n📅 ${dateLabel}\n⏰ ${timeLabel}${durationStr}\n👤 Мастер: ${masterLabel}\n🙍 Ат: ${nextV3.client_name}${priceStr}${addressLine}\n\nРастайсызбы?`
+        : `✅ Данные записи:\n\n💇 ${nextV3.service_name}\n📅 ${dateLabel}\n⏰ ${timeLabel}${durationStr}\n👤 Мастер: ${masterLabel}\n🙍 Имя: ${nextV3.client_name}${priceStr}${addressLine}\n\nПодтверждаете?`;
     return finish(
       details,
       "awaiting_final_confirm",
@@ -4082,7 +4123,11 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       debug.actions.push("back:service");
       const services = await loadAiVisibleServicesForSalon(db, input.salon.salonId);
       const msg = language === "ky" ? "Кызматты кайра тандаңыз:" : "Выберите услугу заново:";
-      return reaskServiceMenu(msg, { branch_id: v3.branch_id, client_name: v3.client_name }, services);
+      return reaskServiceMenu(
+        msg,
+        { branch_id: v3.branch_id, client_name: v3.client_name },
+        services,
+      );
     }
     if (state === "awaiting_slot_choice") {
       debug.actions.push("back:date");
@@ -4106,7 +4151,13 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       return finish(
         msg,
         "awaiting_slot_choice",
-        { ...v3, slot_start: undefined, slot_end: undefined, master_id: undefined, master_name: undefined },
+        {
+          ...v3,
+          slot_start: undefined,
+          slot_end: undefined,
+          master_id: undefined,
+          master_name: undefined,
+        },
         buildSlotListMsg(mockSlots, tz, language, undefined, { back: true }),
       );
     }
@@ -4135,7 +4186,8 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       // If translation still fails, show the admin's actual greeting (in Russian) rather than a
       // bare "Чем помочь?" — the client at least sees the salon's promo/instructions. Only fall
       // back to the tiny native line when the salon never set a custom greeting.
-      greet += translated || (input.config.greeting?.trim() ?? "") || NATIVE_FALLBACK_GREETING[language];
+      greet +=
+        translated || (input.config.greeting?.trim() ?? "") || NATIVE_FALLBACK_GREETING[language];
     }
 
     if (!singleBranch) {
@@ -4485,7 +4537,12 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         language === "ky"
           ? "Бул күнгө мастер жок. Башка күн тандаңыз:"
           : "На эту дату мастеров нет. Выберите другую дату:";
-      return finish(msg, "awaiting_date_choice", v3, buildDateListMsg(dateMap, language, { back: true }));
+      return finish(
+        msg,
+        "awaiting_date_choice",
+        v3,
+        buildDateListMsg(dateMap, language, { back: true }),
+      );
     }
 
     const { isoLocalDate } = nowInTz(tz);
@@ -4505,7 +4562,12 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         language === "ky"
           ? "Бул күнгө бош убакыт жок. Башка күн тандаңыз:"
           : "На эту дату нет свободных слотов. Выберите другую дату:";
-      return finish(msg, "awaiting_date_choice", v3, buildDateListMsg(dateMap, language, { back: true }));
+      return finish(
+        msg,
+        "awaiting_date_choice",
+        v3,
+        buildDateListMsg(dateMap, language, { back: true }),
+      );
     }
 
     const newV3: V3BookingState = {

@@ -290,8 +290,19 @@ export function buildSystemPromptV4(
     `- ВЫБОР ${sn.genSg.toUpperCase()} (ОБЯЗАТЕЛЬНО перед подтверждением записи): вызови get_masters и называй ${sn.accPl} ИСКЛЮЧИТЕЛЬНО их реальными именами из ответа get_masters. НИКОГДА не выдумывай имена ${sn.genPl} и НЕ бери имена из примеров этой инструкции — у каждого салона свои ${sn.nomPl}. Если услугу выполняют НЕСКОЛЬКО ${sn.genPl} — до записи ОБЯЗАТЕЛЬНО предложи выбрать из этих реальных имён («К какому ${sn.datSg} записать? Или любой свободный?»). Если у ${sn.genSg} указана specialization/bio_short — порекомендуй по сильной стороне. Когда клиент называет ${sn.accSg} — сопоставь его слова с реальным списком get_masters (учитывай склонения и опечатки); если ни с кем не совпало — покажи реальные имена и переспроси, НЕ придумывай. В create_appointment передавай master_id ТОЛЬКО реального ${sn.genSg} из get_masters. «Всё равно / любой» — выбери сам и назови, кого записал. Если ${sn.nomSg} один — не спрашивай, просто веди к записи.`,
     `- ЦЕНЫ: get_services даёт price_min, price_max (числа) и price_label. Для услуги с диапазоном называй вилку (price_label) и говори, что точную цену подтвердит ${sn.nomSg}; если согласовали конкретную сумму — передай её в create_appointment как price_override (сервер сам удержит её в пределах price_min…price_max). Никогда не называй цену вне вилки и не считай стоимость «на глаз» без этих чисел.`,
     `- АКЦИИ И СПЕЦПРЕДЛОЖЕНИЯ (ОБЯЗАТЕЛЬНО): если в фактах о салоне / книге знаний есть акция или подарок, связанные с услугой, о которой спрашивает или на которую записывается клиент, — упомяни её САМ, естественно и заранее (при обсуждении услуги и до подтверждения записи), НЕ дожидаясь вопроса клиента. Пример: клиент интересуется кератином, а есть акция «кератин + стрижка + СПА + ботокс в подарок» — расскажи о ней («кстати, сейчас на кератин действует акция — …»). Никогда не выдумывай акции, которых нет в фактах салона.`,
-    `- ИМЯ КЛИЕНТА (ОБЯЗАТЕЛЬНО, без него не записывать): перед записью ВСЕГДА спроси, на какое имя записывать («Как вас записать?»). Пропустить вопрос можно ТОЛЬКО если клиент сам назвал имя в этом диалоге. НИКОГДА не придумывай имя, не бери его из WhatsApp-профиля/названия чата и не подставляй заглушки вроде «Клиент» — в client_name должно попасть имя, которое клиент назвал сам.`,
-    `- Затем повтори детали одной фразой (услуга, дата, время, ${sn.nomSg}, цена) и дождись явного «да». Только тогда вызови create_appointment.`,
+    `- ИМЯ КЛИЕНТА (ОБЯЗАТЕЛЬНО, без него не записывать): перед записью ВСЕГДА спроси имя клиента естественным вопросом — «Как вас зовут?» или «Подскажите, пожалуйста, ваше имя». НИКОГДА не используй формулировку «Как вас записать?» — она непонятна клиентам. Пропустить вопрос можно ТОЛЬКО если клиент сам назвал имя в этом диалоге. НИКОГДА не придумывай имя, не бери его из WhatsApp-профиля/названия чата и не подставляй заглушки вроде «Клиент» — в client_name должно попасть имя, которое клиент назвал сам.`,
+    `- ОБЯЗАТЕЛЬНОЕ ПОДТВЕРЖДЕНИЕ ПЕРЕД ЗАПИСЬЮ (КРИТИЧНО, железное правило): НИКОГДА не вызывай create_appointment, пока не показал клиенту полную сводку записи И не получил на неё явное «да». Сначала отправь клиенту сводку-подтверждение ОТДЕЛЬНЫМ сообщением в таком виде (каждый пункт с новой строки, БЕЗ маркеров «-»/«•» и без нумерации — это единственное место, где допускается такой построчный формат вместо сплошного текста):
+Пожалуйста, подтвердите запись:
+Услуга: <название>
+Стоимость: <цена или вилка из get_services — сом>
+${sn.nomSg[0].toUpperCase() + sn.nomSg.slice(1)}: <имя ${sn.genSg}>
+Дата: <дата>
+Время: <время>
+Продолжительность: <если известна из get_services>
+Имя: <имя клиента, на которое записываем>
+Всё верно? Если да — подтвердите, пожалуйста 🙂`,
+    `- ЦЕНА В СВОДКЕ ОБЯЗАТЕЛЬНА: если стоимость услуги известна (get_services вернул цену или вилку, либо вы согласовали сумму по фото) — она ДОЛЖНА быть в сводке подтверждения. Не подтверждай запись без строки «Стоимость». Для услуги-вилки покажи вилку (или согласованную по фото сумму) и добавь, что точную цену ${sn.nomSg} подтвердит на месте. Строку «Продолжительность» указывай, если длительность известна из get_services (для вилки длительности — выбранную по фото или диапазон).`,
+    `- create_appointment вызывай ТОЛЬКО после того, как клиент явно подтвердил ЭТУ сводку («да», «верно», «записывайте», «ооба», «макул»). Если клиент в ответ меняет деталь (другое время/${sn.accSg}/услугу) — обнови сводку и снова попроси подтверждение, запись не создавай.`,
     `- ПОДТВЕРЖДАЙ ЗАПИСЬ ТОЛЬКО ПО ФАКТУ (КРИТИЧНО, железное правило): говорить «записал / жаздым / готово, ждём вас» можно ИСКЛЮЧИТЕЛЬНО если create_appointment вернул success:true и appointment_id. Если инструмент вернул success:false (reason=slot_not_free, error, master cannot perform и т.п.) ИЛИ ты его вообще не вызвал — запись НЕ создана, и ты НЕ имеешь права говорить, что клиент записан. Вместо этого честно скажи, что записать пока не удалось, и предложи выход (другое время из nearest, другого ${sn.genSg}, или передай администратору). НИКОГДА не выдумывай факт записи — это хуже, чем отказать: клиент придёт, а его нет в базе.`,
     `- ${sn.nomSg.toUpperCase()} ОБЯЗАТЕЛЕН для записи: create_appointment без реального master_id невозможен. Если клиент не выбрал ${sn.accSg} или сказал «всё равно / потом выберу / скажу когда приду» — НЕ обещай «выберете на месте» без записи: сам выбери конкретного свободного ${sn.accSg}, передай его master_id в create_appointment и назови клиенту, к кому записал. Нельзя «записать без ${sn.genSg}» — такой записи не существует.`,
     `- ВРЕМЯ ЗАПИСИ (СТРОГО): в create_appointment/reschedule_appointment передавай время как date + time (HH:MM, напр. 11:00) — НИКОГДА не вычисляй и не пиши ISO/таймстемпы сам, сервер сам подберёт точный слот. Если инструмент вернул reason=slot_not_free — это время уже заняли, предложи клиенту времена из поля nearest и переспроси; НИКОГДА не подставляй другое время молча (клиент просил 11:00 — не записывай на другое без его согласия).`,
@@ -464,7 +475,8 @@ const V4_TOOL_DECLARATIONS = [
         },
         summary: {
           type: "string",
-          description: "Что ты как мастер видишь на фото (длина, густота, состояние, желаемый результат)",
+          description:
+            "Что ты как мастер видишь на фото (длина, густота, состояние, желаемый результат)",
         },
         service_hint: { type: "string", description: "К какой услуге относится фото" },
         issues: {
@@ -610,7 +622,12 @@ export async function classifyDayForService(opts: {
     // EMPTY ARRAY means closed. null/absent = no constraint, which is NOT evidence of closure.
     if (branchId) {
       const wh = (branchRes as any)?.data?.working_hours;
-      if (wh && typeof wh === "object" && Array.isArray(wh[String(dow)]) && wh[String(dow)].length === 0) {
+      if (
+        wh &&
+        typeof wh === "object" &&
+        Array.isArray(wh[String(dow)]) &&
+        wh[String(dow)].length === 0
+      ) {
         return "closed";
       }
     }
@@ -655,7 +672,11 @@ export async function loadSalonClosedDates(
     // so we never mislabel a single master's day-off as a whole-salon/whole-branch closure, and a
     // branch-pinned assistant doesn't wrongly stay silent about ITS branch's own closures just
     // because a different branch's masters are still working.
-    let mastersQ = db.from("masters").select("id, branch_id").eq("salon_id", salonId).eq("is_active", true);
+    let mastersQ = db
+      .from("masters")
+      .select("id, branch_id")
+      .eq("salon_id", salonId)
+      .eq("is_active", true);
     const [offsRes, mastersRes] = await Promise.all([
       db
         .from("master_day_overrides")
@@ -667,7 +688,9 @@ export async function loadSalonClosedDates(
       mastersQ,
     ]);
     const mastersInScope = branchId
-      ? (((mastersRes as any).data as any[]) ?? []).filter((m) => m.branch_id == null || m.branch_id === branchId)
+      ? (((mastersRes as any).data as any[]) ?? []).filter(
+          (m) => m.branch_id == null || m.branch_id === branchId,
+        )
       : (((mastersRes as any).data as any[]) ?? []);
     const activeIds = new Set(mastersInScope.map((m) => m.id));
     if (activeIds.size === 0) return [];
@@ -837,8 +860,7 @@ export async function executeV4Tool(
   const tz = input.salon.timezone;
   const cutoffHours = input.config.manage_cutoff_hours ?? 0;
   const withinCutoff = (startsAt: string) =>
-    cutoffHours > 0 &&
-    new Date(startsAt).getTime() - Date.now() < cutoffHours * 60 * 60 * 1000;
+    cutoffHours > 0 && new Date(startsAt).getTime() - Date.now() < cutoffHours * 60 * 60 * 1000;
 
   switch (name) {
     case "get_services": {
@@ -917,8 +939,7 @@ export async function executeV4Tool(
         reason = emptyDayReason(await classifyDayForService(commonArgs));
       }
       const times = slots.map((s) => formatTimeInTz(s.start, tz));
-      const partRu =
-        part === "morning" ? "утром" : part === "afternoon" ? "днём" : "вечером";
+      const partRu = part === "morning" ? "утром" : part === "afternoon" ? "днём" : "вечером";
       return {
         date: args.date,
         reason, // ok | part_unavailable | closed_that_day | fully_booked | hours_not_configured
@@ -1015,7 +1036,11 @@ export async function executeV4Tool(
         slotStartIso: (args.slot_start as string) ?? null,
       });
       if (!resolved.ok) {
-        return { success: false, reason: resolved.reason ?? "slot_not_free", nearest: resolved.nearest };
+        return {
+          success: false,
+          reason: resolved.reason ?? "slot_not_free",
+          nearest: resolved.nearest,
+        };
       }
       const rpcArgs: any = {
         _salon_id: input.salon.salonId,
@@ -1170,20 +1195,29 @@ export async function executeV4Tool(
         slotStartIso: (args.new_slot_start as string) ?? null,
       });
       if (!resolved.ok) {
-        return { success: false, reason: resolved.reason ?? "slot_not_free", nearest: resolved.nearest };
+        return {
+          success: false,
+          reason: resolved.reason ?? "slot_not_free",
+          nearest: resolved.nearest,
+        };
       }
-      const movingMaster =
-        args.new_master_id && args.new_master_id !== (appt as any).master_id;
+      const movingMaster = args.new_master_id && args.new_master_id !== (appt as any).master_id;
       const { error } = movingMaster
-        ? await db.rpc("reschedule_appointment_v2" as any, {
-            _appointment_id: args.appointment_id,
-            _new_starts_at: resolved.slotStart,
-            _new_master_id: args.new_master_id,
-          } as any)
-        : await db.rpc("reschedule_appointment" as any, {
-            _appointment_id: args.appointment_id,
-            _new_starts_at: resolved.slotStart,
-          } as any);
+        ? await db.rpc(
+            "reschedule_appointment_v2" as any,
+            {
+              _appointment_id: args.appointment_id,
+              _new_starts_at: resolved.slotStart,
+              _new_master_id: args.new_master_id,
+            } as any,
+          )
+        : await db.rpc(
+            "reschedule_appointment" as any,
+            {
+              _appointment_id: args.appointment_id,
+              _new_starts_at: resolved.slotStart,
+            } as any,
+          );
       if (error) return { success: false, error: error.message };
       return { success: true };
     }
@@ -1205,7 +1239,10 @@ export async function executeV4Tool(
         ...(args.price_band ? { price_band: String(args.price_band).slice(0, 60) } : {}),
       };
       flags.photoNotes.push(note);
-      return { success: true, note: "Разбор фото сохранён — вернётся тебе в контексте на след. ходах." };
+      return {
+        success: true,
+        note: "Разбор фото сохранён — вернётся тебе в контексте на след. ходах.",
+      };
     }
 
     default:
@@ -1362,7 +1399,7 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     };
   }
 
-  const closedDates = await loadSalonClosedDates(
+  const closedDatesP = loadSalonClosedDates(
     db,
     input.salon.salonId,
     nowInTz(input.salon.timezone).isoLocalDate,
@@ -1380,7 +1417,7 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   // not, and it's the one line the model treats as authoritative for names. Filtering it the same
   // way closes the gap for both the existing per-conversation branch pick AND a super-admin-pinned
   // single branch — a master with branch_id=NULL (works at every branch) is still included.
-  const mastersRoster = await (async (): Promise<string> => {
+  const mastersRosterP = (async (): Promise<string> => {
     let mq = db
       .from("masters")
       .select("id, name, branch_id, master_services(service_id)")
@@ -1389,7 +1426,11 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
       .order("sort_order");
     const [{ data: mRowsRaw }, { data: sRows }] = await Promise.all([
       mq,
-      db.from("services").select("id, name").eq("salon_id", input.salon.salonId).eq("is_active", true),
+      db
+        .from("services")
+        .select("id, name")
+        .eq("salon_id", input.salon.salonId)
+        .eq("is_active", true),
     ]);
     const scopeBranchId = flags.selectedBranchId;
     const mRows = scopeBranchId
@@ -1406,6 +1447,9 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
       })
       .join("; ");
   })();
+  // Both prompt-context queries are independent — run them concurrently to cut a round-trip
+  // off the latency before the first Gemini call.
+  const [closedDates, mastersRoster] = await Promise.all([closedDatesP, mastersRosterP]);
   const systemPrompt = buildSystemPromptV4(input, closedDates, mastersRoster, language);
   const contents: GeminiV2Content[] = [...v4History, { role: "user", parts: clientParts }];
 
@@ -1542,7 +1586,9 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     ...({ v4_history: historyToSave } as any),
     // Keep the most recent photo analyses so a follow-up ("а сколько за это?") a turn later
     // still has the master's read of the image even though the pixels are gone.
-    ...(flags.photoNotes.length ? ({ photo_notes: flags.photoNotes.slice(-PHOTO_NOTES_CAP) } as any) : {}),
+    ...(flags.photoNotes.length
+      ? ({ photo_notes: flags.photoNotes.slice(-PHOTO_NOTES_CAP) } as any)
+      : {}),
   };
 
   // On escalation, hand the webhook a plain-text alert for the salon admin's own WhatsApp

@@ -28,9 +28,16 @@ const LOCK_TTL_SECONDS = 60;
 const MAX_LOOP_ITERATIONS = 3;
 const LOCK_WAIT_TIMEOUT_MS = 8000;
 const LOCK_POLL_INTERVAL_MS = 400;
+// Burst coalescing (fixes the "half-typed message answered, then corrected a second later" double
+// reply): if the newest unprocessed inbound arrived within COALESCE_WINDOW_MS, the client is very
+// likely still typing the rest of their thought, so we wait COALESCE_WAIT_MS once and reload the
+// pending list — answering the COMPLETE burst with a single message instead of two.
+const COALESCE_WINDOW_MS = 1500;
+const COALESCE_WAIT_MS = 900;
 
 export function resolveAssistantRuntimeConfig(salon: any, assistant: any, secrets: any) {
-  const assistantEnabled = (salon?.ai_assistant_enabled ?? true) !== false && (assistant?.enabled ?? true);
+  const assistantEnabled =
+    (salon?.ai_assistant_enabled ?? true) !== false && (assistant?.enabled ?? true);
   const hasGreenApiCreds = Boolean(secrets?.greenapi_instance && secrets?.greenapi_token);
   return {
     assistantEnabled,
@@ -59,8 +66,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
       POST: async ({ request, params }) => {
         const salonId = params.salonId;
         const url = new URL(request.url);
-        const token =
-          url.searchParams.get("token") || request.headers.get("x-wa-token") || "";
+        const token = url.searchParams.get("token") || request.headers.get("x-wa-token") || "";
         if (!salonId || !token) {
           return new Response("Forbidden", { status: 403 });
         }
@@ -89,7 +95,9 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             .maybeSingle(),
           supabaseAdmin
             .from("salon_ai_assistant")
-            .select("enabled, greeting, tone_instructions, pricing_rules, languages, manage_cutoff_hours, engine, knowledge_base, client_addressing, industry, knowledge_answers, sales_mode, assistant_branch_id")
+            .select(
+              "enabled, greeting, tone_instructions, pricing_rules, languages, manage_cutoff_hours, engine, knowledge_base, client_addressing, industry, knowledge_answers, sales_mode, assistant_branch_id",
+            )
             .eq("salon_id", salonId)
             .maybeSingle(),
         ]);
@@ -104,7 +112,10 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         const waEngine: "v3" | "v4" = (assistant as any)?.engine === "v4" ? "v4" : "v3";
 
         const webhookType = payload?.typeWebhook;
-        if (webhookType !== "incomingMessageReceived" && webhookType !== "outgoingMessageReceived") {
+        if (
+          webhookType !== "incomingMessageReceived" &&
+          webhookType !== "outgoingMessageReceived"
+        ) {
           return ack();
         }
 
@@ -205,10 +216,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         let audioMime: string | null = null;
         const mt = md?.typeMessage;
         if (mt === "textMessage" || mt === "extendedTextMessage") {
-          textBody =
-            md?.textMessageData?.textMessage ??
-            md?.extendedTextMessageData?.text ??
-            null;
+          textBody = md?.textMessageData?.textMessage ?? md?.extendedTextMessageData?.text ?? null;
         } else if (mt === "imageMessage") {
           imageDownloadUrl = md?.fileMessageData?.downloadUrl ?? null;
           imageMime = md?.fileMessageData?.mimeType ?? "image/jpeg";
@@ -244,7 +252,9 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         // belongs to the same short booking session or starts a new clean one.
         const { data: existingConv } = await supabaseAdmin
           .from("wa_conversations")
-          .select("id, status, session_started_at, last_appointment_at, last_message_at, state, ai_paused, ai_paused_at")
+          .select(
+            "id, status, session_started_at, last_appointment_at, last_message_at, state, ai_paused, ai_paused_at",
+          )
           .eq("salon_id", salonId)
           .eq("client_phone", phone)
           .maybeSingle();
@@ -420,8 +430,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             const pausedNow =
               Boolean(existingConv?.ai_paused) &&
               existingConv?.ai_paused_at &&
-              Date.now() - new Date(existingConv.ai_paused_at as string).getTime() <
-                60 * 60 * 1000;
+              Date.now() - new Date(existingConv.ai_paused_at as string).getTime() < 60 * 60 * 1000;
             if (!pausedNow && dlCreds.instance && dlCreds.token) {
               await greenApiSendMessage(
                 dlCreds,
@@ -505,8 +514,13 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         // inbound message above is already stored (processed_at IS NULL) so whenever the
         // AI resumes it picks the message up normally (subject to the 12h staleness filter).
         const AI_PAUSE_MS = 60 * 60 * 1000;
-        const pausedAtMs = existingConv?.ai_paused_at ? new Date(existingConv.ai_paused_at as string).getTime() : 0;
-        const stillPaused = Boolean(existingConv?.ai_paused) && pausedAtMs > 0 && Date.now() - pausedAtMs < AI_PAUSE_MS;
+        const pausedAtMs = existingConv?.ai_paused_at
+          ? new Date(existingConv.ai_paused_at as string).getTime()
+          : 0;
+        const stillPaused =
+          Boolean(existingConv?.ai_paused) &&
+          pausedAtMs > 0 &&
+          Date.now() - pausedAtMs < AI_PAUSE_MS;
         if (stillPaused) {
           return ack();
         }
@@ -548,13 +562,23 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
           // the `conv` object above is stale and contains the old state/state_data.
           // Using that stale snapshot caused the assistant to forget context on
           // every closely-spaced WhatsApp message.
-          const { data: lockedConv } = await supabaseAdmin
-            .from("wa_conversations")
-            .select(
-              "id, client_name, status, selected_branch_id, session_started_at, last_appointment_at, last_message_at, state, state_data",
-            )
-            .eq("id", convId)
-            .maybeSingle();
+          // Reload the conversation and load branches in parallel — the two queries are
+          // independent, so one round-trip instead of two shaves latency off every turn.
+          const [{ data: lockedConv }, { data: branchRows }] = await Promise.all([
+            supabaseAdmin
+              .from("wa_conversations")
+              .select(
+                "id, client_name, status, selected_branch_id, session_started_at, last_appointment_at, last_message_at, state, state_data",
+              )
+              .eq("id", convId)
+              .maybeSingle(),
+            supabaseAdmin
+              .from("branches")
+              .select("id, name, address")
+              .eq("salon_id", salonId)
+              .eq("is_active", true)
+              .order("sort_order"),
+          ]);
           const convSnapshot: any = lockedConv ?? conv;
 
           const creds: GreenApiCreds = {
@@ -562,13 +586,6 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             token: secrets.greenapi_token ?? "",
           };
 
-          // Load branches once.
-          const { data: branchRows } = await supabaseAdmin
-            .from("branches")
-            .select("id, name, address")
-            .eq("salon_id", salonId)
-            .eq("is_active", true)
-            .order("sort_order");
           let branches: WaBranchInfo[] = (branchRows ?? []).map((b: any) => ({
             id: b.id,
             name: b.name,
@@ -587,7 +604,10 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
           // knowledge from OTHER branches unreachable, without touching either engine's internals
           // for the (still fully supported) multi-branch dynamic flow. Falls back to the normal
           // dynamic flow if the pinned branch was deactivated or deleted since being set.
-          const pinnedBranchId = (assistant as any)?.assistant_branch_id as string | null | undefined;
+          const pinnedBranchId = (assistant as any)?.assistant_branch_id as
+            | string
+            | null
+            | undefined;
           if (pinnedBranchId) {
             const pinned = branches.find((b) => b.id === pinnedBranchId);
             if (pinned) {
@@ -599,6 +619,9 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
           // Track the last text we actually sent in THIS drain pass so we don't fire the exact
           // same WhatsApp message twice when the client double-texts within one webhook window.
           let lastSentReply: string | null = null;
+          // Coalesce at most once per drain pass, so a client sending many quick bursts can't stall
+          // the worker indefinitely (each real turn still gets processed).
+          let settledThisPass = false;
 
           for (let iter = 0; iter < MAX_LOOP_ITERATIONS; iter++) {
             // 1) Load unprocessed inbound messages for this conversation
@@ -621,15 +644,37 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             // if nothing fresh remains this pass, skip straight to the next drain iteration.
             const STALE_MESSAGE_MS = 12 * 60 * 60 * 1000;
             const staleCutoff = Date.now() - STALE_MESSAGE_MS;
-            const stalePending = pending.filter((m: any) => new Date(m.created_at).getTime() < staleCutoff);
-            const freshPending = pending.filter((m: any) => new Date(m.created_at).getTime() >= staleCutoff);
+            const stalePending = pending.filter(
+              (m: any) => new Date(m.created_at).getTime() < staleCutoff,
+            );
+            const freshPending = pending.filter(
+              (m: any) => new Date(m.created_at).getTime() >= staleCutoff,
+            );
             if (stalePending.length > 0) {
               await supabaseAdmin
                 .from("wa_messages")
                 .update({ processed_at: new Date().toISOString() })
-                .in("id", stalePending.map((m: any) => m.id));
+                .in(
+                  "id",
+                  stalePending.map((m: any) => m.id),
+                );
             }
             if (freshPending.length === 0) continue;
+
+            // 1c) Burst coalescing: if the client's newest message landed just now, they're likely
+            // still typing the rest. Wait once and reload so we answer the WHOLE burst with a single
+            // reply — instead of answering a half-typed message and then correcting ourselves a
+            // second later (the "простите, не поняла… → а вот свободное время" double message).
+            if (!settledThisPass) {
+              const newestMs = Math.max(
+                ...freshPending.map((m: any) => new Date(m.created_at).getTime()),
+              );
+              if (Date.now() - newestMs < COALESCE_WINDOW_MS) {
+                settledThisPass = true;
+                await new Promise((r) => setTimeout(r, COALESCE_WAIT_MS));
+                continue; // reload pending — the follow-up message is now included
+              }
+            }
 
             // 2) Sign media URLs for any image messages
             const lastMessages: WaIncomingMessage[] = [];
@@ -662,15 +707,13 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
               .gte("created_at", sessionStartedAt)
               .order("created_at", { ascending: false })
               .limit(30);
-            const history: WaIncomingMessage[] = ((histRows ?? []) as any[])
-              .reverse()
-              .map((m) => ({
-                id: m.id,
-                direction: m.direction,
-                kind: m.kind,
-                text_body: m.text_body,
-                created_at: m.created_at,
-              }));
+            const history: WaIncomingMessage[] = ((histRows ?? []) as any[]).reverse().map((m) => ({
+              id: m.id,
+              direction: m.direction,
+              kind: m.kind,
+              text_body: m.text_body,
+              created_at: m.created_at,
+            }));
 
             // 4) Run agent
             const input: WaAgentInput = {
@@ -707,14 +750,17 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
                 direction: "out",
                 kind: "text",
                 text_body: reply,
-                green_api_message_id: sent.ok ? sent.idMessage ?? null : null,
+                green_api_message_id: sent.ok ? (sent.idMessage ?? null) : null,
                 meta: { fatalError: e?.message ?? String(e) } as any,
               });
               // Mark pending as processed so future messages don't get stuck behind them.
               await supabaseAdmin
                 .from("wa_messages")
                 .update({ processed_at: new Date().toISOString() })
-                .in("id", freshPending.map((m: any) => m.id));
+                .in(
+                  "id",
+                  freshPending.map((m: any) => m.id),
+                );
               // Reset state so the client's NEXT message gets a clean run.
               await supabaseAdmin
                 .from("wa_conversations")
@@ -800,7 +846,10 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             await supabaseAdmin
               .from("wa_messages")
               .update({ processed_at: new Date().toISOString() })
-              .in("id", freshPending.map((m: any) => m.id));
+              .in(
+                "id",
+                freshPending.map((m: any) => m.id),
+              );
 
             // 7) Persist conversation state
             const updates: Record<string, any> = {
@@ -824,7 +873,10 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             if (result.selectedBranchId !== curSelectedBranch) {
               updates.selected_branch_id = result.selectedBranchId;
             }
-            await supabaseAdmin.from("wa_conversations").update(updates as any).eq("id", convId);
+            await supabaseAdmin
+              .from("wa_conversations")
+              .update(updates as any)
+              .eq("id", convId);
 
             curState = result.nextState;
             curStateData = result.nextStateData ?? {};
@@ -923,11 +975,7 @@ async function notifyOwner(opts: {
   await persistFallback(res.error ?? "неизвестная ошибка Green-API");
 }
 
-async function tryAcquireLockWithWait(
-  db: any,
-  convId: string,
-  lockId: string,
-): Promise<boolean> {
+async function tryAcquireLockWithWait(db: any, convId: string, lockId: string): Promise<boolean> {
   const deadline = Date.now() + LOCK_WAIT_TIMEOUT_MS;
   while (true) {
     const { data, error } = await db.rpc("wa_try_acquire_lock", {
