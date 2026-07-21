@@ -2838,6 +2838,93 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
 
 
 // ============================================================
+// Gemini tool-calling helper (used by V4 engine)
+// ============================================================
+
+export type GeminiV2Content = { role: "user" | "model"; parts: any[] };
+
+export async function callGeminiTools(opts: {
+  apiKey: string;
+  systemInstruction: string;
+  contents: GeminiV2Content[];
+  tools: any[];
+  allowedFunctionNames?: string[];
+}): Promise<{ ok: boolean; parts?: any[]; error?: string }> {
+  const noTools =
+    Array.isArray(opts.allowedFunctionNames) && opts.allowedFunctionNames.length === 0;
+  const fcConfig: any = noTools
+    ? { mode: "NONE" }
+    : opts.allowedFunctionNames
+      ? { mode: "AUTO", allowedFunctionNames: opts.allowedFunctionNames }
+      : { mode: "AUTO" };
+  const body: any = {
+    systemInstruction: { parts: [{ text: opts.systemInstruction }] },
+    contents: opts.contents,
+    ...(noTools ? {} : { tools: [{ functionDeclarations: opts.tools }] }),
+    toolConfig: { functionCallingConfig: fcConfig },
+    generationConfig: {
+      temperature: 0.4,
+      maxOutputTokens: 2048,
+      thinkingConfig: { thinkingBudget: 0 },
+    },
+  };
+
+  const url = `${GEMINI_BASE}/${MODEL_TEXT}:generateContent?key=${encodeURIComponent(opts.apiKey)}`;
+
+  const MAX_ATTEMPTS = 4;
+  const BACKOFF_CAP_MS = 4000;
+  const lastAttempt = MAX_ATTEMPTS - 1;
+  const waitFor = (retryAfterHdr: string | null, bodyTxt: string, attempt: number) => {
+    let ms = 0;
+    const hdr = Number(retryAfterHdr);
+    if (Number.isFinite(hdr) && hdr > 0) ms = hdr * 1000;
+    if (!ms) {
+      const m = bodyTxt.match(/retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/);
+      if (m) ms = Math.round(Number(m[1]) * 1000);
+    }
+    if (!ms) ms = 600 * 2 ** attempt;
+    return Math.min(ms, BACKOFF_CAP_MS) + Math.floor(Math.random() * 250);
+  };
+
+  let lastErr = "gemini unknown";
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const txt = await r.text();
+      if (r.status === 429 || r.status >= 500) {
+        lastErr = `gemini ${r.status}: ${txt.slice(0, 300)}`;
+        if (attempt < lastAttempt) {
+          await new Promise((res) => setTimeout(res, waitFor(r.headers.get("retry-after"), txt, attempt)));
+          continue;
+        }
+        return { ok: false, error: lastErr };
+      }
+      if (!r.ok) return { ok: false, error: `gemini ${r.status}: ${txt.slice(0, 300)}` };
+      let json: any;
+      try { json = JSON.parse(txt); } catch {
+        return { ok: false, error: `gemini bad json: ${txt.slice(0, 200)}` };
+      }
+      const parts: any[] = (json?.candidates?.[0]?.content?.parts ?? []).filter(
+        (p: any) => !p?.thought,
+      );
+      return { ok: true, parts };
+    } catch (e: any) {
+      lastErr = e?.message ?? String(e);
+      if (attempt < lastAttempt) {
+        await new Promise((res) => setTimeout(res, waitFor(null, "", attempt)));
+        continue;
+      }
+      return { ok: false, error: lastErr };
+    }
+  }
+  return { ok: false, error: lastErr };
+}
+
+// ============================================================
 // Green-API interactive message helpers (V3)
 // ============================================================
 
