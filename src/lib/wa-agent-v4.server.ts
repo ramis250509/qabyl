@@ -1302,21 +1302,39 @@ export async function executeV4Tool(
       if (withinCutoff((appt as any).starts_at))
         return { success: false, error: "cutoff", cutoff_hours: cutoffHours };
       const targetMaster = (args.new_master_id as string) || (appt as any).master_id;
+      const newDate = (args.new_date as string) ?? String(args.new_slot_start ?? "").slice(0, 10);
       const resolved = await resolveRequestedSlot({
         db,
         input,
         serviceId: (appt as any).service_id,
         masterId: targetMaster,
         branchId: flags.selectedBranchId ?? null,
-        date: (args.new_date as string) ?? String(args.new_slot_start ?? "").slice(0, 10),
+        date: newDate,
         time: (args.new_time as string) ?? null,
         slotStartIso: (args.new_slot_start as string) ?? null,
       });
       if (!resolved.ok) {
+        // Same recovery as create_appointment: if the new time is taken for the target master but
+        // free for another, surface that master so the assistant can offer a same-time move.
+        const alsoFree =
+          resolved.reason === "slot_not_free" && args.new_time
+            ? await mastersFreeAtRequestedTime({
+                db,
+                input,
+                serviceId: (appt as any).service_id,
+                date: newDate,
+                time: args.new_time as string,
+                branchId: flags.selectedBranchId ?? null,
+                excludeMasterId: targetMaster,
+              })
+            : [];
         return {
           success: false,
           reason: resolved.reason ?? "slot_not_free",
           nearest: resolved.nearest,
+          ...(alsoFree.length
+            ? { masters_free_at_requested_time: alsoFree.map((m) => m.name) }
+            : {}),
         };
       }
       const movingMaster = args.new_master_id && args.new_master_id !== (appt as any).master_id;
