@@ -138,6 +138,7 @@ export function buildSystemPromptV4(
   input: WaAgentInput,
   closedDates: string[] = [],
   mastersRoster = "",
+  language: "ru" | "ky" | "en" = "ru",
 ): string {
   const { salon, config, branches, salonInfo } = input;
   const { isoLocalDate, humanDate, hour, minute } = nowInTz(salon.timezone);
@@ -156,6 +157,7 @@ export function buildSystemPromptV4(
     .join("; ");
   const hours = renderWorkingHours(salonInfo?.working_hours);
   const langs = (config.languages?.length ? config.languages : ["ru"]).join(", ");
+  const langName = language === "ky" ? "кыргызском" : language === "en" ? "английском" : "русском";
   const cutoff = config.manage_cutoff_hours ?? 0;
 
   const lines: string[] = [
@@ -171,7 +173,7 @@ export function buildSystemPromptV4(
     ``,
     `МОЛЧАЛИВОЕ ВЫПОЛНЕНИЕ (КРИТИЧЕСКИ ВАЖНО): никогда не пиши клиенту, что ты сейчас что-то проверяешь/смотришь/уточняешь. ЗАПРЕЩЕНЫ фразы «сейчас проверю», «подождите», «минуточку», «секундочку», «дайте гляну», «азыр текшерип көрөйүн», «бир аз күтө туруңуз». Вместо этого СНАЧАЛА молча выполни все нужные вызовы инструментов (календарь, свободные окна, цена, анализ фото, любые запросы), дождись результата — и только потом отправь клиенту ГОТОВЫЙ ответ. Пусть это займёт на пару секунд дольше — клиент должен видеть результат, а не процесс. У тебя один ответ за ход, поэтому «подождите» = клиент останется без ответа. Так делать нельзя.`,
     `ЕСЛИ ИНСТРУМЕНТ ВЕРНУЛ ОШИБКУ: не молчи. Вежливо скажи, например «Извините, сейчас не получилось получить данные расписания — попробуйте, пожалуйста, через минуту, или я передам ваш запрос администратору», и при необходимости вызови escalate_to_human. Никогда не оставляй клиента без ответа после начала обработки.`,
-    `ЯЗЫК: отвечай на языке ПОСЛЕДНЕГО сообщения клиента (языки салона: ${langs}). Клиент сменил язык (например с кыргызского на русский или обратно) — сразу переключаешься и ты. Кыргызский узнавай по «салам», «кандай», «канча», «болобу», «жасайсыз», «бүгүн», «эртең», «эже», «байке», буквам ң/ү/ө; в т.ч. латиницей. Не смешивай языки в одном сообщении.`,
+    `ЯЗЫК ЭТОГО ДИАЛОГА (СТРОГО, ЖЁСТКОЕ ПРАВИЛО): отвечай ТОЛЬКО на ${langName} языке (языки салона: ${langs}). Этот язык уже определён системой по всей истории диалога — доверяй ему, а не только последнему сообщению. КОРОТКИЕ и НЕЯЗЫКОВЫЕ реплики клиента (цифра варианта, название филиала или мастера, «да»/«ок»/«макул», имя, дата, время) НЕ являются сигналом смены языка — на них отвечай НА ЭТОМ ЖЕ языке, не переключайся. Переключайся на другой язык, ТОЛЬКО когда клиент явно и уверенно пишет РАЗВЁРНУТОЕ сообщение на другом языке (не одно слово/цифра/имя). Никогда не смешивай языки в одном сообщении.`,
     `ОБРАЩЕНИЕ: всегда на «Вы», даже если клиент пишет на «ты» — это вежливый стиль администратора. В кыргызском используй вежливые формы (сиз, -ңыз/-ңиз/-ыңыз), в других языках — аналогичную вежливую форму, если она есть в языке.`,
     config.tone_instructions
       ? `ОБЯЗАТЕЛЬНЫЕ правила тона от салона: ${config.tone_instructions}`
@@ -637,13 +639,18 @@ export async function loadSalonClosedDates(
   salonId: string,
   fromIso: string,
   days: number,
+  branchId: string | null = null,
 ): Promise<string[]> {
   try {
     const to = new Date(`${fromIso}T12:00:00Z`);
     to.setUTCDate(to.getUTCDate() + days);
     const toIso = to.toISOString().slice(0, 10);
     // salon_bulk offs are written per-master; confirm the date is off for EVERY active master
-    // so we never mislabel a single master's day-off as a whole-salon closure.
+    // THAT SERVES THIS CONVERSATION (its branch, when known — else every active master salon-wide)
+    // so we never mislabel a single master's day-off as a whole-salon/whole-branch closure, and a
+    // branch-pinned assistant doesn't wrongly stay silent about ITS branch's own closures just
+    // because a different branch's masters are still working.
+    let mastersQ = db.from("masters").select("id, branch_id").eq("salon_id", salonId).eq("is_active", true);
     const [offsRes, mastersRes] = await Promise.all([
       db
         .from("master_day_overrides")
@@ -652,9 +659,12 @@ export async function loadSalonClosedDates(
         .eq("kind", "off")
         .gte("date", fromIso)
         .lte("date", toIso),
-      db.from("masters").select("id").eq("salon_id", salonId).eq("is_active", true),
+      mastersQ,
     ]);
-    const activeIds = new Set(((mastersRes as any).data as any[])?.map((m) => m.id) ?? []);
+    const mastersInScope = branchId
+      ? (((mastersRes as any).data as any[]) ?? []).filter((m) => m.branch_id == null || m.branch_id === branchId)
+      : (((mastersRes as any).data as any[]) ?? []);
+    const activeIds = new Set(mastersInScope.map((m) => m.id));
     if (activeIds.size === 0) return [];
     const byDate = new Map<string, Set<string>>();
     for (const r of ((offsRes as any).data as any[]) ?? []) {
@@ -1049,7 +1059,10 @@ export async function executeV4Tool(
     }
 
     case "get_my_appointments": {
-      const { data } = await db
+      // Branch-scoped: when a branch is already known for this conversation (in-chat selection or
+      // a super-admin pin), only surface THAT branch's appointments — a booking at another branch
+      // is out of scope for this assistant, same as masters/schedule/slots above.
+      let q = db
         .from("appointments")
         .select("id, starts_at, services(name), masters(name)")
         .eq("salon_id", input.salon.salonId)
@@ -1057,6 +1070,8 @@ export async function executeV4Tool(
         .eq("status", "confirmed")
         .gte("starts_at", new Date().toISOString())
         .order("starts_at");
+      if (flags.selectedBranchId) q = q.eq("branch_id", flags.selectedBranchId);
+      const { data } = await q;
       return {
         appointments: (data ?? []).map((a: any) => ({
           id: a.id,
@@ -1347,20 +1362,34 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     input.salon.salonId,
     nowInTz(input.salon.timezone).isoLocalDate,
     14,
+    flags.selectedBranchId,
   );
   // Real active masters + the services each performs, injected into the prompt so the model can
   // NEVER invent master names (it repeatedly offered non-existent masters when it skipped
   // get_masters). Names come from here; get_masters is still used for the exact id per service.
+  // Root-cause fix: this roster used to load masters SALON-WIDE, ignoring which branch is
+  // already selected for this conversation. The system prompt calls it "the ONLY correct list —
+  // never invent other masters", so a multi-branch salon had every OTHER branch's masters handed
+  // to the model as equally real — it then happily offered them to a client at a branch they don't
+  // work at. `get_masters` (the tool) already filtered by branch correctly; this text roster did
+  // not, and it's the one line the model treats as authoritative for names. Filtering it the same
+  // way closes the gap for both the existing per-conversation branch pick AND a super-admin-pinned
+  // single branch — a master with branch_id=NULL (works at every branch) is still included.
   const mastersRoster = await (async (): Promise<string> => {
-    const [{ data: mRows }, { data: sRows }] = await Promise.all([
-      db
-        .from("masters")
-        .select("id, name, master_services(service_id)")
-        .eq("salon_id", input.salon.salonId)
-        .eq("is_active", true)
-        .order("sort_order"),
+    let mq = db
+      .from("masters")
+      .select("id, name, branch_id, master_services(service_id)")
+      .eq("salon_id", input.salon.salonId)
+      .eq("is_active", true)
+      .order("sort_order");
+    const [{ data: mRowsRaw }, { data: sRows }] = await Promise.all([
+      mq,
       db.from("services").select("id, name").eq("salon_id", input.salon.salonId).eq("is_active", true),
     ]);
+    const scopeBranchId = flags.selectedBranchId;
+    const mRows = scopeBranchId
+      ? (mRowsRaw ?? []).filter((m: any) => m.branch_id == null || m.branch_id === scopeBranchId)
+      : mRowsRaw;
     if (!mRows?.length) return "";
     const svcName = new Map((sRows ?? []).map((s: any) => [s.id, s.name as string]));
     return (mRows as any[])
@@ -1372,7 +1401,7 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
       })
       .join("; ");
   })();
-  const systemPrompt = buildSystemPromptV4(input, closedDates, mastersRoster);
+  const systemPrompt = buildSystemPromptV4(input, closedDates, mastersRoster, language);
   const contents: GeminiV2Content[] = [...v4History, { role: "user", parts: clientParts }];
 
   // One agentic pass: loop tool-calls until the model returns a plain-text reply. Mutates

@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-client";
 import { toast } from "sonner";
@@ -37,6 +38,7 @@ type Assistant = {
   industry: IndustryKey;
   knowledge_answers: Record<string, string>;
   sales_mode: boolean;
+  assistant_branch_id: string | null;
 };
 
 const DEFAULT_GREETING =
@@ -69,18 +71,22 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
     industry: DEFAULT_INDUSTRY,
     knowledge_answers: {},
     sales_mode: false,
+    assistant_branch_id: null,
   });
+  const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const [{ data: salon }, { data: row }] = await Promise.all([
+      const [{ data: salon }, { data: row }, { data: branchRows }] = await Promise.all([
         supabase.from("salons").select("ai_assistant_enabled").eq("id", salonId).maybeSingle(),
         supabase.from("salon_ai_assistant").select("*").eq("salon_id", salonId).maybeSingle(),
+        supabase.from("branches").select("id, name").eq("salon_id", salonId).eq("is_active", true).order("sort_order"),
       ]);
       if (cancelled) return;
       setPremiumEnabled(!!(salon as any)?.ai_assistant_enabled);
+      setBranches((branchRows as any) ?? []);
       if (row) {
         setData({
           salon_id: salonId,
@@ -99,6 +105,7 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
           industry: normalizeIndustry((row as any).industry),
           knowledge_answers: ((row as any).knowledge_answers as Record<string, string>) ?? {},
           sales_mode: !!(row as any).sales_mode,
+          assistant_branch_id: (row as any).assistant_branch_id ?? null,
         });
       }
       setLoading(false);
@@ -176,6 +183,7 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
         industry: data.industry,
         knowledge_answers: data.knowledge_answers ?? {},
         sales_mode: data.sales_mode,
+        assistant_branch_id: data.assistant_branch_id,
       } as any,
       { onConflict: "salon_id" },
     );
@@ -340,6 +348,31 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
             Green-API задаются на вкладке «WhatsApp».
           </p>
         </div>
+
+        {isSuperAdmin && branches.length > 1 && (
+          <div className="space-y-2">
+            <Label>Филиал ассистента</Label>
+            <Select
+              value={data.assistant_branch_id ?? "__all__"}
+              onValueChange={(v) => setData({ ...data, assistant_branch_id: v === "__all__" ? null : v })}
+            >
+              <SelectTrigger className="max-w-sm"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Все филиалы (спрашивать у клиента)</SelectItem>
+                {branches.map((b) => (
+                  <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Если закрепить конкретный филиал — ассистент будет работать ИСКЛЮЧИТЕЛЬНО с его
+              данными: мастерами, расписанием, свободными окнами и записями. Он больше не будет
+              спрашивать клиента, в какой филиал записать, и не упомянет мастеров других
+              филиалов. Выберите «Все филиалы», чтобы вернуть прежнее поведение — ассистент сам
+              спросит клиента, в какой филиал он хочет записаться.
+            </p>
+          </div>
+        )}
 
         <div className="space-y-2">
           <Label>Режим работы ассистента</Label>

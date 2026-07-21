@@ -38,9 +38,14 @@ describe("buildSystemPromptV4 — Phase C blocks", () => {
     expect(beauty).toContain("НАРАЩИВАНИЕ");
   });
 
+  // Every industry has ITS OWN photoAnalysisGuide (shared "КАК РАЗБИРАТЬ ФОТО" header, distinct
+  // per-industry content with the right professional guardrails — dental/medical explicitly must
+  // NOT diagnose from a photo). Only the beauty-specific hair-damage content must not leak out.
   test("non-beauty (dental) does NOT get hair-specific trees", () => {
     expect(dental).not.toContain("күйгөн чач");
-    expect(dental).not.toContain("КАК РАЗБИРАТЬ ФОТО");
+    expect(dental).not.toContain("ботокс для волос");
+    expect(dental).toContain("КАК РАЗБИРАТЬ ФОТО");
+    expect(dental).toContain("НЕ ставь диагноз и НЕ называй цену лечения по фото");
   });
 
   test("feasibility + sales blocks are general (present in both)", () => {

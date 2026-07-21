@@ -89,7 +89,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             .maybeSingle(),
           supabaseAdmin
             .from("salon_ai_assistant")
-            .select("enabled, greeting, tone_instructions, pricing_rules, languages, manage_cutoff_hours, engine, knowledge_base, client_addressing, industry, knowledge_answers, sales_mode")
+            .select("enabled, greeting, tone_instructions, pricing_rules, languages, manage_cutoff_hours, engine, knowledge_base, client_addressing, industry, knowledge_answers, sales_mode, assistant_branch_id")
             .eq("salon_id", salonId)
             .maybeSingle(),
         ]);
@@ -564,7 +564,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             .eq("salon_id", salonId)
             .eq("is_active", true)
             .order("sort_order");
-          const branches: WaBranchInfo[] = (branchRows ?? []).map((b: any) => ({
+          let branches: WaBranchInfo[] = (branchRows ?? []).map((b: any) => ({
             id: b.id,
             name: b.name,
             address: b.address ?? null,
@@ -573,6 +573,23 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
           let curState: WaAgentState = (convSnapshot.state ?? "idle") as WaAgentState;
           let curStateData = convSnapshot.state_data ?? {};
           let curSelectedBranch: string | null = convSnapshot.selected_branch_id ?? null;
+
+          // Super-admin pinned this assistant to exactly one branch (salon settings → Ассистент).
+          // Replace the branch list with just that one and force selection from turn zero — every
+          // downstream consumer (both engines: masters roster, get_masters, get_available_slots,
+          // get_my_appointments, closed-day detection) already keys off `branches`/selectedBranchId,
+          // so this single choke point is enough to make masters/schedule/slots/appointments/
+          // knowledge from OTHER branches unreachable, without touching either engine's internals
+          // for the (still fully supported) multi-branch dynamic flow. Falls back to the normal
+          // dynamic flow if the pinned branch was deactivated or deleted since being set.
+          const pinnedBranchId = (assistant as any)?.assistant_branch_id as string | null | undefined;
+          if (pinnedBranchId) {
+            const pinned = branches.find((b) => b.id === pinnedBranchId);
+            if (pinned) {
+              branches = [pinned];
+              curSelectedBranch = pinned.id;
+            }
+          }
           const sessionStartedAt = (convSnapshot.session_started_at ?? nowIso) as string;
           // Track the last text we actually sent in THIS drain pass so we don't fire the exact
           // same WhatsApp message twice when the client double-texts within one webhook window.
