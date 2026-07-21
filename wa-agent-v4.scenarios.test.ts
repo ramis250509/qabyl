@@ -349,6 +349,69 @@ test("занятый мастер, свободный другой: create_appoi
   expect(fr.functionResponse.response.masters_free_at_requested_time).toContain("Айжан");
 });
 
+test("выходной у выбранного мастера ≠ выходной салона: reason=master_off_that_day", async () => {
+  // Bug: client picks Айгуль and asks about her day off. Scoped availability said "closed",
+  // which the model turned into «салон не работает / выходной» — but Айжан works that day.
+  const DATE = "2099-01-05";
+  const dow = new Date(`${DATE}T12:00:00Z`).getUTCDay();
+  const masters = [
+    { id: "m1", name: "Айгуль", branch_id: null, sort_order: 0, service_ids: ["svc1"] },
+    { id: "m2", name: "Айжан", branch_id: null, sort_order: 1, service_ids: ["svc1"] },
+  ];
+  // Айгуль (m1) has an explicit day-off override on DATE; Айжан (m2) is scheduled that weekday.
+  const overrides = [{ master_id: "m1", date: DATE, is_off: true, kind: "off", intervals: null }];
+  const schedules = [{ master_id: "m2", weekday: dow }];
+
+  // A tiny query builder that honours .in()/.eq() filters and resolves an array.
+  const tableQuery = (rows: any[]) => {
+    const q: any = { _f: [] as Array<[string, any, boolean]> };
+    q.select = () => q;
+    q.eq = (c: string, v: any) => (q._f.push([c, v, false]), q);
+    q.in = (c: string, v: any[]) => (q._f.push([c, v, true]), q);
+    q.order = () => q;
+    q.maybeSingle = async () => ({ data: null });
+    q.then = (resolve: any) =>
+      resolve({
+        data: rows.filter((r) =>
+          q._f.every(([c, v, isIn]: any) => (isIn ? v.includes(r[c]) : r[c] === v)),
+        ),
+      });
+    return q;
+  };
+  const masterRows = masters.map((m) => ({
+    ...m,
+    is_active: true,
+    salon_id: "salon1",
+    specialization: null,
+    bio: null,
+    master_services: m.service_ids.map((id: string) => ({ service_id: id })),
+  }));
+  const db: any = {
+    appointments: [],
+    from: (t: string) => {
+      if (t === "masters") return tableQuery(masterRows);
+      if (t === "master_day_overrides") return tableQuery(overrides);
+      if (t === "master_schedules") return tableQuery(schedules);
+      if (t === "branches") return tableQuery([]);
+      if (t === "services") return tableQuery([]);
+      throw new Error(`unmocked table ${t}`);
+    },
+    // Айгуль has no free slots on her day off; nobody else is queried by masterId here.
+    rpc: async () => ({ data: [], error: null }),
+  };
+  (globalThis as any).__WA_DB__ = db;
+  geminiQueue = [
+    [fc("get_available_slots", { service_id: "svc1", date: DATE, master_id: "m1" })],
+    [{ text: "У Айгуль в этот день выходной, но работает Айжан — записать к ней?" }],
+  ];
+  const res = await runWaAgentV4(makeInput("Хочу к Айгуль в этот день"));
+  const lastReq = geminiRequests[geminiRequests.length - 1];
+  const fr = lastReq.contents
+    .flatMap((c: any) => c.parts)
+    .find((p: any) => p.functionResponse?.name === "get_available_slots");
+  expect(fr.functionResponse.response.reason).toBe("master_off_that_day");
+});
+
 test("эскалация: escalate_to_human → needs_human + notifyAdminText с номером клиента", async () => {
   (globalThis as any).__WA_DB__ = makeDb();
   geminiQueue = [
