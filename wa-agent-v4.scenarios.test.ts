@@ -626,6 +626,27 @@ test("humanizeReply не трогает нормальный текст со в�
   expect(humanizeReply(input)).toBe(input);
 });
 
+test("humanizeReply сохраняет построчную сводку подтверждения (цена/детали не схлопываются)", () => {
+  // The label-per-line confirmation summary must survive humanizeReply on SEPARATE lines —
+  // it must not be collapsed into a paragraph, and the price line must remain intact.
+  const summary =
+    "Пожалуйста, подтвердите запись:\n" +
+    "Услуга: Стрижка\n" +
+    "Стоимость: 700 сом\n" +
+    "Мастер: Айгуль\n" +
+    "Дата: 23 июля\n" +
+    "Время: 17:00\n" +
+    "Продолжительность: 1 час\n" +
+    "Имя: Анна\n" +
+    "Всё верно? Если да — подтвердите, пожалуйста 🙂";
+  const out = humanizeReply(summary);
+  expect(out).toContain("\nСтоимость: 700 сом\n");
+  expect(out).toContain("\nУслуга: Стрижка\n");
+  expect(out).toContain("\nПродолжительность: 1 час\n");
+  // Each label stays on its own line (not merged into one paragraph).
+  expect(out.split("\n").length).toBeGreaterThanOrEqual(9);
+});
+
 test("ответ агента очищается от markdown/списка перед отправкой клиенту", async () => {
   (globalThis as any).__WA_DB__ = makeDb();
   geminiQueue = [
