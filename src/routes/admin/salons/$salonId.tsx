@@ -14,7 +14,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
-import { ArrowLeft, Plus, Trash2, Edit, Copy, UserPlus, ChevronDown, FolderPlus, MapPin, GripVertical, CheckCircle2, Circle, ArrowRight, X } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Edit, Copy, UserPlus, ChevronDown, FolderPlus, MapPin, GripVertical, CheckCircle2, Circle, ArrowRight, X, Sparkles } from "lucide-react";
 import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, DragOverlay, type DragEndEvent, type DragStartEvent, useDroppable } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -33,6 +33,7 @@ import { MasterDayOverrides } from "@/components/admin/MasterDayOverrides";
 import { SalonDayOverridesCard } from "@/components/admin/SalonDayOverridesCard";
 import { AiAssistantTab } from "@/components/admin/AiAssistantTab";
 import { INDUSTRIES_META, INDUSTRY_ORDER, normalizeIndustry, type IndustryKey } from "@/lib/industries";
+import { SERVICE_CATALOG_TEMPLATES, colorForCategoryIndex } from "@/lib/service-catalog-templates";
 // WaChatsTab tab hidden from UI by request; component kept for future use.
 
 // Business industry — the single source of truth chosen here in the "Салон" tab and read by the
@@ -1336,15 +1337,61 @@ function ServicesTab({ salonId }: { salonId: string }) {
   const [activeDrag, setActiveDrag] = useState<{ kind: "service" | "category"; id: string } | null>(null);
 
   const [collapsedCats, setCollapsedCats] = useState<string[]>([]);
+  const [industry, setIndustry] = useState<IndustryKey | null>(null);
+  const [autofillBusy, setAutofillBusy] = useState(false);
+  const [autofillConfirm, setAutofillConfirm] = useState(false);
 
   async function load() {
-    const [{ data: svc }, { data: salon }] = await Promise.all([
+    const [{ data: svc }, { data: salon }, { data: assistant }] = await Promise.all([
       supabase.from("services").select("*").eq("salon_id", salonId).order("sort_order"),
       supabase.from("salons").select("category_order, collapsed_categories").eq("id", salonId).maybeSingle(),
+      supabase.from("salon_ai_assistant").select("industry").eq("salon_id", salonId).maybeSingle(),
     ]);
     setServices(svc ?? []);
     setCatOrder((salon?.category_order as string[]) ?? []);
     setCollapsedCats(((salon as any)?.collapsed_categories as string[]) ?? []);
+    setIndustry(normalizeIndustry((assistant as any)?.industry));
+  }
+
+  // One-click starter catalog for the salon's industry (see service-catalog-templates.ts).
+  // Skips any service whose name already exists (case-insensitive) so re-running it after manual
+  // edits only ever ADDS what's missing — never creates duplicates.
+  async function autofillCatalog() {
+    if (!industry) return;
+    setAutofillBusy(true);
+    try {
+      const template = SERVICE_CATALOG_TEMPLATES[industry];
+      const existingNames = new Set(services.map((s) => String(s.name ?? "").trim().toLowerCase()));
+      const toInsert = template.filter((t) => !existingNames.has(t.name.trim().toLowerCase()));
+      if (toInsert.length === 0) {
+        toast.info("Все услуги шаблона уже есть в каталоге");
+        return;
+      }
+      const templateCats = Array.from(new Set(template.map((t) => t.category)));
+      let nextSort = services.length ? Math.max(...services.map((s) => s.sort_order ?? 0)) + 1 : 0;
+      const rows = toInsert.map((t) => ({
+        salon_id: salonId,
+        name: t.name,
+        category: t.category,
+        description: t.description ?? null,
+        duration_min: t.duration_min,
+        duration_max_min: t.duration_max_min ?? null,
+        price: t.price,
+        price_max: t.price_max ?? null,
+        price_type: t.price_type,
+        color: colorForCategoryIndex(templateCats, t.category),
+        sort_order: nextSort++,
+      }));
+      const { error } = await supabase.from("services").insert(rows as any);
+      if (error) return toast.error(error.message);
+      const mergedCatOrder = [...catOrder, ...templateCats.filter((c) => !catOrder.includes(c))];
+      await persistCategoryOrder(mergedCatOrder);
+      toast.success(`Добавлено услуг: ${toInsert.length}`);
+      setAutofillConfirm(false);
+      load();
+    } finally {
+      setAutofillBusy(false);
+    }
   }
   useEffect(() => { load(); }, [salonId]);
 
@@ -1572,13 +1619,40 @@ function ServicesTab({ salonId }: { salonId: string }) {
 
       {/* Services with DnD */}
       <div className="space-y-3 border-t pt-4">
-        <div className="flex justify-between">
+        <div className="flex justify-between items-start gap-2 flex-wrap">
           <h2 className="font-semibold">Услуги</h2>
-          <Button size="sm" onClick={() => setEditing({ salon_id: salonId, name: "", category: "", duration_min: 60, buffer_after_min: 0, price: 0, price_max: null, price_type: "fixed", color: "#0ea5e9", is_active: true })}>
-            <Plus className="h-4 w-4 mr-1" />Добавить
-          </Button>
+          <div className="flex gap-2">
+            {industry && (
+              <Button size="sm" variant="outline" onClick={() => setAutofillConfirm(true)}>
+                <Sparkles className="h-4 w-4 mr-1" />Заполнить каталог автоматически
+              </Button>
+            )}
+            <Button size="sm" onClick={() => setEditing({ salon_id: salonId, name: "", category: "", duration_min: 60, buffer_after_min: 0, price: 0, price_max: null, price_type: "fixed", color: "#0ea5e9", is_active: true })}>
+              <Plus className="h-4 w-4 mr-1" />Добавить
+            </Button>
+          </div>
         </div>
         <p className="text-xs text-muted-foreground">Перетаскивайте услуги между категориями и категории между собой. Изменения сохраняются автоматически.</p>
+
+        <AlertDialog open={autofillConfirm} onOpenChange={setAutofillConfirm}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Заполнить каталог для отрасли «{industry ? INDUSTRIES_META[industry].label : ""}»?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Будет добавлен готовый профессиональный список услуг с категориями, длительностью
+                и ценами — как отправная точка, которую можно потом отредактировать. Услуги, уже
+                существующие в вашем каталоге (по названию), не дублируются — добавятся только
+                недостающие.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Отмена</AlertDialogCancel>
+              <AlertDialogAction disabled={autofillBusy} onClick={autofillCatalog}>
+                {autofillBusy ? "Добавляем…" : "Заполнить"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {services.length === 0 && allCats.length === 0 && <p className="text-muted-foreground text-sm">Пока нет ни категорий, ни услуг</p>}
 
