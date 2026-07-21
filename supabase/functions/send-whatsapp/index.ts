@@ -148,11 +148,19 @@ Deno.serve(async (req) => {
           chatId,
           endpoint: `waInstance${String(salon.greenapi_instance).slice(0, 4)}***/sendMessage/***`,
         });
-        const resp = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10_000);
+        let resp: Response;
+        try {
+          resp = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timeoutId);
+        }
         const result = await readGreenApiBody(resp);
         if (!resp.ok) {
           console.error("GreenAPI response error", {

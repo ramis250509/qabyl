@@ -1,5 +1,4 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { PublicBooking } from "@/components/book/PublicBooking";
 import { SalonSite } from "@/components/site/SalonSite";
@@ -17,13 +16,23 @@ export const Route = createFileRoute("/book/$slug")({
   // Fetch the salon on the server so title / description / canonical / OG are present in the
   // initial HTML for crawlers and link unfurlers — not set after client-side hydration.
   loader: async ({ params }) => {
-    const { data } = await supabase
+    const { data: salon } = await supabase
       .from("salons")
       .select("*")
       .eq("slug", params.slug)
       .eq("is_active", true)
       .maybeSingle();
-    return { salon: data ?? null };
+
+    const { data: branches } = salon
+      ? await supabase
+          .from("branches")
+          .select("*")
+          .eq("salon_id", salon.id)
+          .eq("is_active", true)
+          .order("sort_order")
+      : { data: [] };
+
+    return { salon: salon ?? null, branches: branches ?? [] };
   },
   head: ({ loaderData }) => {
     const salon = loaderData?.salon;
@@ -60,19 +69,7 @@ export const Route = createFileRoute("/book/$slug")({
 });
 
 function BookBySlug() {
-  const { salon } = Route.useLoaderData();
-  const [branches, setBranches] = useState<any[]>([]);
-
-  useEffect(() => {
-    if (!salon) return;
-    supabase
-      .from("branches")
-      .select("*")
-      .eq("salon_id", salon.id)
-      .eq("is_active", true)
-      .order("sort_order")
-      .then(({ data: br }) => setBranches(br ?? []));
-  }, [salon]);
+  const { salon, branches } = Route.useLoaderData();
 
   if (!salon) {
     return (

@@ -569,7 +569,9 @@ export async function classifyDayForService(opts: {
     const dow = dowOf(opts.date);
     const ids = masters.map((m) => m.id);
 
-    const [overridesRes, schedRes] = await Promise.all([
+    // Fetch overrides, schedules, and branch hours in a single parallel round-trip.
+    // Branch working_hours only needed when a branchId is known — skip the query otherwise.
+    const [overridesRes, schedRes, branchRes] = await Promise.all([
       opts.db
         .from("master_day_overrides")
         .select("master_id, is_off, kind, intervals")
@@ -579,6 +581,9 @@ export async function classifyDayForService(opts: {
       // one has a configured schedule that deliberately excludes this day (positive evidence of
       // closure). A master with no rows at all simply has no schedule configured (unknown).
       opts.db.from("master_schedules").select("master_id, weekday").in("master_id", ids),
+      branchId
+        ? opts.db.from("branches").select("working_hours").eq("id", branchId).maybeSingle()
+        : Promise.resolve({ data: null }),
     ]);
     const overrides = new Map<string, any>();
     for (const o of ((overridesRes as any).data as any[]) ?? []) overrides.set(o.master_id, o);
@@ -604,12 +609,7 @@ export async function classifyDayForService(opts: {
     // it too), so it must be checked first. branches.working_hours is keyed by numeric dow; an
     // EMPTY ARRAY means closed. null/absent = no constraint, which is NOT evidence of closure.
     if (branchId) {
-      const { data: b } = await opts.db
-        .from("branches")
-        .select("working_hours")
-        .eq("id", branchId)
-        .maybeSingle();
-      const wh = (b as any)?.working_hours;
+      const wh = (branchRes as any)?.data?.working_hours;
       if (wh && typeof wh === "object" && Array.isArray(wh[String(dow)]) && wh[String(dow)].length === 0) {
         return "closed";
       }

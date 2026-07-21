@@ -25,9 +25,9 @@
     "semantic_hash": "345bdd57e188e0e4525edcd00e5003f5"
   },
   "package.json": {
-    "mtime": 1784092106.369416,
-    "ast_hash": "7ea95fc1360a3058e984137ce3dff63d",
-    "semantic_hash": ""
+    "mtime": 1782493581.9591305,
+    "ast_hash": "c1ed31a10b884f94db9fb7e4dba8d6cd",
+    "semantic_hash": "c1ed31a10b884f94db9fb7e4dba8d6cd"
   },
   "public/sw.js": {
     "mtime": 1782493582.4338622,
@@ -35,13 +35,13 @@
     "semantic_hash": "707d3802b9c875b59db148f0ca0c4dba"
   },
   "src/components/admin/AiAssistantTab.tsx": {
-    "mtime": 1784024720.6618938,
-    "ast_hash": "2f71d3d5b111fce3ac22ed2704ee5787",
+    "mtime": 1783764428.3579094,
+    "ast_hash": "d15680681289fb92861337e6ec0714ee",
     "semantic_hash": ""
   },
   "src/components/admin/AppointmentDialogs.tsx": {
-    "mtime": 1783917658.3225572,
-    "ast_hash": "fbd4e8dc0463654c7b9ac41f5591c79d",
+    "mtime": 1783499577.9078999,
+    "ast_hash": "906dc16226db05c5c28896db88c74c8e",
     "semantic_hash": ""
   },
   "src/components/admin/BranchFilterBar.tsx": {
@@ -404,15 +404,20 @@
     "ast_hash": "c7f4634f5d1871b3101f53ed324ebda7",
     "semantic_hash": ""
   },
+  "src/lib/ai-gateway.server.ts": {
+    "mtime": 1782493586.354153,
+    "ast_hash": "6f596ddb671de4c86482f17f27e56952",
+    "semantic_hash": "6f596ddb671de4c86482f17f27e56952"
+  },
   "src/lib/api/example.functions.ts": {
     "mtime": 1782493587.0871935,
     "ast_hash": "043d58c65b874e64b81caf99e5963ecf",
     "semantic_hash": "043d58c65b874e64b81caf99e5963ecf"
   },
   "src/lib/auth-client.ts": {
-    "mtime": 1783917491.432961,
-    "ast_hash": "54e0a662396793d05265d8bf66b4f0c3",
-    "semantic_hash": ""
+    "mtime": 1782493586.3930478,
+    "ast_hash": "89d664e1b7e673c50e1415f230d3b9ea",
+    "semantic_hash": "89d664e1b7e673c50e1415f230d3b9ea"
   },
   "src/lib/branch-masters.functions.ts": {
     "mtime": 1782493586.4339387,
@@ -450,9 +455,9 @@
     "semantic_hash": "23209387c03c1f1c1024877bfa6301dc"
   },
   "src/lib/refresh-context.tsx": {
-    "mtime": 1783917508.274165,
-    "ast_hash": "22674ce813322cbdff375da03f2f8a37",
-    "semantic_hash": ""
+    "mtime": 1782493586.7261574,
+    "ast_hash": "b8974eece8357c10018cb31c00d4e97a",
+    "semantic_hash": "b8974eece8357c10018cb31c00d4e97a"
   },
   "src/lib/salon-admins.functions.ts": {
     "mtime": 1782493586.7640564,
@@ -480,18 +485,18 @@
     "semantic_hash": "d9837f38cc05303254571985e3164050"
   },
   "src/lib/wa-agent.server.ts": {
-    "mtime": 1784064917.3843813,
-    "ast_hash": "e32d1402206e63c881e0753b637bce28",
+    "mtime": 1783769987.6259778,
+    "ast_hash": "a7a47b9d8db8656c6dcb1028801785d5",
     "semantic_hash": ""
   },
   "src/lib/wa-config.functions.ts": {
-    "mtime": 1784024656.7669888,
-    "ast_hash": "daca9b322922f09467019fd9824073e8",
+    "mtime": 1783764386.6619034,
+    "ast_hash": "6a4e96d5e74798d0a1beebe763ce43b5",
     "semantic_hash": ""
   },
   "src/routeTree.gen.ts": {
-    "mtime": 1784024764.7662525,
-    "ast_hash": "9eddf4d12fdaa08aec121cfa2b4e0986",
+    "mtime": 1783446278.9025683,
+    "ast_hash": "974277f0ad71cdba2e7fb024594c5c91",
     "semantic_hash": ""
   },
   "src/router.tsx": {
@@ -500,19 +505,19 @@
     "semantic_hash": "8f905e713b0eba7fa8148b7995a708c9"
   },
   "src/routes/__root.tsx": {
-    "mtime": 1783928509.9422538,
-    "ast_hash": "43b4329ffeccbb1d9daeabb226fb763a",
+    "mtime": 1783091672.7633438,
+    "ast_hash": "98373a1d2180321a7af77dde7d3434a3",
     "semantic_hash": ""
   },
   "src/routes/admin.tsx": {
-    "mtime": 1783919004.9419625,
-    "ast_hash": "e090b7ad3a317aae1a053dfb8e66960c",
-    "semantic_hash": ""
+    "mtime": 1782493587.2377903,
+    "ast_hash": "18efedf6965f8a13faffe8d5032bf32f",
+    "semantic_hash": "18efedf6965f8a13faffe8d5032bf32f"
   },
   "src/routes/admin/calendar.tsx": {
-    "mtime": 1784394572.1298554,
-    "ast_hash": "8f624f9ced0dfdfc78c97e9065408627",
-    "semantic_hash": ""
+    "mtime": 1782493587.495103,
+    "ast_hash": "d91dc222841fe2ef4de92c1d3343197e",
+    "semantic_hash": "d91dc222841fe2ef4de92c1d3343197e"
   },
   "src/routes/admin/index.tsx": {
     "mtime": 1782493587.543972,
@@ -525,8 +530,8 @@
     "semantic_hash": "ccfa484f87e4e3d4b2691fd0bdc88306"
   },
   "src/routes/admin/salons/$salonId.tsx": {
-    "mtime": 1784087683.0614984,
-    "ast_hash": "de476bdcd45a26b43a23056d0f5e5159",
+    "mtime": 1783499359.3930402,
+    "ast_hash": "b37a366ab0633ad397223109c277a373",
     "semantic_hash": ""
   },
   "src/routes/admin/salons/index.tsx": {
@@ -535,19 +540,19 @@
     "semantic_hash": "38fce9f40dd532021780afdc55062d03"
   },
   "src/routes/admin/stats.tsx": {
-    "mtime": 1784288915.729899,
-    "ast_hash": "40459c950b86176c76aba6b2dd8fd963",
-    "semantic_hash": ""
+    "mtime": 1782493587.6496892,
+    "ast_hash": "60f59a9e664ffb128c2fcd709f5bfa2c",
+    "semantic_hash": "60f59a9e664ffb128c2fcd709f5bfa2c"
   },
   "src/routes/api/public/wa.$salonId.ts": {
-    "mtime": 1784096468.9797518,
-    "ast_hash": "360ee4f8f4374f6066c275635206f4e3",
+    "mtime": 1783764381.195613,
+    "ast_hash": "03d0b0f3b52f44aeacb1f3a61ec97228",
     "semantic_hash": ""
   },
   "src/routes/auth.tsx": {
-    "mtime": 1783930072.1890366,
-    "ast_hash": "eef45a7f17306c3bcd9b15793279baa9",
-    "semantic_hash": ""
+    "mtime": 1782493587.2876568,
+    "ast_hash": "811d58c1e1c384cf169b2a886c66d837",
+    "semantic_hash": "811d58c1e1c384cf169b2a886c66d837"
   },
   "src/routes/book.$slug.tsx": {
     "mtime": 1782493587.3345318,
@@ -555,8 +560,8 @@
     "semantic_hash": "7aa5183ea48ee2c4feb454d9e7f9260d"
   },
   "src/routes/index.tsx": {
-    "mtime": 1783928495.8156946,
-    "ast_hash": "1cb4dd4dfe7510daefd752d4eee80db5",
+    "mtime": 1783255010.1454368,
+    "ast_hash": "c603af3bda85ca7979a18eb5b3db31fa",
     "semantic_hash": ""
   },
   "src/routes/preview.salon.$salonId.tsx": {
@@ -585,9 +590,9 @@
     "semantic_hash": "c860e356b77da5abdc956872f60e2bd6"
   },
   "supabase/functions/send-whatsapp/index.ts": {
-    "mtime": 1784385808.149201,
-    "ast_hash": "b581a3e7bcac676efac1955d3c7855e2",
-    "semantic_hash": ""
+    "mtime": 1782493588.0157113,
+    "ast_hash": "70a92c3ead2f5c7617e3b108478ea2e6",
+    "semantic_hash": "70a92c3ead2f5c7617e3b108478ea2e6"
   },
   "supabase/migrations/20260528053951_6f0c83d2-9946-4e32-b151-b182a34d120c.sql": {
     "mtime": 1782493588.0605915,
@@ -1075,8 +1080,13 @@
     "semantic_hash": ""
   },
   "src/routes/privacy.tsx": {
-    "mtime": 1783930070.278548,
-    "ast_hash": "057fb2ca42f41f058564b2854c78a571",
+    "mtime": 1783093651.7693703,
+    "ast_hash": "eec44926983b964c534b571eb6bcd7d4",
+    "semantic_hash": ""
+  },
+  "src/routes/api/public/wa-cloud.$salonId.ts": {
+    "mtime": 1783685013.0141258,
+    "ast_hash": "e69750d894e05a6fc26b319abc814f0a",
     "semantic_hash": ""
   },
   "src/components/admin/SalonDayOverridesCard.tsx": {
@@ -1090,8 +1100,8 @@
     "semantic_hash": ""
   },
   "src/lib/wa-agent-v4.server.ts": {
-    "mtime": 1784290955.5716588,
-    "ast_hash": "e09eeb726d7abaeee8340745e24ca336",
+    "mtime": 1783770043.5001395,
+    "ast_hash": "4c3202e1eafed64a2975e6d7c6ec6c75",
     "semantic_hash": ""
   },
   "supabase/migrations/20260710120000_create_wa_media_bucket.sql": {
@@ -1105,8 +1115,8 @@
     "semantic_hash": ""
   },
   "wa-agent-v4.scenarios.test.ts": {
-    "mtime": 1784044412.1470485,
-    "ast_hash": "b12cc1c5669e391eff7c64b4b3aa85b1",
+    "mtime": 1783770126.3024368,
+    "ast_hash": "4bb1539ef5e294a1a1fbe923e373532e",
     "semantic_hash": ""
   },
   "wa-native-greeting-race.test.ts": {
@@ -1127,61 +1137,6 @@
   "supabase/migrations/20260711140000_wa_client_addressing.sql": {
     "mtime": 1783764349.428324,
     "ast_hash": "8b905e1efc578fa5f335de524b166c42",
-    "semantic_hash": ""
-  },
-  "industries.test.ts": {
-    "mtime": 1783937453.2012084,
-    "ast_hash": "bd60b70115e19e1083d1c431575c63bd",
-    "semantic_hash": ""
-  },
-  "src/lib/account.functions.ts": {
-    "mtime": 1783936078.4533887,
-    "ast_hash": "e9093aefb40d106aee8802b57942130a",
-    "semantic_hash": ""
-  },
-  "src/lib/industries.ts": {
-    "mtime": 1783936765.6258454,
-    "ast_hash": "2d65734316fecb8a7cfee2b68fba6ecd",
-    "semantic_hash": ""
-  },
-  "src/lib/wa-industries.server.ts": {
-    "mtime": 1784091020.7383437,
-    "ast_hash": "3b9645a59aaaa1ebfecf99642fd329d5",
-    "semantic_hash": ""
-  },
-  "src/routes/admin/account.tsx": {
-    "mtime": 1783936096.835948,
-    "ast_hash": "38cccf387cf7c644e1b6b8a0e46e67c8",
-    "semantic_hash": ""
-  },
-  "supabase/migrations/20260713120000_v5_industry.sql": {
-    "mtime": 1783937208.9280827,
-    "ast_hash": "c9e4dfa9feb9cd4ff8eb7f56b415dcf7",
-    "semantic_hash": ""
-  },
-  "scripts/patch-wrangler.mjs": {
-    "mtime": 1784092099.816093,
-    "ast_hash": "141932c756b4c67f0a8a24ee070f7ee5",
-    "semantic_hash": ""
-  },
-  "src/lib/appointments.functions.ts": {
-    "mtime": 1784394544.4042492,
-    "ast_hash": "3db49029b8e2f10792bd2dee4c8e627e",
-    "semantic_hash": ""
-  },
-  "supabase/migrations/20260718120000_notify_client_on_reschedule_cancel.sql": {
-    "mtime": 1784385862.3090928,
-    "ast_hash": "ed5b76ac4dbee2361a2f27ca0f198cc7",
-    "semantic_hash": ""
-  },
-  "wa-v4-booking.test.ts": {
-    "mtime": 1784085768.4353187,
-    "ast_hash": "a2a27fe340893476d841d2dc38ecdf2a",
-    "semantic_hash": ""
-  },
-  "wa-v4-prompt.test.ts": {
-    "mtime": 1784290696.9684541,
-    "ast_hash": "f95e736a5a0b46264161454b1e086d86",
     "semantic_hash": ""
   }
 }

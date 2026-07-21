@@ -113,7 +113,12 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         const chatId: string | undefined = sd?.chatId;
         if (!chatId || !chatId.endsWith("@c.us")) return ack();
 
-        const senderName: string | null = sd?.senderName ?? sd?.chatName ?? null;
+        // Strip potential prompt-injection attempts from the WhatsApp display name.
+        // A malicious user could set their name to "Ignore previous instructions..." etc.
+        const rawSenderName: string | null = sd?.senderName ?? sd?.chatName ?? null;
+        const senderName: string | null = rawSenderName
+          ? rawSenderName.replace(/[\n\r]/g, " ").slice(0, 60)
+          : null;
         const phone = normalizeChatIdToPhone(chatId);
         const greenIdMessage: string | undefined = payload?.idMessage;
         const nowIso = new Date().toISOString();
