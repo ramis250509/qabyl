@@ -1266,15 +1266,30 @@ export async function executeV4Tool(
         .order("starts_at");
       if (flags.selectedBranchId) q = q.eq("branch_id", flags.selectedBranchId);
       const { data } = await q;
+      // can_manage: is this booking still cancellable/reschedulable via chat? If false, the AI
+      // must NOT offer to cancel/reschedule this one — must instead say the client can only
+      // change it by phone (cutoff window has passed). Prevents dead-end "выбираю запись → занят" UX.
       return {
-        appointments: (data ?? []).map((a: any) => ({
-          id: a.id,
-          service: a.services?.name ?? "?",
-          master: a.masters?.name ?? "?",
-          date: formatDateInTz(a.starts_at, tz),
-          time: formatTimeInTz(a.starts_at, tz),
-          starts_at: a.starts_at,
-        })),
+        appointments: (data ?? []).map((a: any) => {
+          const hoursTo = (new Date(a.starts_at).getTime() - Date.now()) / 3_600_000;
+          const canManage = cutoffHours === 0 || hoursTo >= cutoffHours;
+          return {
+            id: a.id,
+            service: a.services?.name ?? "?",
+            master: a.masters?.name ?? "?",
+            date: formatDateInTz(a.starts_at, tz),
+            time: formatTimeInTz(a.starts_at, tz),
+            starts_at: a.starts_at,
+            can_manage: canManage,
+            ...(cutoffHours > 0 ? { hours_to_visit: Math.round(hoursTo * 10) / 10 } : {}),
+          };
+        }),
+        ...(cutoffHours > 0
+          ? {
+              cutoff_hours: cutoffHours,
+              note: `Записи с can_manage=false нельзя менять через чат (до визита меньше ${cutoffHours} ч). Скажи клиенту, что такую запись отменяет/переносит только сам салон — попроси связаться с салоном напрямую, НЕ предлагай выбрать её.`,
+            }
+          : {}),
       };
     }
 
@@ -1326,8 +1341,22 @@ export async function executeV4Tool(
         .eq("client_phone", input.client.phone)
         .maybeSingle();
       if (!appt) return { success: false, error: "not_found" };
-      if (withinCutoff((appt as any).starts_at))
-        return { success: false, error: "cutoff", cutoff_hours: cutoffHours };
+      if (withinCutoff((appt as any).starts_at)) {
+        // Escalate: the client wants to cancel <cutoff hours before visit — the admin needs to
+        // know either to accommodate the request or prepare for a likely no-show.
+        flags.needsHuman = true;
+        flags.escalateReason = `Клиент просит ОТМЕНИТЬ запись на ${formatDateInTz((appt as any).starts_at, tz)} в ${formatTimeInTz((appt as any).starts_at, tz)}, до визита меньше ${cutoffHours} ч — через чат нельзя.`;
+        return {
+          success: false,
+          error: "cutoff",
+          cutoff_hours: cutoffHours,
+          appointment: {
+            date: formatDateInTz((appt as any).starts_at, tz),
+            time: formatTimeInTz((appt as any).starts_at, tz),
+          },
+          note: `До визита меньше ${cutoffHours} ч — отмена через чат невозможна по правилам салона. Скажи клиенту с сожалением, что такую запись отменить через чат нельзя — попроси связаться с салоном напрямую. Диалог уже помечен для администратора.`,
+        };
+      }
       const { error } = await db
         .from("appointments")
         .update({ status: "cancelled" })
@@ -1345,8 +1374,20 @@ export async function executeV4Tool(
         .eq("client_phone", input.client.phone)
         .maybeSingle();
       if (!appt) return { success: false, error: "not_found" };
-      if (withinCutoff((appt as any).starts_at))
-        return { success: false, error: "cutoff", cutoff_hours: cutoffHours };
+      if (withinCutoff((appt as any).starts_at)) {
+        flags.needsHuman = true;
+        flags.escalateReason = `Клиент просит ПЕРЕНЕСТИ запись на ${formatDateInTz((appt as any).starts_at, tz)} в ${formatTimeInTz((appt as any).starts_at, tz)}, до визита меньше ${cutoffHours} ч — через чат нельзя.`;
+        return {
+          success: false,
+          error: "cutoff",
+          cutoff_hours: cutoffHours,
+          appointment: {
+            date: formatDateInTz((appt as any).starts_at, tz),
+            time: formatTimeInTz((appt as any).starts_at, tz),
+          },
+          note: `До визита меньше ${cutoffHours} ч — перенос через чат невозможен по правилам салона. Скажи клиенту с сожалением, что такую запись перенести через чат нельзя — попроси связаться с салоном напрямую. Диалог уже помечен для администратора.`,
+        };
+      }
       const targetMaster = (args.new_master_id as string) || (appt as any).master_id;
       const newDate = (args.new_date as string) ?? String(args.new_slot_start ?? "").slice(0, 10);
       const resolved = await resolveRequestedSlot({
