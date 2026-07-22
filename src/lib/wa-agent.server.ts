@@ -202,6 +202,7 @@ export async function greenApiSendMessage(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ chatId, message }),
+      signal: AbortSignal.timeout(15_000),
     });
     const txt = await r.text();
     let json: any = null;
@@ -234,6 +235,7 @@ export async function greenApiSendFileByUrl(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ chatId, urlFile, fileName, caption }),
+      signal: AbortSignal.timeout(15_000),
     });
     const txt = await r.text();
     let json: any = null;
@@ -264,6 +266,7 @@ export async function greenApiDownloadFile(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ chatId, idMessage }),
+      signal: AbortSignal.timeout(15_000),
     });
     const txt = await r.text();
     let json: any = null;
@@ -540,6 +543,7 @@ async function callGemini(opts: {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
       });
       const txt = await r.text();
       if (r.status === 429) {
@@ -2852,6 +2856,7 @@ export async function callGeminiTools(opts: {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
       });
       const txt = await r.text();
       if (r.status === 429 || r.status >= 500) {
@@ -3253,6 +3258,7 @@ export async function greenApiSendButtons(
         message,
         buttons: buttons.map((b) => ({ buttonId: b.id, buttonText: b.text })),
       }),
+      signal: AbortSignal.timeout(15_000),
     });
     const txt = await r.text();
     let json: any = null;
@@ -3289,6 +3295,7 @@ export async function greenApiSendInteractiveButtons(
           buttonText: b.text.slice(0, 25),
         })),
       }),
+      signal: AbortSignal.timeout(15_000),
     });
     const txt = await r.text();
     let json: any = null;
@@ -3318,6 +3325,7 @@ export async function greenApiSendListMessage(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ chatId, message, buttonText, sections }),
+      signal: AbortSignal.timeout(15_000),
     });
     const txt = await r.text();
     let json: any = null;
@@ -3761,6 +3769,7 @@ async function callGeminiV3Faq(
           thinkingConfig: { thinkingBudget: 0 },
         },
       }),
+      signal: AbortSignal.timeout(30_000),
     });
     const json: any = await r.json();
     return json?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? "";

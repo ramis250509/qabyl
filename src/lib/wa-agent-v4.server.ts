@@ -1256,7 +1256,7 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   for (const m of input.lastMessages) {
     if (m.kind === "image" && m.media_signed_url) {
       try {
-        const r = await fetch(m.media_signed_url);
+        const r = await fetch(m.media_signed_url, { signal: AbortSignal.timeout(10_000) });
         if (r.ok) {
           const ab = await r.arrayBuffer();
           const base64 =
@@ -1295,6 +1295,9 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     };
   }
 
+  const AGENT_DEADLINE_MS = 50_000;
+  const agentDeadline = Date.now() + AGENT_DEADLINE_MS;
+
   const closedDates = await loadSalonClosedDates(
     db,
     input.salon.salonId,
@@ -1310,6 +1313,10 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   const runToolLoop = async (): Promise<string> => {
     let r = "";
     for (let iter = 0; iter < MAX_TOOL_ITERS; iter++) {
+      if (Date.now() > agentDeadline) {
+        debug.errors.push(`agent_deadline_exceeded_at_iter_${iter}`);
+        break;
+      }
       const res = await callGeminiTools({
         apiKey,
         systemInstruction: systemPrompt,
