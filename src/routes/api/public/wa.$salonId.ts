@@ -20,13 +20,11 @@ import {
 } from "@/lib/wa-agent.server";
 import { runWaAgentV4 } from "@/lib/wa-agent-v4.server";
 
-// Must outlast a slow turn. One turn can chain several Gemini calls (tool loop) and each may now
-// retry with backoff, so 25s could expire mid-processing — a second webhook for the SAME
-// conversation would then grab the lock and double-reply. 60s covers a realistic slow turn while
-// still releasing quickly if a worker dies (the lock is also released in a finally block).
-const LOCK_TTL_SECONDS = 60;
+// Must outlast a slow turn. With reduced tool iterations (5 max) and 15s per-call timeout,
+// a worst-case turn is ~20s. 35s covers that with margin while releasing quickly if a worker dies.
+const LOCK_TTL_SECONDS = 35;
 const MAX_LOOP_ITERATIONS = 3;
-const LOCK_WAIT_TIMEOUT_MS = 8000;
+const LOCK_WAIT_TIMEOUT_MS = 5000;
 const LOCK_POLL_INTERVAL_MS = 400;
 
 export function resolveAssistantRuntimeConfig(salon: any, assistant: any, secrets: any) {
