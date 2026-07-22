@@ -2828,8 +2828,8 @@ export async function callGeminiTools(opts: {
   // with backoff so a one-off hiccup never reaches the client. 429 gets short retries too: the
   // free tier limit is per-minute, and a brief wait often clears it. Only a persistent failure
   // (real quota exhaustion, malformed request) falls through to the caller's fallback message.
-  const MAX_ATTEMPTS = 3;
-  const BACKOFF_CAP_MS = 2500;
+  const MAX_ATTEMPTS = 4; // was 3: one more retry survives brief 429/503 bursts
+  const BACKOFF_CAP_MS = 4000; // per-wait cap so the webhook doesn't stall too long
   const lastAttempt = MAX_ATTEMPTS - 1;
   // Wait suggested by the server (429/503): Retry-After header (seconds) or Gemini's RetryInfo
   // (`"retryDelay":"7s"` in the body). Falls back to exponential backoff with jitter.
@@ -2852,7 +2852,6 @@ export async function callGeminiTools(opts: {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(15000),
       });
       const txt = await r.text();
       if (r.status === 429 || r.status >= 500) {

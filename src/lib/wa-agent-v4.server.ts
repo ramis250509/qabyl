@@ -37,8 +37,8 @@ async function getAdmin() {
   return supabaseAdmin;
 }
 
-const MAX_TOOL_ITERS = 5;
-const HISTORY_CAP = 20; // Gemini contents kept in state_data.v4_history between turns
+const MAX_TOOL_ITERS = 8;
+const HISTORY_CAP = 30; // Gemini contents kept in state_data.v4_history between turns
 const PHOTO_NOTES_CAP = 6; // structured photo analyses kept in state_data.photo_notes
 // The agent must see the WHOLE day's free start-times, not a truncated head of the list.
 // A capped list (was 8) made the model think a full working day ended at 11:45 and wrongly
@@ -1339,21 +1339,20 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
         break;
       }
 
+      const toolResults: any[] = [];
       for (const part of functionCalls) {
-        debug.actions.push(`tool:${(part.functionCall as any).name}`);
+        const { name, args } = part.functionCall as { name: string; args: Record<string, any> };
+        debug.actions.push(`tool:${name}`);
+        try {
+          const result = await executeV4Tool(name, args ?? {}, input, db, flags);
+          toolResults.push({ functionResponse: { name, response: result } });
+        } catch (e: any) {
+          debug.errors.push(`tool_${name}: ${e?.message ?? String(e)}`);
+          toolResults.push({
+            functionResponse: { name, response: { error: e?.message ?? "failed" } },
+          });
+        }
       }
-      const toolResults = await Promise.all(
-        functionCalls.map(async (part) => {
-          const { name, args } = part.functionCall as { name: string; args: Record<string, any> };
-          try {
-            const result = await executeV4Tool(name, args ?? {}, input, db, flags);
-            return { functionResponse: { name, response: result } };
-          } catch (e: any) {
-            debug.errors.push(`tool_${name}: ${e?.message ?? String(e)}`);
-            return { functionResponse: { name, response: { error: e?.message ?? "failed" } } };
-          }
-        }),
-      );
       contents.push({ role: "user", parts: toolResults });
     }
     return r;
@@ -1411,33 +1410,13 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     reply = `${greeting}\n\n${reply}`;
   }
 
-  // Persist Gemini history without inline images and with trimmed tool responses (keep the DB
-  // row small and the next Gemini call fast). Without trimming, a single get_available_slots
-  // response with 64 slot objects stays in history and is re-sent on EVERY subsequent turn,
-  // ballooning input tokens and slowing the API call to 30–60+ seconds.
-  const trimPartForHistory = (p: any): any => {
-    if (p.inlineData) return { text: "[фото]" };
-    if (p.functionResponse) {
-      const r = p.functionResponse.response;
-      if (!r) return p;
-      const trimmed = { ...r };
-      if (Array.isArray(trimmed.services) && trimmed.services.length > 6)
-        trimmed.services = [...trimmed.services.slice(0, 6), { note: `ещё ${trimmed.services.length - 6}` }];
-      if (Array.isArray(trimmed.slots) && trimmed.slots.length > 4)
-        trimmed.slots = [...trimmed.slots.slice(0, 4), { note: `ещё ${trimmed.slots.length - 4}` }];
-      if (Array.isArray(trimmed.free_times) && trimmed.free_times.length > 6)
-        trimmed.free_times = trimmed.free_times.slice(0, 6);
-      if (Array.isArray(trimmed.appointments) && trimmed.appointments.length > 4)
-        trimmed.appointments = trimmed.appointments.slice(0, 4);
-      delete trimmed.note;
-      return { functionResponse: { name: p.functionResponse.name, response: trimmed } };
-    }
-    return p;
-  };
+  // Persist Gemini history without inline images (keep the DB row small). Sanitize AFTER the
+  // cap slice so a stored history never begins on an orphaned functionResponse / model turn
+  // (which would 400 the next request — see sanitizeGeminiHistory).
   const historyToSave = sanitizeGeminiHistory(
     contents.slice(-HISTORY_CAP).map((c) => ({
       ...c,
-      parts: c.parts.map(trimPartForHistory),
+      parts: c.parts.map((p: any) => (p.inlineData ? { text: "[фото]" } : p)),
     })),
   );
 
