@@ -211,6 +211,16 @@ export function buildSystemPromptV4(
     config.client_addressing?.trim()
       ? `КАК К ТЕБЕ ОБРАЩАЮТСЯ КЛИЕНТЫ: ${config.client_addressing.trim().replace(/\s*\n\s*/g, ", ")}. Если клиент пишет одно из этих слов или похожее обращение (в т.ч. в начале сообщения перед вопросом, напр. «Айгерим, кандайсыз?», «Айгерим, канча болот?») — он обращается ИМЕННО К ТЕБЕ, администратору, а НЕ представляется своим именем. КРИТИЧНО: НИКОГДА не считай это слово именем клиента, НИКОГДА не отвечай «Здравствуйте, <это слово>!» и НИКОГДА не записывай его в client_name. Это может совпадать с именем ${sn.genSg} — не путай: клиент просто зовёт администратора так, как привык. Не переспрашивай «к кому вы обращаетесь?» — просто ответь на суть вопроса. Имя клиента ты всё равно спросишь отдельно перед записью (см. правило про имя). Сам эти слова в ответах использовать не обязан.`
       : "",
+    // Live-admin handoff: the human salon admin already wrote to this client in this session. The
+    // client sees ONE seamless conversation, so the AI must continue it as the same "administrator"
+    // and never contradict, repeat, or ignore what the human just said.
+    (input.handoffContext?.length ?? 0) > 0
+      ? `ВНИМАНИЕ — В ЭТОМ ДИАЛОГЕ УЖЕ ОТВЕЧАЛ ЖИВОЙ АДМИНИСТРАТОР САЛОНА. Для клиента это ОДИН И ТОТ ЖЕ администратор (ты и он — одно лицо), поэтому продолжай ЕСТЕСТВЕННО с того места, где он остановился. Вот его последние сообщения клиенту (НЕ повторяй их, НЕ здоровайся заново, НЕ противоречь им, учитывай названные им цену/время/${sn.accSg}/договорённости как факт):\n${input
+          .handoffContext!.map((t) => `— «${t}»`)
+          .join(
+            "\n",
+          )}\nЕсли администратор уже что-то пообещал или назначил — исходи из этого. Если из его сообщений видно, что вопрос требует человека (спор, жалоба, нестандартная договорённость) — вызови escalate_to_human, а не решай сам.`
+      : "",
     ``,
     `ТВОЯ ЭКСПЕРТНАЯ БАЗА ЗНАНИЙ (общие знания об услугах этой сферы для консультации, это НЕ прайс салона):`,
     ind.knowledgeBase,
@@ -1509,9 +1519,11 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
                   return btoa(bin);
                 })();
           if (m.text_body) clientParts.push({ text: m.text_body });
-          clientParts.push({
-            inlineData: { mimeType: m.media_mime ?? "image/jpeg", data: base64 },
-          });
+          // Trust the storage response's content-type (we set it correctly on upload) so png/webp
+          // photos aren't mislabeled as jpeg to Gemini. Fall back only if the header is missing.
+          const ct = r.headers.get("content-type");
+          const mimeType = ct && ct.startsWith("image/") ? ct : (m.media_mime ?? "image/jpeg");
+          clientParts.push({ inlineData: { mimeType, data: base64 } });
         } else if (m.text_body) {
           clientParts.push({ text: m.text_body });
         }

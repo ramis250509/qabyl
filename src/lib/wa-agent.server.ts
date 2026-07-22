@@ -165,6 +165,10 @@ export type WaAgentInput = {
   state: WaAgentState;
   stateData: WaAgentStateData;
   salonInfo?: WaSalonInfo | null; // optional: for schedule/address questions
+  // V4: text of any manual messages the live salon admin sent the client in this session (kind=
+  // system, direction=out). Injected into the prompt so that when the AI resumes after a takeover
+  // pause it knows what the human already told the client and never contradicts them.
+  handoffContext?: string[];
 };
 
 export type WaInteractiveMessage =

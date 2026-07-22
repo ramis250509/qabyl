@@ -746,6 +746,20 @@ test("стойкое зависание: если модель зависла д
 // and that beauty-only guidance (photo pricing) is NOT leaked into a medical clinic.
 // ============================================================
 
+test("handoffContext: сообщения живого админа попадают в промпт (без противоречий)", () => {
+  const withHandoff = buildSystemPromptV4(
+    makeInput("а во сколько?", {
+      handoffContext: ["Приходите завтра к 18:00", "Скидку 10% сделаем"],
+    }),
+  );
+  expect(withHandoff).toContain("УЖЕ ОТВЕЧАЛ ЖИВОЙ АДМИНИСТРАТОР");
+  expect(withHandoff).toContain("Приходите завтра к 18:00");
+  expect(withHandoff).toContain("Скидку 10% сделаем");
+  // Absent when no admin ever wrote — no phantom handoff block.
+  const noHandoff = buildSystemPromptV4(makeInput("а во сколько?"));
+  expect(noHandoff).not.toContain("УЖЕ ОТВЕЧАЛ ЖИВОЙ АДМИНИСТРАТОР");
+});
+
 test("medical: промпт содержит персону клиники и жёсткие мед-границы", () => {
   const prompt = buildSystemPromptV4(
     makeInput("болит голова", { config: { industry: "medical" } }),

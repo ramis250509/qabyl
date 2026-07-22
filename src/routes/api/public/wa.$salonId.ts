@@ -698,22 +698,46 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
               });
             }
 
-            // 3) Load current-session history only. Old booked sessions are useful for
-            // the admin, but sending them to the agent made it reuse stale context.
-            const { data: histRows } = await supabaseAdmin
-              .from("wa_messages")
-              .select("id, direction, kind, text_body, media_path, created_at")
-              .eq("conversation_id", convId)
-              .gte("created_at", sessionStartedAt)
-              .order("created_at", { ascending: false })
-              .limit(30);
-            const history: WaIncomingMessage[] = ((histRows ?? []) as any[]).reverse().map((m) => ({
-              id: m.id,
-              direction: m.direction,
-              kind: m.kind,
-              text_body: m.text_body,
-              created_at: m.created_at,
-            }));
+            // 3) Load per-engine context for the current session only. Old booked sessions are
+            // useful for the admin, but feeding them to the agent made it reuse stale context.
+            //   - V3 replays the message history (it doesn't keep its own transcript).
+            //   - V4 keeps its own Gemini transcript in state_data.v4_history, so the 30-row
+            //     history query would be wasted latency. Instead V4 gets handoffContext: the text
+            //     of any manual messages the LIVE admin sent the client this session, so when the
+            //     AI resumes after a takeover pause it never contradicts what the human already said.
+            let history: WaIncomingMessage[] = [];
+            let handoffContext: string[] = [];
+            if (waEngine === "v4") {
+              const { data: adminMsgs } = await supabaseAdmin
+                .from("wa_messages")
+                .select("text_body, created_at")
+                .eq("conversation_id", convId)
+                .eq("direction", "out")
+                .eq("kind", "system")
+                .gte("created_at", sessionStartedAt)
+                .not("text_body", "is", null)
+                .order("created_at", { ascending: false })
+                .limit(5);
+              handoffContext = ((adminMsgs ?? []) as any[])
+                .map((m) => (m.text_body ?? "").trim())
+                .filter(Boolean)
+                .reverse();
+            } else {
+              const { data: histRows } = await supabaseAdmin
+                .from("wa_messages")
+                .select("id, direction, kind, text_body, media_path, created_at")
+                .eq("conversation_id", convId)
+                .gte("created_at", sessionStartedAt)
+                .order("created_at", { ascending: false })
+                .limit(30);
+              history = ((histRows ?? []) as any[]).reverse().map((m) => ({
+                id: m.id,
+                direction: m.direction,
+                kind: m.kind,
+                text_body: m.text_body,
+                created_at: m.created_at,
+              }));
+            }
 
             // 4) Run agent
             const input: WaAgentInput = {
@@ -734,6 +758,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
                 working_hours: (salon as any).working_hours ?? null,
                 address: (salon as any).address ?? null,
               },
+              ...(handoffContext.length ? { handoffContext } : {}),
             };
 
             let result;
