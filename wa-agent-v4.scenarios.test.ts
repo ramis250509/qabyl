@@ -90,6 +90,7 @@ function makeDb(
     };
     q.gte = () => q;
     q.order = () => q;
+    q.limit = () => q;
     q.update = (patch: any) => {
       q._update = patch;
       return q;
@@ -270,6 +271,75 @@ test("create_appointment после «да»: запись создаётся, n
   expect(res.nextState).toBe("done");
   expect(db.appointments).toHaveLength(1);
   expect(db.appointments[0].client_phone).toBe("996700000001");
+});
+
+test("без дублей: вторая запись на ту же услугу → reason=already_booked, новая НЕ создаётся", async () => {
+  const db = makeDb({
+    appointments: [
+      {
+        id: "a0",
+        salon_id: "salon1",
+        starts_at: FREE_SLOT,
+        service_id: "svc1",
+        status: "confirmed",
+        client_phone: "996700000001",
+        masterName: "Айгуль",
+      },
+    ],
+  });
+  (globalThis as any).__WA_DB__ = db;
+  geminiQueue = [
+    [
+      fc("create_appointment", {
+        service_id: "svc1",
+        master_id: "m1",
+        slot_start: FREE_SLOT,
+        client_name: "Рамис",
+      }),
+    ],
+    [{ text: "У вас уже есть запись на маникюр. Оформить ещё одну или изменить эту?" }],
+  ];
+  const res = await runWaAgentV4(makeInput("Да, записывайте"));
+  expect(res.appointmentId).toBeNull();
+  expect(db.appointments).toHaveLength(1); // no second booking created
+  const lastReq = geminiRequests[geminiRequests.length - 1];
+  const fr = lastReq.contents
+    .flatMap((c: any) => c.parts)
+    .find((p: any) => p.functionResponse?.name === "create_appointment");
+  expect(fr.functionResponse.response.reason).toBe("already_booked");
+  expect(fr.functionResponse.response.existing).toBeTruthy();
+});
+
+test("без дублей: confirm_duplicate=true разрешает вторую запись (напр. на другого человека)", async () => {
+  const db = makeDb({
+    appointments: [
+      {
+        id: "a0",
+        salon_id: "salon1",
+        starts_at: FREE_SLOT,
+        service_id: "svc1",
+        status: "confirmed",
+        client_phone: "996700000001",
+        masterName: "Айгуль",
+      },
+    ],
+  });
+  (globalThis as any).__WA_DB__ = db;
+  geminiQueue = [
+    [
+      fc("create_appointment", {
+        service_id: "svc1",
+        master_id: "m1",
+        slot_start: FREE_SLOT,
+        client_name: "Гостья",
+        confirm_duplicate: true,
+      }),
+    ],
+    [{ text: "Готово, записала вторую запись!" }],
+  ];
+  const res = await runWaAgentV4(makeInput("да, ещё одну на подругу"));
+  expect(res.appointmentId).toBe("appt_2");
+  expect(db.appointments).toHaveLength(2);
 });
 
 test("занятый слот: create_appointment на несуществующее время → slot_taken, запись НЕ создаётся", async () => {

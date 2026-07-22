@@ -315,6 +315,7 @@ ${sn.nomSg[0].toUpperCase() + sn.nomSg.slice(1)}: <имя ${sn.genSg}>
 Всё верно? Если да — подтвердите, пожалуйста 🙂`,
     `- ЦЕНА В СВОДКЕ ОБЯЗАТЕЛЬНА: если стоимость услуги известна (get_services вернул цену или вилку, либо вы согласовали сумму по фото) — она ДОЛЖНА быть в сводке подтверждения. Не подтверждай запись без строки «Стоимость». Для услуги-вилки покажи вилку (или согласованную по фото сумму) и добавь, что точную цену ${sn.nomSg} подтвердит на месте. Строку «Продолжительность» указывай, если длительность известна из get_services (для вилки длительности — выбранную по фото или диапазон).`,
     `- create_appointment вызывай ТОЛЬКО после того, как клиент явно подтвердил ЭТУ сводку («да», «верно», «записывайте», «ооба», «макул»). Если клиент в ответ меняет деталь (другое время/${sn.accSg}/услугу) — обнови сводку и снова попроси подтверждение, запись не создавай.`,
+    `- БЕЗ ДУБЛЕЙ: если create_appointment вернул reason=already_booked — у клиента уже есть запись на эту услугу (данные в поле existing). Не создавай вторую молча: назови существующую запись (дата/время/${sn.nomSg}) и спроси, оформить ЕЩЁ ОДНУ (напр. на другого человека) или изменить эту. Вторую запись создавай только после явного согласия — повторным вызовом create_appointment с confirm_duplicate:true.`,
     `- ПОДТВЕРЖДАЙ ЗАПИСЬ ТОЛЬКО ПО ФАКТУ (КРИТИЧНО, железное правило): говорить «записал / жаздым / готово, ждём вас» можно ИСКЛЮЧИТЕЛЬНО если create_appointment вернул success:true и appointment_id. Если инструмент вернул success:false (reason=slot_not_free, error, master cannot perform и т.п.) ИЛИ ты его вообще не вызвал — запись НЕ создана, и ты НЕ имеешь права говорить, что клиент записан. Вместо этого честно скажи, что записать пока не удалось, и предложи выход (другое время из nearest, другого ${sn.genSg}, или передай администратору). НИКОГДА не выдумывай факт записи — это хуже, чем отказать: клиент придёт, а его нет в базе.`,
     `- ${sn.nomSg.toUpperCase()} ОБЯЗАТЕЛЕН для записи: create_appointment без реального master_id невозможен. Если клиент не выбрал ${sn.accSg} или сказал «всё равно / потом выберу / скажу когда приду» — НЕ обещай «выберете на месте» без записи: сам выбери конкретного свободного ${sn.accSg}, передай его master_id в create_appointment и назови клиенту, к кому записал. Нельзя «записать без ${sn.genSg}» — такой записи не существует.`,
     `- ВРЕМЯ ЗАПИСИ (СТРОГО): в create_appointment/reschedule_appointment передавай время как date + time (HH:MM, напр. 11:00) — НИКОГДА не вычисляй и не пиши ISO/таймстемпы сам, сервер сам подберёт точный слот. Если инструмент вернул reason=slot_not_free — это время уже заняли, предложи клиенту времена из поля nearest и переспроси; НИКОГДА не подставляй другое время молча (клиент просил 11:00 — не записывай на другое без его согласия).`,
@@ -419,6 +420,11 @@ const V4_TOOL_DECLARATIONS = [
           type: "number",
           description:
             "Только для услуг с диапазоном длительности (duration_min_max задан): длительность в МИНУТАХ, которую ты выбрал по фото клиента — меньший объём работы → duration_min, больший → duration_max. Не передавай, если фото не оценивал или у услуги фиксированная длительность.",
+        },
+        confirm_duplicate: {
+          type: "boolean",
+          description:
+            "Передай true ТОЛЬКО если сервер уже вернул reason=already_booked и клиент ЯВНО подтвердил, что хочет вторую запись на ту же услугу (например на другого человека). В обычной записи не передавай.",
         },
       },
       required: ["service_id", "master_id", "date", "time", "client_name"],
@@ -1169,6 +1175,36 @@ export async function executeV4Tool(
               }
             : {}),
         };
+      }
+      // Duplicate-booking guard ("не было двойных записей"): if this client already has a
+      // confirmed FUTURE appointment for the SAME service, don't silently create a second one —
+      // return the existing booking so the assistant checks intent ("у вас уже есть запись … —
+      // оформить ещё одну или изменить эту?"). The model re-calls with confirm_duplicate:true only
+      // after the client confirms they really want an additional booking (e.g. for another person).
+      if (!args.confirm_duplicate) {
+        const { data: existing } = await db
+          .from("appointments")
+          .select("id, starts_at, masters(name)")
+          .eq("salon_id", input.salon.salonId)
+          .eq("client_phone", input.client.phone)
+          .eq("service_id", args.service_id)
+          .eq("status", "confirmed")
+          .gte("starts_at", new Date().toISOString())
+          .order("starts_at")
+          .limit(1);
+        const dup = (existing ?? [])[0] as any;
+        if (dup) {
+          return {
+            success: false,
+            reason: "already_booked",
+            existing: {
+              date: formatDateInTz(dup.starts_at, tz),
+              time: formatTimeInTz(dup.starts_at, tz),
+              master: dup.masters?.name ?? null,
+            },
+            note: "У клиента УЖЕ есть подтверждённая запись на эту же услугу. НЕ создавай вторую молча. Скажи, что запись уже есть (назови дату/время/мастера), и спроси: оформить ещё одну (напр. на другого человека) или изменить существующую. Только если клиент явно хочет ВТОРУЮ запись — вызови create_appointment ещё раз с confirm_duplicate:true.",
+          };
+        }
       }
       const rpcArgs: any = {
         _salon_id: input.salon.salonId,
