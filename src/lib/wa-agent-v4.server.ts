@@ -1298,7 +1298,9 @@ export async function executeV4Tool(
       // table needed for MVP). "Past" = started before now and not cancelled.
       const { data } = await db
         .from("appointments")
-        .select("starts_at, status, services(name), masters(id, name)")
+        .select(
+          "starts_at, status, branch_id, services(name), masters(id, name, branch_id, is_active)",
+        )
         .eq("salon_id", input.salon.salonId)
         .eq("client_phone", input.client.phone)
         .neq("status", "cancelled")
@@ -1307,19 +1309,29 @@ export async function executeV4Tool(
         .limit(50);
       const past = (data ?? []) as any[];
       if (past.length === 0) return { is_returning: false, visit_count: 0 };
+      const branchScope = flags.selectedBranchId;
+      // preferred_master must be a master who CAN receive a booking at this branch — otherwise the
+      // AI happily offered a master from another branch who doesn't work here (multi-branch bug).
       const masterCounts = new Map<string, { id: string; name: string; visits: number }>();
       const services = new Set<string>();
       for (const a of past) {
         if (a.services?.name) services.add(a.services.name);
         const mid = a.masters?.id;
-        if (mid) {
-          const c = masterCounts.get(mid) ?? { id: mid, name: a.masters?.name ?? "?", visits: 0 };
-          c.visits += 1;
-          masterCounts.set(mid, c);
-        }
+        if (!mid) continue;
+        // Skip masters not eligible at the current conversation's branch.
+        const mbranch = a.masters?.branch_id ?? null;
+        const eligibleHere = !branchScope || mbranch == null || mbranch === branchScope;
+        if (!eligibleHere) continue;
+        if (a.masters?.is_active === false) continue;
+        const c = masterCounts.get(mid) ?? { id: mid, name: a.masters?.name ?? "?", visits: 0 };
+        c.visits += 1;
+        masterCounts.set(mid, c);
       }
       const preferred = [...masterCounts.values()].sort((a, b) => b.visits - a.visits)[0] ?? null;
-      const last = past[0];
+      // last_visit prefers same-branch history, so a client who once visited another branch doesn't
+      // get "your last visit was to master X" for someone unavailable here.
+      const last =
+        (branchScope ? past.find((a) => a.branch_id === branchScope) : past[0]) ?? past[0];
       return {
         is_returning: true,
         visit_count: past.length,

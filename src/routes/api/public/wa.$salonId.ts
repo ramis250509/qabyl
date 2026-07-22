@@ -855,16 +855,32 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             }
 
             // 5c) V4 escalation: alert the salon admin that a live human is needed (the state
-            // update below also pauses the bot).
+            // update below also pauses the bot). De-dupe: don't re-alert if we already alerted
+            // the admin within the last 4h and they still haven't responded — otherwise a
+            // stubborn client who keeps writing after each 60-min pause elapses would spam the
+            // admin's WhatsApp with the same escalation over and over.
             if (result.notifyAdminText) {
-              await notifyOwner({
-                salonId,
-                creds,
-                ownerNotifyPhoneRaw: secrets.owner_notify_phone,
-                kind: "escalation",
-                title: "Клиенту нужен администратор",
-                text: result.notifyAdminText,
-              });
+              const lastEscalatedAt = (curStateData as any)?.last_escalated_at as
+                | string
+                | undefined;
+              const recentlyAlerted =
+                lastEscalatedAt &&
+                Date.now() - new Date(lastEscalatedAt).getTime() < 4 * 60 * 60 * 1000;
+              if (!recentlyAlerted) {
+                await notifyOwner({
+                  salonId,
+                  creds,
+                  ownerNotifyPhoneRaw: secrets.owner_notify_phone,
+                  kind: "escalation",
+                  title: "Клиенту нужен администратор",
+                  text: result.notifyAdminText,
+                });
+                // Record on the state so subsequent turns can see it (persisted below at 7).
+                (result.nextStateData as any) = {
+                  ...(result.nextStateData ?? {}),
+                  last_escalated_at: new Date().toISOString(),
+                };
+              }
             }
 
             // 6) Mark these inbound messages as processed
