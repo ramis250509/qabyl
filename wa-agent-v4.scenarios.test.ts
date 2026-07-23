@@ -595,6 +595,44 @@ test("шаблонное приветствие салона добавляет�
   expect(res.reply).toContain("На какую услугу");
 });
 
+test("язык: sticky=en, но клиент пишет по-русски → перекатывается на RU (устраняет утечку EN-фрагментов)", async () => {
+  (globalThis as any).__WA_DB__ = makeDb();
+  geminiQueue = [[{ text: "Конечно, на какую услугу вас записать?" }]];
+  const res = await runWaAgentV4(
+    makeInput("хочу записаться на стрижку", { stateData: { language: "en" } }),
+  );
+  expect(res.nextStateData.language).toBe("ru");
+});
+
+test("язык: sticky=ky на плоское русское слово — остаётся KY (не ломаем sticky для KY-диалогов)", async () => {
+  (globalThis as any).__WA_DB__ = makeDb();
+  geminiQueue = [[{ text: "Ооба, канча сааттка каалайсыз?" }]];
+  const res = await runWaAgentV4(makeInput("сегодня", { stateData: { language: "ky" } }));
+  expect(res.nextStateData.language).toBe("ky");
+});
+
+test("tool retry: первый вызов падает, второй проходит — клиент видит нормальный ответ", async () => {
+  const db = makeDb();
+  // Первый rpc('get_available_slots') кинет, второй вернёт слот.
+  let calls = 0;
+  const origRpc = db.rpc;
+  db.rpc = (async (name: string, args: any) => {
+    if (name === "get_available_slots") {
+      calls += 1;
+      if (calls === 1) throw new Error("transient supabase blip");
+    }
+    return origRpc(name, args);
+  }) as any;
+  (globalThis as any).__WA_DB__ = db;
+  geminiQueue = [
+    [fc("get_available_slots", { service_id: "svc1", date: "2099-01-01" })],
+    [{ text: "На эту дату есть 10:00. Записать вас?" }],
+  ];
+  const res = await runWaAgentV4(makeInput("завтра свободно?"));
+  expect(res.reply).not.toMatch(/не получилось получить данные|техническая ошибка/i);
+  expect(calls).toBeGreaterThanOrEqual(2); // повтор действительно был
+});
+
 test("приветствие НЕ дублируется, если модель уже поздоровалась", async () => {
   (globalThis as any).__WA_DB__ = makeDb();
   geminiQueue = [[{ text: "Здравствуйте! На какую услугу вас записать?" }]];
