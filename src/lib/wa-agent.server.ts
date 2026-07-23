@@ -1805,22 +1805,36 @@ export async function fetchMergedSlots(opts: {
   minStartTime?: Date;
   limit?: number;
 }): Promise<MergedSlot[]> {
+  // Fan out one RPC per master IN PARALLEL. The previous serial for-await loop was the single
+  // biggest cause of the 60–120s "AI is slow" regression: for a salon with N masters the drain
+  // spent N × RPC round-trip (200–500 ms each from Cloudflare Worker → Supabase) just for slots,
+  // and the V4 tool loop can call this 3–5× per turn (get_available_slots, check_time,
+  // mastersFreeAtRequestedTime, emptyDayReasonScoped fallbacks). 10 masters × 400 ms × 4 calls
+  // = 16 s BURNT on serialization alone. Promise.all reduces it to ~1 round-trip regardless of N.
+  const perMaster = await Promise.all(
+    opts.masters.map(async (m) => {
+      const { data } = await opts.db.rpc("get_available_slots", {
+        _master_id: m.id,
+        _service_id: opts.serviceId,
+        _date: opts.day,
+      });
+      return {
+        masterId: m.id,
+        rows: (data ?? []) as Array<{ slot_start: string; slot_end: string }>,
+      };
+    }),
+  );
   const map = new Map<string, MergedSlot>();
-  for (const m of opts.masters) {
-    const { data } = await opts.db.rpc("get_available_slots", {
-      _master_id: m.id,
-      _service_id: opts.serviceId,
-      _date: opts.day,
-    });
-    for (const s of data ?? []) {
+  for (const { masterId, rows } of perMaster) {
+    for (const s of rows) {
       const key = s.slot_start as string;
       if (opts.part && !isInPart(key, opts.tz, opts.part)) continue;
       if (opts.minStartTime && new Date(key).getTime() <= opts.minStartTime.getTime()) continue;
       const cur = map.get(key);
       if (cur) {
-        if (!cur.master_ids.includes(m.id)) cur.master_ids.push(m.id);
+        if (!cur.master_ids.includes(masterId)) cur.master_ids.push(masterId);
       } else {
-        map.set(key, { start: key, end: s.slot_end as string, master_ids: [m.id] });
+        map.set(key, { start: key, end: s.slot_end as string, master_ids: [masterId] });
       }
     }
   }

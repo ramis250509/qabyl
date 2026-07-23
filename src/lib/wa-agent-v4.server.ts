@@ -753,11 +753,17 @@ async function emptyDayReasonScoped(commonArgs: {
   branchId?: string | null;
   masterId?: string | null;
 }): Promise<string> {
-  const verdict = await classifyDayForService(commonArgs);
-  if (verdict === "closed" && commonArgs.masterId) {
-    // Is the salon/service actually working that day with a DIFFERENT master?
-    const salonWide = await classifyDayForService({ ...commonArgs, masterId: null });
-    if (salonWide === "workable") return "master_off_that_day";
+  // Fire the master-scoped verdict AND the salon-wide verdict in parallel — they're independent
+  // queries and this function is hit on every "day is empty" tool response. Sequential await here
+  // wasted a whole round-trip per turn for multi-branch salons.
+  const [verdict, salonWide] = await Promise.all([
+    classifyDayForService(commonArgs),
+    commonArgs.masterId
+      ? classifyDayForService({ ...commonArgs, masterId: null })
+      : Promise.resolve(null as any),
+  ]);
+  if (verdict === "closed" && commonArgs.masterId && salonWide === "workable") {
+    return "master_off_that_day";
   }
   return emptyDayReason(verdict);
 }
