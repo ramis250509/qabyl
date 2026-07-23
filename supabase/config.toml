@@ -1,4 +1,4 @@
-project_id = "khykprcdojksqvuqyajd"
+project_id = "bfxexnpyfslfuelfkhzr"
 
 # IMPORTANT: these functions are invoked by DB triggers and pg_cron via net.http_post, which
 # send only an `x-cron-secret` header (their own auth) and NO `Authorization: Bearer <jwt>`.
