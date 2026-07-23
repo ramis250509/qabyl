@@ -314,7 +314,18 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         // Only runs for inbound messages AND only once a conversation row already exists — a
         // client's very first message can't exceed the limit yet, and skipping the check saves
         // a query on cold conversations.
-        if (webhookType === "incomingMessageReceived" && existingConv?.id) {
+        // Only pay the count round-trip when messages are actually arriving in rapid succession
+        // (a possible flood). At normal conversational pace — a gap over RATE_LIMIT_PROBE_GAP_MS
+        // since the previous message — a flood is impossible, so we skip the query entirely. This
+        // removes one Worker→Supabase round-trip (~350ms) from virtually every real message while
+        // still catching an actual runaway client (which by definition sends with tiny gaps).
+        const RATE_LIMIT_PROBE_GAP_MS = 4000;
+        const prevMsgAtMs = existingConv?.last_message_at
+          ? new Date(existingConv.last_message_at as string).getTime()
+          : 0;
+        const rapidSuccession =
+          prevMsgAtMs > 0 && Date.now() - prevMsgAtMs < RATE_LIMIT_PROBE_GAP_MS;
+        if (webhookType === "incomingMessageReceived" && existingConv?.id && rapidSuccession) {
           const since = new Date(Date.now() - RATE_LIMIT_WINDOW_MS).toISOString();
           const { count: recentCount } = await supabaseAdmin
             .from("wa_messages")
@@ -623,17 +634,18 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
           return ack();
         }
 
-        // Brief debounce: wait 350ms so that rapid follow-up messages (e.g. client sends
-        // "Привет" then "хочу на стрижку" in quick succession) accumulate before we start
-        // processing. The drain loop will then batch all pending messages into one turn.
-        // Trimmed from 700 → 350 ms after prod perf audit — the drain-loop coalescer already
-        // catches most bursts, so a shorter initial debounce cuts baseline latency in half here.
-        await new Promise((r) => setTimeout(r, 350));
-
-        // ---- Try to acquire processing lock; if another worker holds it, wait briefly
-        // (it will pick up our just-inserted message in its loop).
+        // Brief debounce + lock acquisition, OVERLAPPED. The debounce (350ms) lets a rapid
+        // follow-up message ("Привет" then "хочу на стрижку") land as a row before we drain; the
+        // lock (a ~300-400ms Worker→Supabase round-trip) is independent — holding the lock while
+        // the debounce window elapses is perfectly safe. Running them concurrently instead of
+        // sequentially removes ~350ms from every turn's preAgent (prod TIMING showed preAgent is
+        // pure sequential-round-trip cost). The drain re-reads all pending after, so a follow-up
+        // that arrives during the window is still picked up.
         const lockId = crypto.randomUUID();
-        const acquired = await tryAcquireLockWithWait(supabaseAdmin, convId, lockId);
+        const [, acquired] = await Promise.all([
+          new Promise((r) => setTimeout(r, 350)),
+          tryAcquireLockWithWait(supabaseAdmin, convId, lockId),
+        ]);
         if (!acquired) {
           // Another worker is handling this conversation. Our message is queued via
           // processed_at IS NULL — that worker will pick it up.
@@ -773,29 +785,32 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
               }
             }
 
-            // 2) Sign media URLs for any image messages IN PARALLEL. A burst with 2–3 photos
-            // used to pay 2–3 × ~200 ms serially before the agent even started.
-            const lastMessages: WaIncomingMessage[] = await Promise.all(
-              freshPending.map(async (m: any) => {
-                let signed: string | null = null;
-                if (m.kind === "image" && m.media_path) {
-                  const { data: s } = await supabaseAdmin.storage
-                    .from("wa-media")
-                    .createSignedUrl(m.media_path, 600);
-                  signed = s?.signedUrl ?? null;
-                }
-                return {
-                  id: m.id,
-                  direction: "in",
-                  kind: m.kind as any,
-                  text_body: m.text_body,
-                  media_signed_url: signed,
-                  media_path: m.media_path,
-                  created_at: m.created_at,
-                  selected_id: m?.meta?.selected_id ?? null,
-                };
-              }),
-            );
+            // 2+3) Sign media URLs AND load per-engine context (handoff/history) CONCURRENTLY.
+            // Media signing depends on freshPending; the context query is independent of it, so
+            // running both in one Promise.all removes a full ~350ms Worker→Supabase round-trip
+            // from every turn's preAgent (prod TIMING showed preAgent is pure round-trip cost).
+            const signMedia = async (): Promise<WaIncomingMessage[]> =>
+              Promise.all(
+                freshPending.map(async (m: any) => {
+                  let signed: string | null = null;
+                  if (m.kind === "image" && m.media_path) {
+                    const { data: s } = await supabaseAdmin.storage
+                      .from("wa-media")
+                      .createSignedUrl(m.media_path, 600);
+                    signed = s?.signedUrl ?? null;
+                  }
+                  return {
+                    id: m.id,
+                    direction: "in",
+                    kind: m.kind as any,
+                    text_body: m.text_body,
+                    media_signed_url: signed,
+                    media_path: m.media_path,
+                    created_at: m.created_at,
+                    selected_id: m?.meta?.selected_id ?? null,
+                  };
+                }),
+              );
 
             // 3) Load per-engine context for the current session only. Old booked sessions are
             // useful for the admin, but feeding them to the agent made it reuse stale context.
@@ -804,24 +819,29 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             //     history query would be wasted latency. Instead V4 gets handoffContext: the text
             //     of any manual messages the LIVE admin sent the client this session, so when the
             //     AI resumes after a takeover pause it never contradicts what the human already said.
-            let history: WaIncomingMessage[] = [];
-            let handoffContext: string[] = [];
-            if (waEngine === "v4") {
-              const { data: adminMsgs } = await supabaseAdmin
-                .from("wa_messages")
-                .select("text_body, created_at")
-                .eq("conversation_id", convId)
-                .eq("direction", "out")
-                .eq("kind", "system")
-                .gte("created_at", sessionStartedAt)
-                .not("text_body", "is", null)
-                .order("created_at", { ascending: false })
-                .limit(5);
-              handoffContext = ((adminMsgs ?? []) as any[])
-                .map((m) => (m.text_body ?? "").trim())
-                .filter(Boolean)
-                .reverse();
-            } else {
+            const loadContext = async (): Promise<{
+              history: WaIncomingMessage[];
+              handoffContext: string[];
+            }> => {
+              if (waEngine === "v4") {
+                const { data: adminMsgs } = await supabaseAdmin
+                  .from("wa_messages")
+                  .select("text_body, created_at")
+                  .eq("conversation_id", convId)
+                  .eq("direction", "out")
+                  .eq("kind", "system")
+                  .gte("created_at", sessionStartedAt)
+                  .not("text_body", "is", null)
+                  .order("created_at", { ascending: false })
+                  .limit(5);
+                return {
+                  history: [],
+                  handoffContext: ((adminMsgs ?? []) as any[])
+                    .map((m) => (m.text_body ?? "").trim())
+                    .filter(Boolean)
+                    .reverse(),
+                };
+              }
               const { data: histRows } = await supabaseAdmin
                 .from("wa_messages")
                 .select("id, direction, kind, text_body, media_path, created_at")
@@ -829,14 +849,23 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
                 .gte("created_at", sessionStartedAt)
                 .order("created_at", { ascending: false })
                 .limit(30);
-              history = ((histRows ?? []) as any[]).reverse().map((m) => ({
-                id: m.id,
-                direction: m.direction,
-                kind: m.kind,
-                text_body: m.text_body,
-                created_at: m.created_at,
-              }));
-            }
+              return {
+                handoffContext: [],
+                history: ((histRows ?? []) as any[]).reverse().map((m) => ({
+                  id: m.id,
+                  direction: m.direction,
+                  kind: m.kind,
+                  text_body: m.text_body,
+                  created_at: m.created_at,
+                })),
+              };
+            };
+
+            // Run media-signing and context-loading concurrently — independent, ~350ms saved.
+            const [lastMessages, { history, handoffContext }] = await Promise.all([
+              signMedia(),
+              loadContext(),
+            ]);
 
             // 4) Run agent
             const input: WaAgentInput = {
