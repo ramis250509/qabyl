@@ -675,20 +675,24 @@ test("gemini caching: успешно созданный кеш переиспо�
   }) as any;
 
   try {
-    // Turn 1: cache is created, first generate uses cache
+    // Turn 1: cache creation fires CONCURRENTLY (non-blocking) so the turn is not delayed by it.
+    // The single-iteration reply may run inline (cache not resolved yet) — timing-dependent, so
+    // we don't assert the inline-vs-cache split here. What we DO guarantee: the cache is created
+    // exactly once and persisted to state for the next turn.
     geminiQueue = [[{ text: "Здравствуйте! Чем помочь?" }]];
     const r1 = await runWaAgentV4(makeInput("привет"));
     expect(cacheCreateCalls).toBe(1);
-    expect(generateCallsWithCache).toBe(1);
-    expect(generateCallsInline).toBe(0);
     const cacheOnState = (r1.nextStateData as any).gemini_cache;
     expect(cacheOnState?.name).toBe("cachedContents/test-cache-1");
 
-    // Turn 2: cache is reused from state — no create call, generate uses cache
+    // Turn 2: cache is reused from state synchronously at turn start — no new create call, and
+    // the generate call uses the cached prefix.
+    generateCallsWithCache = 0;
+    generateCallsInline = 0;
     geminiQueue = [[{ text: "Стрижка?" }]];
     await runWaAgentV4(makeInput("хочу стрижку", { stateData: r1.nextStateData }));
-    expect(cacheCreateCalls).toBe(1); // still 1 — reused
-    expect(generateCallsWithCache).toBe(2);
+    expect(cacheCreateCalls).toBe(1); // still 1 — reused, not recreated
+    expect(generateCallsWithCache).toBe(1); // turn 2 uses the cache
     expect(generateCallsInline).toBe(0);
   } finally {
     globalThis.fetch = origFetch;

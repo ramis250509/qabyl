@@ -2881,7 +2881,11 @@ export async function createGeminiCache(opts: {
     tools: opts.tools?.length ? [{ functionDeclarations: opts.tools }] : undefined,
     ttl: `${ttl}s`,
   };
-  const url = `${GEMINI_BASE}/cachedContents?key=${encodeURIComponent(opts.apiKey)}`;
+  // cachedContents lives at /v1beta/cachedContents — NOT under /models/. GEMINI_BASE ends in
+  // "/models", so we strip that segment. (The earlier `${GEMINI_BASE}/cachedContents` built a
+  // 404 path, so caching silently failed and always fell back to inline.)
+  const cacheBase = GEMINI_BASE.replace(/\/models$/, "");
+  const url = `${cacheBase}/cachedContents?key=${encodeURIComponent(opts.apiKey)}`;
   try {
     const r = await fetch(url, {
       method: "POST",

@@ -1798,25 +1798,32 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     new Date(cachedFromState.expireTime).getTime() > Date.now() + 60_000;
   let activeCacheName: string | null = cacheStillValid ? cachedFromState!.name : null;
   let cacheJustCreated: { name: string; expireTime: string } | null = null;
-  if (!activeCacheName) {
-    // First turn (or expired) — create a fresh cache in parallel with the first iteration.
-    // If creation fails (prompt too small, 4xx, network), activeCacheName stays null and we
-    // run the inline path exactly as before.
-    const created = await createGeminiCache({
+  // CRITICAL LATENCY FIX: cache creation must NEVER block the turn. Previously we `await`ed it
+  // before the first Gemini call, so every NEW conversation (exactly what /restart testing
+  // produces) paid a 1–3 s creation cost up front with zero benefit — the reply lands on the
+  // same turn and only iterations 2+ could use the cache. Now we fire creation concurrently:
+  // iteration 1 runs INLINE immediately, and the `.then` flips activeCacheName on once the
+  // cache resolves (typically by iteration 2, since Gemini calls take seconds). At persist time
+  // we await the already-settled promise to store the name for the NEXT turn.
+  let cacheCreationPromise: Promise<{ name: string; expireTime: string } | null> | null = null;
+  if (activeCacheName) {
+    debug.actions.push(`gemini_cache:reused:${activeCacheName}`);
+  } else {
+    cacheCreationPromise = createGeminiCache({
       apiKey,
       systemInstruction: systemPrompt,
       tools: V4_TOOL_DECLARATIONS,
       ttlSeconds: 3600,
     });
-    if (created) {
-      activeCacheName = created.name;
-      cacheJustCreated = created;
-      debug.actions.push(`gemini_cache:created:${created.name}`);
-    } else {
-      debug.actions.push(`gemini_cache:skipped`);
-    }
-  } else {
-    debug.actions.push(`gemini_cache:reused:${activeCacheName}`);
+    cacheCreationPromise.then((created) => {
+      if (created) {
+        activeCacheName = created.name;
+        cacheJustCreated = created;
+        debug.actions.push(`gemini_cache:created_async:${created.name}`);
+      } else {
+        debug.actions.push(`gemini_cache:skipped`);
+      }
+    });
   }
 
   // One agentic pass: loop tool-calls until the model returns a plain-text reply. Mutates
@@ -1987,11 +1994,17 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   const nextState: WaAgentState = flags.appointmentId ? "done" : "collecting";
   // Persist the Gemini prompt-cache handle across turns. Reused as long as it hasn't expired
   // (checked at turn start). Cleared on cache-miss so we recreate next turn.
-  const persistedCache = cacheJustCreated
-    ? cacheJustCreated
-    : activeCacheName && cachedFromState
-      ? cachedFromState
-      : null;
+  // Await the concurrent creation promise — by now it has almost always resolved (the tool loop
+  // took seconds), so this adds no latency; it just makes the freshly-created name available to
+  // persist. A cache created too late to help THIS turn is still stored for the NEXT one.
+  const createdCache = cacheCreationPromise ? await cacheCreationPromise.catch(() => null) : null;
+  const persistedCache = createdCache
+    ? createdCache
+    : cacheJustCreated
+      ? cacheJustCreated
+      : activeCacheName && cachedFromState
+        ? cachedFromState
+        : null;
   const nextStateData: WaAgentStateData = {
     language,
     greeted: true,

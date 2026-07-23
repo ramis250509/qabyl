@@ -86,6 +86,12 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         const log = (msg: string, ...rest: unknown[]) => console.log(`[wa ${rid}] ${msg}`, ...rest);
         const errLog = (msg: string, ...rest: unknown[]) =>
           console.error(`[wa ${rid}] ${msg}`, ...rest);
+        // Wall-clock stopwatch for per-stage latency. `ms()` = elapsed since webhook receipt.
+        // We log one compact TIMING line per processed message so latency is provable from
+        // Cloudflare logs (grep the rid) instead of guessed. This is how we separate transport
+        // overhead from Gemini time — the whole point of the "simulator fast, WhatsApp slow" hunt.
+        const t0 = Date.now();
+        const ms = () => Date.now() - t0;
         const url = new URL(request.url);
         const token = url.searchParams.get("token") || request.headers.get("x-wa-token") || "";
         if (!salonId || !token) {
@@ -847,6 +853,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             };
 
             let result;
+            const tPreAgent = ms();
             try {
               result = waEngine === "v4" ? await runWaAgentV4(input) : await runWaAgentV3(input);
             } catch (e: any) {
@@ -901,11 +908,19 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
               : result.reply;
             const isDuplicateReply = sentText.trim() === (lastSentReply ?? "").trim();
             let sentIdMessage: string | undefined;
+            const tAgentDone = ms();
             if (!isDuplicateReply) {
               const res = await greenApiSendMessage(creds, chatId, sentText);
               sentIdMessage = res.ok ? res.idMessage : undefined;
               lastSentReply = sentText;
             }
+            // One-line latency breakdown per reply. preAgent = all transport + DB + debounce +
+            // coalesce + lock before the LLM; agent = runWaAgentV4 (Gemini tool loop); send =
+            // Green-API round-trip. If agent ≫ preAgent+send, the LLM is the bottleneck; if
+            // preAgent is large, transport is. Grep "TIMING" in Cloudflare logs.
+            log(
+              `TIMING preAgent=${tPreAgent}ms agent=${tAgentDone - tPreAgent}ms send=${ms() - tAgentDone}ms total=${ms()}ms actions=${(result.debug.actions || []).join(",")}`,
+            );
             await supabaseAdmin.from("wa_messages").insert({
               conversation_id: convId,
               salon_id: salonId,
