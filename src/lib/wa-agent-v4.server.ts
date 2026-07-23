@@ -12,6 +12,7 @@
 
 import {
   callGeminiTools,
+  createGeminiCache,
   confidentLanguage,
   detectLanguage,
   fetchMergedSlots,
@@ -1782,18 +1783,66 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   const systemPrompt = buildSystemPromptV4(input, closedDates, mastersRoster, language);
   const contents: GeminiV2Content[] = [...v4History, { role: "user", parts: clientParts }];
 
+  // Gemini prompt caching: the systemInstruction + V4_TOOL_DECLARATIONS (~5k tokens combined)
+  // are re-sent to Gemini on every tool-loop iteration (up to 6× per turn) AND every turn in
+  // the same session. Caching them cuts input-processing wall time roughly 30–50% per call and
+  // input-token cost ~75%. Cache is per-conversation (systemInstruction embeds branch-scoped
+  // mastersRoster + closedDates), stored on state_data, 1h TTL, refreshed when expired.
+  // Safe fallback: on cache creation or cache-miss failure, we run inline this turn — no
+  // caching = same behavior as before P2-1.
+  const cachedFromState = (input.stateData as any)?.gemini_cache as
+    | { name: string; expireTime: string }
+    | undefined;
+  const cacheStillValid =
+    cachedFromState?.expireTime &&
+    new Date(cachedFromState.expireTime).getTime() > Date.now() + 60_000;
+  let activeCacheName: string | null = cacheStillValid ? cachedFromState!.name : null;
+  let cacheJustCreated: { name: string; expireTime: string } | null = null;
+  if (!activeCacheName) {
+    // First turn (or expired) — create a fresh cache in parallel with the first iteration.
+    // If creation fails (prompt too small, 4xx, network), activeCacheName stays null and we
+    // run the inline path exactly as before.
+    const created = await createGeminiCache({
+      apiKey,
+      systemInstruction: systemPrompt,
+      tools: V4_TOOL_DECLARATIONS,
+      ttlSeconds: 3600,
+    });
+    if (created) {
+      activeCacheName = created.name;
+      cacheJustCreated = created;
+      debug.actions.push(`gemini_cache:created:${created.name}`);
+    } else {
+      debug.actions.push(`gemini_cache:skipped`);
+    }
+  } else {
+    debug.actions.push(`gemini_cache:reused:${activeCacheName}`);
+  }
+
   // One agentic pass: loop tool-calls until the model returns a plain-text reply. Mutates
   // `contents`, `debug` and `flags`. Returned separately so we can run a second pass if the
   // model stalls (see below).
   const runToolLoop = async (): Promise<string> => {
     let r = "";
     for (let iter = 0; iter < MAX_TOOL_ITERS; iter++) {
-      const res = await callGeminiTools({
-        apiKey,
-        systemInstruction: systemPrompt,
-        contents,
-        tools: V4_TOOL_DECLARATIONS,
-      });
+      const geminiOpts = activeCacheName
+        ? { apiKey, cachedContent: activeCacheName, contents }
+        : { apiKey, systemInstruction: systemPrompt, tools: V4_TOOL_DECLARATIONS, contents };
+      let res = await callGeminiTools(geminiOpts as any);
+
+      // Cache expired/revoked mid-turn — drop the stale name and retry once inline this turn.
+      // Next turn will create a fresh cache; no client-visible failure.
+      if (!res.ok && res.cacheMiss) {
+        debug.actions.push(`gemini_cache:miss:retry_inline`);
+        activeCacheName = null;
+        cacheJustCreated = null;
+        res = await callGeminiTools({
+          apiKey,
+          systemInstruction: systemPrompt,
+          tools: V4_TOOL_DECLARATIONS,
+          contents,
+        });
+      }
 
       if (!res.ok || !res.parts) {
         debug.errors.push(`gemini_tools iter${iter}: ${res.error ?? "no parts"}`);
@@ -1936,6 +1985,13 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   );
 
   const nextState: WaAgentState = flags.appointmentId ? "done" : "collecting";
+  // Persist the Gemini prompt-cache handle across turns. Reused as long as it hasn't expired
+  // (checked at turn start). Cleared on cache-miss so we recreate next turn.
+  const persistedCache = cacheJustCreated
+    ? cacheJustCreated
+    : activeCacheName && cachedFromState
+      ? cachedFromState
+      : null;
   const nextStateData: WaAgentStateData = {
     language,
     greeted: true,
@@ -1946,6 +2002,7 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     ...(flags.photoNotes.length
       ? ({ photo_notes: flags.photoNotes.slice(-PHOTO_NOTES_CAP) } as any)
       : {}),
+    ...(persistedCache ? ({ gemini_cache: persistedCache } as any) : {}),
   };
 
   // On escalation, hand the webhook a plain-text alert for the salon admin's own WhatsApp

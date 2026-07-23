@@ -2861,13 +2861,59 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
 
 export type GeminiV2Content = { role: "user" | "model"; parts: any[] };
 
-export async function callGeminiTools(opts: {
+// Create a Gemini cachedContents resource holding the stable per-conversation prefix
+// (systemInstruction + tool declarations). Reused across every tool-loop iteration and
+// every turn in the same session — cache reads process the prefix ~4x faster and cost
+// ~25% of a fresh input token, so a 5-iteration turn saves ~15-20 s of wall time.
+// Returns { name, expireTime } or null on failure — caller falls back to inline prompt.
+// Minimum cacheable size is model-specific (~1024–4096 tokens for gemini-2.5-flash) — small
+// prompts return 400; we silently return null and the caller keeps working non-cached.
+export async function createGeminiCache(opts: {
   apiKey: string;
   systemInstruction: string;
-  contents: GeminiV2Content[];
   tools: any[];
+  ttlSeconds?: number; // default 3600
+}): Promise<{ name: string; expireTime: string } | null> {
+  const ttl = opts.ttlSeconds ?? 3600;
+  const body = {
+    model: `models/${MODEL_TEXT}`,
+    systemInstruction: { parts: [{ text: opts.systemInstruction }] },
+    tools: opts.tools?.length ? [{ functionDeclarations: opts.tools }] : undefined,
+    ttl: `${ttl}s`,
+  };
+  const url = `${GEMINI_BASE}/cachedContents?key=${encodeURIComponent(opts.apiKey)}`;
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const txt = await r.text();
+      // 400 → prompt too small to cache; 4xx → skip caching this session
+      console.warn(`[gemini-cache] create failed ${r.status}: ${txt.slice(0, 200)}`);
+      return null;
+    }
+    const json = (await r.json()) as any;
+    if (!json?.name || !json?.expireTime) return null;
+    return { name: json.name, expireTime: json.expireTime };
+  } catch (e: any) {
+    console.warn(`[gemini-cache] create threw: ${e?.message ?? e}`);
+    return null;
+  }
+}
+
+export async function callGeminiTools(opts: {
+  apiKey: string;
+  // Provide EITHER systemInstruction+tools inline (legacy path) OR cachedContent
+  // (name from createGeminiCache) — cached path skips resending the prefix, saving
+  // ~75% of input tokens processed per call and materially cutting latency.
+  systemInstruction?: string;
+  cachedContent?: string; // "cachedContents/xxx"
+  contents: GeminiV2Content[];
+  tools?: any[];
   allowedFunctionNames?: string[];
-}): Promise<{ ok: boolean; parts?: any[]; error?: string }> {
+}): Promise<{ ok: boolean; parts?: any[]; error?: string; cacheMiss?: boolean }> {
   const noTools =
     Array.isArray(opts.allowedFunctionNames) && opts.allowedFunctionNames.length === 0;
   const fcConfig: any = noTools
@@ -2875,10 +2921,21 @@ export async function callGeminiTools(opts: {
     : opts.allowedFunctionNames
       ? { mode: "AUTO", allowedFunctionNames: opts.allowedFunctionNames }
       : { mode: "AUTO" };
+  const usingCache = Boolean(opts.cachedContent);
   const body: any = {
-    systemInstruction: { parts: [{ text: opts.systemInstruction }] },
+    // When using cache: system + tools come from the cached resource — do NOT resend them
+    // (Gemini rejects the request with 400 if both cache and systemInstruction are set).
+    ...(usingCache
+      ? { cachedContent: opts.cachedContent }
+      : {
+          ...(opts.systemInstruction
+            ? { systemInstruction: { parts: [{ text: opts.systemInstruction }] } }
+            : {}),
+          ...(!noTools && opts.tools?.length
+            ? { tools: [{ functionDeclarations: opts.tools }] }
+            : {}),
+        }),
     contents: opts.contents,
-    ...(noTools ? {} : { tools: [{ functionDeclarations: opts.tools }] }),
     toolConfig: { functionCallingConfig: fcConfig },
     generationConfig: {
       temperature: 0.4,
@@ -2923,7 +2980,19 @@ export async function callGeminiTools(opts: {
         }
         return { ok: false, error: lastErr };
       }
-      if (!r.ok) return { ok: false, error: `gemini ${r.status}: ${txt.slice(0, 300)}` };
+      if (!r.ok) {
+        // Cache-miss detection: when the caller supplied cachedContent and Gemini rejects
+        // with 400/404 mentioning the cache (expired TTL, wrong region, revoked), signal
+        // it so runWaAgentV4 drops the stale cache name and retries inline this turn.
+        const looksLikeCacheMiss =
+          usingCache &&
+          (r.status === 404 || (r.status === 400 && /cached ?content|cachedcontents/i.test(txt)));
+        return {
+          ok: false,
+          error: `gemini ${r.status}: ${txt.slice(0, 300)}`,
+          ...(looksLikeCacheMiss ? { cacheMiss: true } : {}),
+        };
+      }
       let json: any;
       try {
         json = JSON.parse(txt);

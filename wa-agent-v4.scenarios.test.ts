@@ -177,6 +177,12 @@ let geminiQueue: any[][] = [];
 let geminiRequests: any[] = [];
 globalThis.fetch = (async (url: any, init: any) => {
   const u = String(url);
+  // Gemini prompt-cache (cachedContents) endpoint — always fail in tests so V4 falls back
+  // to inline systemInstruction, matching the pre-cache behavior every test was written for.
+  // Doesn't consume geminiQueue.
+  if (u.includes("/cachedContents")) {
+    return new Response('{"error":"tests-skip-cache"}', { status: 400 });
+  }
   if (u.includes("generativelanguage.googleapis.com")) {
     try {
       geminiRequests.push(JSON.parse(init?.body ?? "{}"));
@@ -631,6 +637,62 @@ test("tool retry: первый вызов падает, второй прохо�
   const res = await runWaAgentV4(makeInput("завтра свободно?"));
   expect(res.reply).not.toMatch(/не получилось получить данные|техническая ошибка/i);
   expect(calls).toBeGreaterThanOrEqual(2); // повтор действительно был
+});
+
+test("gemini caching: успешно созданный кеш переиспользуется на следующем ходу; при промахе — recreate", async () => {
+  const db = makeDb();
+  (globalThis as any).__WA_DB__ = db;
+
+  // Custom fetch: cachedContents endpoint returns a fake cache; track calls to measure reuse.
+  let cacheCreateCalls = 0;
+  let generateCallsWithCache = 0;
+  let generateCallsInline = 0;
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: any, init: any) => {
+    const u = String(url);
+    if (u.includes("/cachedContents")) {
+      cacheCreateCalls += 1;
+      return new Response(
+        JSON.stringify({
+          name: "cachedContents/test-cache-1",
+          expireTime: new Date(Date.now() + 3600_000).toISOString(),
+        }),
+        { status: 200 },
+      );
+    }
+    if (u.includes("generativelanguage.googleapis.com")) {
+      const body = JSON.parse(init?.body ?? "{}");
+      if (body.cachedContent) generateCallsWithCache += 1;
+      else generateCallsInline += 1;
+      const parts = geminiQueue.shift();
+      if (!parts) return new Response("exhausted", { status: 500 });
+      return new Response(
+        JSON.stringify({ candidates: [{ content: { parts }, finishReason: "STOP" }] }),
+        { status: 200 },
+      );
+    }
+    return new Response("no", { status: 400 });
+  }) as any;
+
+  try {
+    // Turn 1: cache is created, first generate uses cache
+    geminiQueue = [[{ text: "Здравствуйте! Чем помочь?" }]];
+    const r1 = await runWaAgentV4(makeInput("привет"));
+    expect(cacheCreateCalls).toBe(1);
+    expect(generateCallsWithCache).toBe(1);
+    expect(generateCallsInline).toBe(0);
+    const cacheOnState = (r1.nextStateData as any).gemini_cache;
+    expect(cacheOnState?.name).toBe("cachedContents/test-cache-1");
+
+    // Turn 2: cache is reused from state — no create call, generate uses cache
+    geminiQueue = [[{ text: "Стрижка?" }]];
+    await runWaAgentV4(makeInput("хочу стрижку", { stateData: r1.nextStateData }));
+    expect(cacheCreateCalls).toBe(1); // still 1 — reused
+    expect(generateCallsWithCache).toBe(2);
+    expect(generateCallsInline).toBe(0);
+  } finally {
+    globalThis.fetch = origFetch;
+  }
 });
 
 test("приветствие НЕ дублируется, если модель уже поздоровалась", async () => {
