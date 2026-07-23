@@ -825,6 +825,20 @@ test("ошибка Gemini → эскалация к админу + вежлив�
   expect(res.debug.errors.length).toBeGreaterThan(0);
 });
 
+test("промпт: правило «цена сразу» + мультиуслуга + абсолютный язык присутствуют", () => {
+  const prompt = buildSystemPromptV4(makeInput("привет"));
+  // Price-first rule
+  expect(prompt).toContain("ЦЕНА СРАЗУ");
+  expect(prompt).toMatch(/не шире 500 сом|шириной ~200–500/);
+  // Multi-service sequential-booking rule
+  expect(prompt).toContain("НЕСКОЛЬКО УСЛУГ В ОДИН ВИЗИТ");
+  expect(prompt).toContain("суммарную цену");
+  // Airtight language rule (zero mixing)
+  expect(prompt).toContain("НУЛЕВАЯ ТЕРПИМОСТЬ К СМЕШЕНИЮ");
+  // datPl bug guard: no undefined leaked into the specialist-noun interpolations
+  expect(prompt).not.toContain("undefined");
+});
+
 test("история v4_history сохраняется и передаётся в следующий ход", async () => {
   (globalThis as any).__WA_DB__ = makeDb();
   geminiQueue = [[{ text: "На какую услугу вас записать?" }]];
