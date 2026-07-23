@@ -54,8 +54,12 @@ async function fetchManageUrlV4(db: AdminClient, appointmentId: string): Promise
   }
 }
 
-const MAX_TOOL_ITERS = 8;
-const HISTORY_CAP = 30; // Gemini contents kept in state_data.v4_history between turns
+const MAX_TOOL_ITERS = 6;
+// Trimmed 30 → 20 after prod perf audit: history is re-sent to Gemini on every tool-loop
+// iteration, so a bloated tail hits input-processing time linearly on every iteration. 20 still
+// covers a typical booking + a follow-up ("а сколько будет ещё раз?") within one session; older
+// turns rarely add value and the sanitizer keeps the prefix valid.
+const HISTORY_CAP = 20; // Gemini contents kept in state_data.v4_history between turns
 const PHOTO_NOTES_CAP = 6; // structured photo analyses kept in state_data.photo_notes
 // The agent must see the WHOLE day's free start-times, not a truncated head of the list.
 // A capped list (was 8) made the model think a full working day ended at 11:45 and wrongly
