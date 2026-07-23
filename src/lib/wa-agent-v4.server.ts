@@ -548,6 +548,11 @@ type V4RunFlags = {
   // Set the turn a booking is created, so the final reply can append the self-service link. The
   // INSERT confirmation trigger skips ai_assistant bookings, so this is the only delivery path.
   justBookedManageUrl?: string | null;
+  // Set when callGeminiTools fails after all retries (Gemini itself is down / rate-limited /
+  // billing exhausted). Not a soft error we can recover from in this turn — the webhook uses it
+  // to escalate to the admin AND to send the client a graceful "administrator will reply" text
+  // instead of a bare "technical error", so the client never feels ignored.
+  geminiTotalFailure?: boolean;
 };
 
 // Normalize a loose clock string ("11", "11:0", "11.00", "11 00") → "HH:MM" or null.
@@ -1794,12 +1799,19 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
         debug.errors.push(`gemini_tools iter${iter}: ${res.error ?? "no parts"}`);
         // Surface the exact Gemini failure (429/503/400 + body) in Worker logs for diagnosis.
         console.error(`[wa-v4] gemini_tools failed iter${iter}: ${res.error ?? "no parts"}`);
+        // Gemini is fully down for this turn (billing exhausted / rate limit tripped / 503).
+        // Escalate to the salon admin AND give the client an honest "human will reply" message
+        // — not the bare "техническая ошибка" that used to leave them wondering if they should
+        // re-send. The webhook uses geminiTotalFailure to also pause the AI and alert the admin.
+        flags.geminiTotalFailure = true;
+        flags.needsHuman = true;
+        flags.escalateReason = `AI недоступен (${res.error ?? "no parts"}). Ответьте клиенту вручную.`;
         r =
           language === "ky"
-            ? "Кечиресиз, техникалык ката болду. Бир аздан кийин кайра жазыңызчы 🙏"
+            ? "Кечиресиз, азыр ассистент жеткиликсиз 🙏 Администратор бир аздан кийин сизге жооп берет."
             : language === "en"
-              ? "Sorry, a technical error occurred. Please write again in a moment 🙏"
-              : "Извините, произошла техническая ошибка. Напишите, пожалуйста, чуть позже 🙏";
+              ? "Sorry, the assistant is unavailable right now 🙏 Our admin will reply to you shortly."
+              : "Извините, ассистент сейчас недоступен 🙏 Администратор ответит вам в ближайшее время.";
         break;
       }
 

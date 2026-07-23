@@ -747,11 +747,15 @@ test("перенос записи: reschedule_appointment двигает starts_
   expect(res.reply).toContain("Перенесла");
 });
 
-test("ошибка Gemini → вежливое сообщение об ошибке, состояние не падает", async () => {
+test("ошибка Gemini → эскалация к админу + вежливое «администратор ответит»", async () => {
   (globalThis as any).__WA_DB__ = makeDb();
   geminiQueue = []; // fetch mock returns 500
   const res = await runWaAgentV4(makeInput("привет"));
-  expect(res.reply).toContain("техническая ошибка");
+  // Клиент получает честное «ассистент недоступен» — не «техническую ошибку»
+  expect(res.reply.toLowerCase()).toContain("ассистент");
+  expect(res.reply.toLowerCase()).toContain("администратор");
+  // Диалог помечается на эскалацию, чтобы админ узнал что AI лежит
+  expect((res.nextStateData as any).needs_human).toBe(true);
   expect(res.debug.errors.length).toBeGreaterThan(0);
 });
 

@@ -79,6 +79,13 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
       GET: async () => new Response("ok", { status: 200 }),
       POST: async ({ request, params }) => {
         const salonId = params.salonId;
+        // Short random tag for tracing one webhook end-to-end through Cloudflare logs.
+        // Every console.log/error in this request prefixes with it so an admin can grep the
+        // full lifecycle of "the message that broke". Kept small to stay readable in log lines.
+        const rid = Math.random().toString(36).slice(2, 8);
+        const log = (msg: string, ...rest: unknown[]) => console.log(`[wa ${rid}] ${msg}`, ...rest);
+        const errLog = (msg: string, ...rest: unknown[]) =>
+          console.error(`[wa ${rid}] ${msg}`, ...rest);
         const url = new URL(request.url);
         const token = url.searchParams.get("token") || request.headers.get("x-wa-token") || "";
         if (!salonId || !token) {
@@ -147,6 +154,10 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         const phone = normalizeChatIdToPhone(chatId);
         const greenIdMessage: string | undefined = payload?.idMessage;
         const nowIso = new Date().toISOString();
+
+        // Rate-limit constants (used per-conversation once existingConv is loaded below).
+        const RATE_LIMIT_MAX = 30;
+        const RATE_LIMIT_WINDOW_MS = 60_000;
 
         // ---- Human admin took over: a message sent manually from the phone connected
         // to this WhatsApp number. Green-API reports this as outgoingMessageReceived,
@@ -273,6 +284,30 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
           .eq("client_phone", phone)
           .maybeSingle();
 
+        // ---- P0 rate-limit: hard cap of RATE_LIMIT_MAX inbound messages PER PHONE (via the
+        // conversation row) per RATE_LIMIT_WINDOW_MS. Protects Cloudflare/Supabase/Gemini spend
+        // from a broken client (WhatsApp loop) or targeted flood. Only inbound counts, so admin
+        // replies never eat the client's budget. Silent 200 ack keeps Green-API from retrying
+        // and stops us from confirming to an abuser that the number is live.
+        // Only runs for inbound messages AND only once a conversation row already exists — a
+        // client's very first message can't exceed the limit yet, and skipping the check saves
+        // a query on cold conversations.
+        if (webhookType === "incomingMessageReceived" && existingConv?.id) {
+          const since = new Date(Date.now() - RATE_LIMIT_WINDOW_MS).toISOString();
+          const { count: recentCount } = await supabaseAdmin
+            .from("wa_messages")
+            .select("id", { count: "exact", head: true })
+            .eq("conversation_id", existingConv.id)
+            .eq("direction", "in")
+            .gte("created_at", since);
+          if ((recentCount ?? 0) >= RATE_LIMIT_MAX) {
+            errLog(
+              `rate limit tripped: phone=${phone} conv=${existingConv.id} inbound=${recentCount} in last ${RATE_LIMIT_WINDOW_MS / 1000}s`,
+            );
+            return ack();
+          }
+        }
+
         const previousLastMessageAt = existingConv?.last_message_at
           ? new Date(existingConv.last_message_at).getTime()
           : 0;
@@ -357,6 +392,25 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         }
         if (isRestartCmd && ownerPhoneMatches(phone, ownerNotifyPhone)) {
           const resetIso = new Date().toISOString();
+          // Also cancel every FUTURE confirmed appointment for this test phone in this salon.
+          // Without this, repeated owner tests pile real appointments on the calendar and the
+          // next test cycle immediately hits "16:00 уже занято" from a previous cycle's booking
+          // — every subsequent booking attempt fails. Only touches the owner-tester's phone in
+          // THIS salon, so it can't damage a real client's data.
+          const { data: cancelled, error: cancelErr } = await supabaseAdmin
+            .from("appointments")
+            .update({ status: "cancelled" } as any)
+            .eq("salon_id", salonId)
+            .eq("client_phone", phone)
+            .eq("status", "confirmed")
+            .gte("starts_at", resetIso)
+            .select("id");
+          const cancelledCount = cancelled?.length ?? 0;
+          if (cancelErr) {
+            errLog(`/restart: appointments cancel failed`, cancelErr.message);
+          } else {
+            log(`/restart: cancelled ${cancelledCount} future appointments for tester ${phone}`);
+          }
           // Drop any queued-but-unprocessed inbound so the fresh session starts truly clean.
           await supabaseAdmin
             .from("wa_messages")
@@ -378,10 +432,11 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             })
             .eq("id", convId);
           if (secrets.greenapi_instance && secrets.greenapi_token) {
+            const cancelNote = cancelledCount > 0 ? ` Отменено записей: ${cancelledCount}.` : "";
             await greenApiSendMessage(
               { instance: secrets.greenapi_instance, token: secrets.greenapi_token },
               chatId,
-              "🔄 Сценарий перезапущен. Можно тестировать заново.",
+              `🔄 Сценарий перезапущен.${cancelNote} Можно тестировать заново.`,
             );
           }
           return ack();
