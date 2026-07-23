@@ -2,8 +2,11 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? "https://khykprcdojksqvuqyajd.supabase.co";
-const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtoeWtwcmNkb2prc3F2dXF5YWpkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI3NDEyMjgsImV4cCI6MjA5ODMxNzIyOH0.8mjg3OVuR23nYzP_XHLqPElNzY60tCXy32oiM10SzLw";
+// Fallbacks point at the Frankfurt (eu-central-1) project bfxexnpyfslfuelfkhzr. The build-time
+// VITE_SUPABASE_* env vars still take precedence — in prod they are the real source of truth and
+// are switched to the new project at cutover. The anon (publishable) key is browser-safe by design.
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? "https://bfxexnpyfslfuelfkhzr.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJmeGV4bnB5ZnNsZnVlbGZraHpyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ4MjAzODcsImV4cCI6MjEwMDM5NjM4N30.IKueS7RNkOJ6HeGdA7TGQNPj16dq4cM03OerXjH04RA";
 
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
