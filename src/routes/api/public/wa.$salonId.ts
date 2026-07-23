@@ -278,17 +278,33 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
           return ack();
         }
 
-        // ---- Load previous conversation before upsert.
-        // We need the pre-message timestamps to decide whether this WhatsApp turn
-        // belongs to the same short booking session or starts a new clean one.
-        const { data: existingConv } = await supabaseAdmin
-          .from("wa_conversations")
-          .select(
-            "id, status, session_started_at, last_appointment_at, last_message_at, state, ai_paused, ai_paused_at",
-          )
-          .eq("salon_id", salonId)
-          .eq("client_phone", phone)
-          .maybeSingle();
+        // ---- Load previous conversation + webhook dedup IN PARALLEL. These are independent
+        // (conversation is keyed by phone; dedup by green_api_message_id) and each is a separate
+        // ~300–400 ms round-trip from the Worker → Supabase. Running them concurrently and
+        // early-exiting on a duplicate BEFORE the upsert/rate-limit/insert work removes one full
+        // round-trip (and skips all downstream work for redelivered webhooks). Prod TIMING logs
+        // (2026-07-25) showed preAgent = 4.5–8 s dominated by sequential DB round-trips — this is
+        // the class of fix that shrinks it. The wa_messages_green_id_uniq index is the real
+        // duplicate guard; this query is just a fast early-out.
+        const [{ data: existingConv }, dupCheck] = await Promise.all([
+          supabaseAdmin
+            .from("wa_conversations")
+            .select(
+              "id, status, session_started_at, last_appointment_at, last_message_at, state, ai_paused, ai_paused_at",
+            )
+            .eq("salon_id", salonId)
+            .eq("client_phone", phone)
+            .maybeSingle(),
+          greenIdMessage
+            ? supabaseAdmin
+                .from("wa_messages")
+                .select("id")
+                .eq("salon_id", salonId)
+                .eq("green_api_message_id", greenIdMessage)
+                .maybeSingle()
+            : Promise.resolve({ data: null }),
+        ]);
+        if ((dupCheck as any)?.data) return ack(); // redelivered webhook — already processed
 
         // ---- P0 rate-limit: hard cap of RATE_LIMIT_MAX inbound messages PER PHONE (via the
         // conversation row) per RATE_LIMIT_WINDOW_MS. Protects Cloudflare/Supabase/Gemini spend
@@ -368,17 +384,9 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
           return ack();
         }
         const convId = (conv as any).id as string;
-
-        // ---- Dedup webhook by green_api_message_id BEFORE inserting message
-        if (greenIdMessage) {
-          const { data: dup } = await supabaseAdmin
-            .from("wa_messages")
-            .select("id")
-            .eq("salon_id", salonId)
-            .eq("green_api_message_id", greenIdMessage)
-            .maybeSingle();
-          if (dup) return ack();
-        }
+        // (Webhook dedup already ran in parallel with the conversation load above — no second
+        // round-trip here. The wa_messages_green_id_uniq index still guards against a race where
+        // two redeliveries pass the early check simultaneously.)
 
         // ---- Hidden owner-only test command: "/restart" fully resets the conversation so the
         // salon owner can re-run the scenario from scratch during testing. Gated to the admin's

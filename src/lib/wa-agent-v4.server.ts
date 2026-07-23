@@ -56,6 +56,13 @@ async function fetchManageUrlV4(db: AdminClient, appointmentId: string): Promise
 }
 
 const MAX_TOOL_ITERS = 6;
+// Gemini prompt caching: DISABLED. Prod TIMING logs (2026-07-25) showed the cached
+// generateContent call was REJECTED on every turn (`gemini_cache:miss:retry_inline` in every
+// log line), so every turn paid a failed cached round-trip + a cache-creation round-trip with
+// ZERO benefit — net-negative. Until the exact Gemini rejection is diagnosed (needs the raw
+// 4xx body logged), the inline path is strictly better. Flip to true only after the reject
+// cause is fixed and verified against a real key.
+const GEMINI_CACHE_ENABLED = false;
 // Trimmed 30 → 20 after prod perf audit: history is re-sent to Gemini on every tool-loop
 // iteration, so a bloated tail hits input-processing time linearly on every iteration. 20 still
 // covers a typical booking + a follow-up ("а сколько будет ещё раз?") within one session; older
@@ -1796,19 +1803,18 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     | { name: string; expireTime: string }
     | undefined;
   const cacheStillValid =
+    GEMINI_CACHE_ENABLED &&
     cachedFromState?.expireTime &&
     new Date(cachedFromState.expireTime).getTime() > Date.now() + 60_000;
   let activeCacheName: string | null = cacheStillValid ? cachedFromState!.name : null;
   let cacheJustCreated: { name: string; expireTime: string } | null = null;
-  // CRITICAL LATENCY FIX: cache creation must NEVER block the turn. Previously we `await`ed it
-  // before the first Gemini call, so every NEW conversation (exactly what /restart testing
-  // produces) paid a 1–3 s creation cost up front with zero benefit — the reply lands on the
-  // same turn and only iterations 2+ could use the cache. Now we fire creation concurrently:
-  // iteration 1 runs INLINE immediately, and the `.then` flips activeCacheName on once the
-  // cache resolves (typically by iteration 2, since Gemini calls take seconds). At persist time
-  // we await the already-settled promise to store the name for the NEXT turn.
+  // Cache creation fires concurrently (never blocks the turn) — but only when the feature is
+  // enabled. It's currently DISABLED (see GEMINI_CACHE_ENABLED) because prod showed the cached
+  // call was rejected every turn, making it net-negative.
   let cacheCreationPromise: Promise<{ name: string; expireTime: string } | null> | null = null;
-  if (activeCacheName) {
+  if (!GEMINI_CACHE_ENABLED) {
+    // No-op: always inline. Keeps behavior identical to pre-P2-1 (the proven fast path).
+  } else if (activeCacheName) {
     debug.actions.push(`gemini_cache:reused:${activeCacheName}`);
   } else {
     cacheCreationPromise = createGeminiCache({
