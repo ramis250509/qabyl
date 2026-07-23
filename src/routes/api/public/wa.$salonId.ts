@@ -676,27 +676,29 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
               }
             }
 
-            // 2) Sign media URLs for any image messages
-            const lastMessages: WaIncomingMessage[] = [];
-            for (const m of freshPending) {
-              let signed: string | null = null;
-              if (m.kind === "image" && m.media_path) {
-                const { data: s } = await supabaseAdmin.storage
-                  .from("wa-media")
-                  .createSignedUrl(m.media_path, 600);
-                signed = s?.signedUrl ?? null;
-              }
-              lastMessages.push({
-                id: m.id,
-                direction: "in",
-                kind: m.kind as any,
-                text_body: m.text_body,
-                media_signed_url: signed,
-                media_path: m.media_path,
-                created_at: m.created_at,
-                selected_id: (m as any).meta?.selected_id ?? null,
-              });
-            }
+            // 2) Sign media URLs for any image messages IN PARALLEL. A burst with 2–3 photos
+            // used to pay 2–3 × ~200 ms serially before the agent even started.
+            const lastMessages: WaIncomingMessage[] = await Promise.all(
+              freshPending.map(async (m: any) => {
+                let signed: string | null = null;
+                if (m.kind === "image" && m.media_path) {
+                  const { data: s } = await supabaseAdmin.storage
+                    .from("wa-media")
+                    .createSignedUrl(m.media_path, 600);
+                  signed = s?.signedUrl ?? null;
+                }
+                return {
+                  id: m.id,
+                  direction: "in",
+                  kind: m.kind as any,
+                  text_body: m.text_body,
+                  media_signed_url: signed,
+                  media_path: m.media_path,
+                  created_at: m.created_at,
+                  selected_id: m?.meta?.selected_id ?? null,
+                };
+              }),
+            );
 
             // 3) Load per-engine context for the current session only. Old booked sessions are
             // useful for the admin, but feeding them to the agent made it reuse stale context.

@@ -1597,40 +1597,41 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     ? detectLanguage(lastText)
     : (stickyLang ?? detectLanguage(lastText));
 
-  // ---- Build user parts (text + inline images)
-  const clientParts: any[] = [];
-  for (const m of input.lastMessages) {
-    if (m.kind === "image" && m.media_signed_url) {
-      try {
-        const r = await fetch(m.media_signed_url);
-        if (r.ok) {
-          const ab = await r.arrayBuffer();
-          const base64 =
-            typeof Buffer !== "undefined"
-              ? Buffer.from(ab).toString("base64")
-              : (() => {
-                  const bytes = new Uint8Array(ab);
-                  let bin = "";
-                  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-                  return btoa(bin);
-                })();
-          if (m.text_body) clientParts.push({ text: m.text_body });
-          // Trust the storage response's content-type (we set it correctly on upload) so png/webp
-          // photos aren't mislabeled as jpeg to Gemini. Fall back only if the header is missing.
-          const ct = r.headers.get("content-type");
-          const mimeType = ct && ct.startsWith("image/") ? ct : (m.media_mime ?? "image/jpeg");
-          clientParts.push({ inlineData: { mimeType, data: base64 } });
-        } else if (m.text_body) {
-          clientParts.push({ text: m.text_body });
+  // ---- Build user parts (text + inline images). Fetch every image IN PARALLEL — a 3-photo
+  // burst used to pay 3× ~800 ms sequentially before the model even received the turn.
+  const parts: any[][] = await Promise.all(
+    input.lastMessages.map(async (m): Promise<any[]> => {
+      if (m.kind === "image" && m.media_signed_url) {
+        try {
+          const r = await fetch(m.media_signed_url);
+          if (r.ok) {
+            const ab = await r.arrayBuffer();
+            const base64 =
+              typeof Buffer !== "undefined"
+                ? Buffer.from(ab).toString("base64")
+                : (() => {
+                    const bytes = new Uint8Array(ab);
+                    let bin = "";
+                    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+                    return btoa(bin);
+                  })();
+            const ct = r.headers.get("content-type");
+            const mimeType = ct && ct.startsWith("image/") ? ct : (m.media_mime ?? "image/jpeg");
+            const out: any[] = [];
+            if (m.text_body) out.push({ text: m.text_body });
+            out.push({ inlineData: { mimeType, data: base64 } });
+            return out;
+          }
+          return m.text_body ? [{ text: m.text_body }] : [];
+        } catch (e: any) {
+          debug.errors.push(`image_fetch: ${e?.message ?? String(e)}`);
+          return m.text_body ? [{ text: m.text_body }] : [];
         }
-      } catch (e: any) {
-        debug.errors.push(`image_fetch: ${e?.message ?? String(e)}`);
-        if (m.text_body) clientParts.push({ text: m.text_body });
       }
-    } else if (m.text_body) {
-      clientParts.push({ text: m.text_body });
-    }
-  }
+      return m.text_body ? [{ text: m.text_body }] : [];
+    }),
+  );
+  const clientParts: any[] = parts.flat();
 
   if (clientParts.length === 0) {
     // Nothing usable to send to the model. The ONLY way this happens is a photo whose bytes we
