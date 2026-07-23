@@ -20,11 +20,22 @@ import {
 } from "@/lib/wa-agent.server";
 import { runWaAgentV4 } from "@/lib/wa-agent-v4.server";
 
-// Must outlast a slow turn. One turn can chain several Gemini calls (tool loop) and each may now
-// retry with backoff, so 25s could expire mid-processing — a second webhook for the SAME
-// conversation would then grab the lock and double-reply. 60s covers a realistic slow turn while
-// still releasing quickly if a worker dies (the lock is also released in a finally block).
-const LOCK_TTL_SECONDS = 60;
+// LOCK_TTL is the WORST-CASE ceiling: how long we let a stuck worker hold the conversation
+// before another worker is allowed to take over. Prod incident (2026-07-24) showed a Gemini
+// turn on a heavy service (keratin, big tool loop) took ~70 s while TTL was 60 s. Lock expired
+// mid-flight, a second worker took the lock, processed the SAME still-unprocessed message,
+// called Gemini AGAIN, and sent a DUPLICATE reply (with slightly different wording — Gemini is
+// non-deterministic). State writes from both workers also raced and lost context. Root cause
+// is closed two ways here:
+//   (a) TTL bumped to 180 s so a realistic worst-case turn (2 min of Gemini + tool loop +
+//       retries) never expires the lock mid-flight in the first place;
+//   (b) every state-mutating write later re-checks `processing_lock_id = ourLockId`, so even
+//       IF a lock somehow got stolen we refuse to overwrite state or resend the reply — a
+//       zombie worker's turn is silently dropped.
+// The lock is also released in a `finally`, so a dying worker frees it fast; the long TTL is
+// only the safety net for stuck-but-alive workers.
+const LOCK_TTL_SECONDS = 180;
+const LOCK_HEARTBEAT_MS = 45_000; // renew every 45s while a long turn is running
 const MAX_LOOP_ITERATIONS = 3;
 const LOCK_WAIT_TIMEOUT_MS = 8000;
 const LOCK_POLL_INTERVAL_MS = 400;
@@ -561,6 +572,8 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         }
 
         // ---- Processing loop (worker drains unprocessed inbound messages)
+        // Declared outside try so `finally` can clear it regardless of where an error fires.
+        let heartbeatHandle: ReturnType<typeof setInterval> | null = null;
         try {
           // IMPORTANT: reload conversation after the lock is acquired. If this
           // webhook waited while another worker processed a previous message,
@@ -627,6 +640,16 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
           // Coalesce at most once per drain pass, so a client sending many quick bursts can't stall
           // the worker indefinitely (each real turn still gets processed).
           let settledThisPass = false;
+
+          // Lock heartbeat: for turns that legitimately take long (heavy Gemini tool loops,
+          // photo pricing, etc.) we refresh the lock every LOCK_HEARTBEAT_MS. Prevents the
+          // observed prod bug where a >60 s Gemini turn lost its lock mid-flight and a second
+          // worker started a duplicate turn on the same still-unprocessed inbound message.
+          heartbeatHandle = setInterval(() => {
+            refreshLock(supabaseAdmin, convId, lockId).catch((e) =>
+              console.error("[wa] heartbeat refresh failed", e?.message ?? e),
+            );
+          }, LOCK_HEARTBEAT_MS);
 
           for (let iter = 0; iter < MAX_LOOP_ITERATIONS; iter++) {
             // 1) Load unprocessed inbound messages for this conversation
@@ -802,14 +825,17 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             }
 
             // 5) Send reply — skip network if byte-for-byte identical to previous in this pass.
-            // BOTH lists AND buttons go out as a plain-text numbered menu, and the agent maps a
-            // numeric reply back to the row/button id. Native sendInteractiveButtons taps were
-            // fixed to parse correctly (typeMessage "templateButtonsReplyMessage", verified
-            // against Green-API's own docs — the previous "interactiveButtonsReply" check never
-            // matched anything real), but a live test on the salon's actual account still didn't
-            // reliably deliver the tap end-to-end (Green-API's own docs mark this beta/unstable).
-            // Reverted to numbered text — the same proven path date/slot selection already uses
-            // reliably on every account. The parser fix is harmless to keep either way.
+            // BEFORE any user-visible side effect (send / mark-processed / state-write) we
+            // re-verify the lock is still OURS. If TTL elapsed and another worker took over,
+            // that worker's turn is authoritative — dropping our reply here is the ONLY way to
+            // avoid the "duplicate reply with different wording" incident (prod 2026-07-24).
+            const stillOwn = await stillHoldingLock(supabaseAdmin, convId, lockId);
+            if (!stillOwn) {
+              console.warn(
+                `[wa] lock lost mid-turn (conv=${convId}) — dropping stale reply + state write to avoid double-message`,
+              );
+              break; // exit the drain loop; the successor worker owns the conversation now
+            }
             const im = result.interactiveMessage;
             const sentText = im
               ? renderInteractiveAsText(
@@ -933,6 +959,12 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             // Loop again only if more inbound messages arrived during processing.
           }
         } finally {
+          // Stop the heartbeat before releasing so we don't extend a lock we're about to drop.
+          if (heartbeatHandle) {
+            try {
+              clearInterval(heartbeatHandle);
+            } catch {}
+          }
           // Always release the lock.
           try {
             await supabaseAdmin.rpc("wa_release_lock" as any, {
@@ -1021,6 +1053,34 @@ async function notifyOwner(opts: {
     `[wa] notifyOwner(${opts.kind}) → ${ownerPhone} FAILED after retry: ${res.error}. Falling back to the admin panel.`,
   );
   await persistFallback(res.error ?? "неизвестная ошибка Green-API");
+}
+
+// Refresh (re-acquire) the lock while we still legitimately hold it — extends TTL by
+// LOCK_TTL_SECONDS from `now`. The wa_try_acquire_lock RPC only succeeds when the current
+// row's lock is either absent, expired, OR belongs to the same lock_id — so the same worker
+// can extend its own TTL safely. Called on a heartbeat during long turns.
+async function refreshLock(db: any, convId: string, lockId: string): Promise<boolean> {
+  const { data } = await db.rpc("wa_try_acquire_lock", {
+    _conversation_id: convId,
+    _lock_id: lockId,
+    _ttl_seconds: LOCK_TTL_SECONDS,
+  });
+  return data === true;
+}
+
+// Am I still the exclusive owner of this conversation's lock? Used as the last-line
+// correctness check before any state-mutating write (send reply / mark processed / persist
+// state). If the lock was stolen (TTL expired and another worker grabbed it), we MUST NOT
+// send a stale reply or overwrite fresher state — the other worker's turn is authoritative.
+async function stillHoldingLock(db: any, convId: string, lockId: string): Promise<boolean> {
+  const { data } = await db
+    .from("wa_conversations")
+    .select("processing_lock_id, processing_lock_until")
+    .eq("id", convId)
+    .maybeSingle();
+  if (!data) return false;
+  const untilMs = data.processing_lock_until ? new Date(data.processing_lock_until).getTime() : 0;
+  return data.processing_lock_id === lockId && untilMs > Date.now();
 }
 
 async function tryAcquireLockWithWait(db: any, convId: string, lockId: string): Promise<boolean> {
