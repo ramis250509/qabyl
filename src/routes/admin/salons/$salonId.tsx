@@ -139,14 +139,15 @@ function OnboardingChecklist({
     }
   }, [dismissKey]);
 
-  // Re-count whenever the salon changes or the user switches tabs (cheap HEAD queries), so the
-  // progress updates after they add a service/master and come back.
+  // Re-count whenever the salon changes or the user switches tabs, so the progress updates after
+  // they add a service/master and come back. Uses GET + count (limit 1), not HEAD: authenticated
+  // HEAD count requests intermittently 503 on the free tier under the page's concurrent load burst.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const [s, m] = await Promise.all([
-        supabase.from("services").select("id", { count: "exact", head: true }).eq("salon_id", salon.id),
-        supabase.from("masters").select("id", { count: "exact", head: true }).eq("salon_id", salon.id),
+        supabase.from("services").select("id", { count: "exact" }).eq("salon_id", salon.id).limit(1),
+        supabase.from("masters").select("id", { count: "exact" }).eq("salon_id", salon.id).limit(1),
       ]);
       if (cancelled) return;
       setCounts({ services: s.count ?? 0, masters: m.count ?? 0 });

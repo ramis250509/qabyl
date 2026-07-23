@@ -55,7 +55,8 @@ function StatsPage() {
     // branch dimension, so the branch filter doesn't apply here.
     let convPromise: Promise<{ count: number | null }> = Promise.resolve({ count: 0 });
     if (isSuperAdmin) {
-      let cq = supabase.from("wa_conversations").select("id", { count: "exact", head: true }).gte("created_at", sinceISO);
+      // GET + count (limit 1), not HEAD: authenticated HEAD count requests intermittently 503 on the free tier.
+      let cq = supabase.from("wa_conversations").select("id", { count: "exact" }).gte("created_at", sinceISO).limit(1);
       if (untilISO) cq = cq.lte("created_at", untilISO);
       if (salonId !== "all") cq = cq.eq("salon_id", salonId);
       convPromise = cq as any;
