@@ -33,7 +33,10 @@ const LOCK_POLL_INTERVAL_MS = 400;
 // likely still typing the rest of their thought, so we wait COALESCE_WAIT_MS once and reload the
 // pending list — answering the COMPLETE burst with a single message instead of two.
 const COALESCE_WINDOW_MS = 1500;
-const COALESCE_WAIT_MS = 900;
+// Trimmed from 900 → 500 ms after prod perf audit: combined with the 350 ms initial debounce,
+// end-to-end wait for message coalescing dropped from 1600 ms to 850 ms per typical turn while
+// still catching the "half-typed then corrected" burst that motivated the coalescer.
+const COALESCE_WAIT_MS = 500;
 
 export function resolveAssistantRuntimeConfig(salon: any, assistant: any, secrets: any) {
   const assistantEnabled =
@@ -540,10 +543,12 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
           return ack();
         }
 
-        // Brief debounce: wait 700ms so that rapid follow-up messages (e.g. client sends
+        // Brief debounce: wait 350ms so that rapid follow-up messages (e.g. client sends
         // "Привет" then "хочу на стрижку" in quick succession) accumulate before we start
         // processing. The drain loop will then batch all pending messages into one turn.
-        await new Promise((r) => setTimeout(r, 700));
+        // Trimmed from 700 → 350 ms after prod perf audit — the drain-loop coalescer already
+        // catches most bursts, so a shorter initial debounce cuts baseline latency in half here.
+        await new Promise((r) => setTimeout(r, 350));
 
         // ---- Try to acquire processing lock; if another worker holds it, wait briefly
         // (it will pick up our just-inserted message in its loop).
