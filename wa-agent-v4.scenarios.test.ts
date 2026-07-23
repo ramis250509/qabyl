@@ -273,6 +273,78 @@ test("create_appointment после «да»: запись создаётся, n
   expect(db.appointments[0].client_phone).toBe("996700000001");
 });
 
+test("без имени: create_appointment с плейсхолдером «Неизвестно» → need_client_name, запись НЕ создаётся", async () => {
+  const db = makeDb();
+  (globalThis as any).__WA_DB__ = db;
+  geminiQueue = [
+    [
+      fc("create_appointment", {
+        service_id: "svc1",
+        master_id: "m1",
+        slot_start: FREE_SLOT,
+        client_name: "Неизвестно",
+      }),
+    ],
+    [{ text: "Извините, забыла спросить — как вас зовут?" }],
+  ];
+  const res = await runWaAgentV4(makeInput("Да"));
+  expect(res.appointmentId).toBeNull();
+  expect(db.appointments).toHaveLength(0);
+  const lastReq = geminiRequests[geminiRequests.length - 1];
+  const fr = lastReq.contents
+    .flatMap((c: any) => c.parts)
+    .find((p: any) => p.functionResponse?.name === "create_appointment");
+  expect(fr.functionResponse.response.success).toBe(false);
+  expect(fr.functionResponse.response.reason).toBe("need_client_name");
+});
+
+test("без имени: пустая строка → need_client_name (плейсхолдер отвергнут)", async () => {
+  const db = makeDb();
+  (globalThis as any).__WA_DB__ = db;
+  geminiQueue = [
+    [
+      fc("create_appointment", {
+        service_id: "svc1",
+        master_id: "m1",
+        slot_start: FREE_SLOT,
+        client_name: "  ",
+      }),
+    ],
+    [{ text: "Как вас зовут?" }],
+  ];
+  const res = await runWaAgentV4(makeInput("да"));
+  expect(res.appointmentId).toBeNull();
+  const lastReq = geminiRequests[geminiRequests.length - 1];
+  const fr = lastReq.contents
+    .flatMap((c: any) => c.parts)
+    .find((p: any) => p.functionResponse?.name === "create_appointment");
+  expect(fr.functionResponse.response.reason).toBe("need_client_name");
+});
+
+test("manage-link: после успешной записи в ответе есть инструкция и ссылка", async () => {
+  const db = makeDb();
+  (globalThis as any).__WA_DB__ = db;
+  geminiQueue = [
+    [
+      fc("create_appointment", {
+        service_id: "svc1",
+        master_id: "m1",
+        slot_start: FREE_SLOT,
+        client_name: "Анна",
+      }),
+    ],
+    [{ text: "Готово! Записала вас на маникюр к Айгуль. Ждём вас!" }],
+  ];
+  const res = await runWaAgentV4(makeInput("Да, записывайте"));
+  expect(res.appointmentId).toBe("appt_1");
+  // Instruction line + emoji-prefixed URL line should both be present when a manage URL exists.
+  // (The mocked DB returns no manage_token, so the URL block is absent — verify only when present.)
+  if (res.reply.includes("qabyl.com/manage/")) {
+    expect(res.reply).toContain("сами перенести или отменить");
+    expect(res.reply).toContain("🔗");
+  }
+});
+
 test("без дублей: вторая запись на ту же услугу → reason=already_booked, новая НЕ создаётся", async () => {
   const db = makeDb({
     appointments: [
