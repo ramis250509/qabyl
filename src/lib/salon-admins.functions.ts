@@ -44,9 +44,16 @@ export const createSalonAdmin = createServerFn({ method: "POST" })
       email_confirm: true,
     });
     if (createErr) {
-      // user may already exist — look up
-      const { data: list } = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 });
-      const existing = list?.users?.find((u) => u.email?.toLowerCase() === data.email.toLowerCase());
+      // user may already exist — look up by paginating through all users
+      let existing: { id: string; email?: string } | undefined;
+      let page = 1;
+      while (!existing) {
+        const { data: list } = await supabaseAdmin.auth.admin.listUsers({ page, perPage: 1000 });
+        const users = list?.users ?? [];
+        existing = users.find((u) => u.email?.toLowerCase() === data.email.toLowerCase());
+        if (existing || users.length < 1000) break;
+        page++;
+      }
       if (!existing) throw new Error(createErr.message);
       userId = existing.id;
     } else {
@@ -81,9 +88,17 @@ export const listSalonAdmins = createServerFn({ method: "POST" })
       .eq("salon_id", data.salonId);
     if (error) throw new Error(error.message);
 
-    // Lookup emails
-    const { data: list } = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 });
-    const byId = new Map((list?.users ?? []).map((u) => [u.id, u.email] as const));
+    // Lookup emails — paginate to handle >1000 users on the platform
+    const allUsers: { id: string; email?: string }[] = [];
+    let page = 1;
+    while (true) {
+      const { data: list } = await supabaseAdmin.auth.admin.listUsers({ page, perPage: 1000 });
+      const users = list?.users ?? [];
+      allUsers.push(...users);
+      if (users.length < 1000) break;
+      page++;
+    }
+    const byId = new Map(allUsers.map((u) => [u.id, u.email] as const));
     return (roles ?? []).map((r) => ({
       id: r.id,
       userId: r.user_id,

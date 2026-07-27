@@ -34,17 +34,19 @@ function Dashboard() {
       return branchId !== "all" ? q.eq("branch_id", branchId) : q;
     }
 
+    // GET + count (limit 1), not HEAD count: authenticated HEAD count requests intermittently 503
+    // on the free tier under this page's concurrent request burst. GET works; limit 1 keeps it cheap.
     const salonsQ = isSuperAdmin
-      ? supabase.from("salons").select("*", { count: "exact", head: true })
+      ? supabase.from("salons").select("id", { count: "exact" }).limit(1)
       : Promise.resolve({ count: filters.salons.length });
-    const mastersQ = applyBranch(applySalon(supabase.from("masters").select("*", { count: "exact", head: true }).eq("is_active", true)));
+    const mastersQ = applyBranch(applySalon(supabase.from("masters").select("id", { count: "exact" }).eq("is_active", true).limit(1)));
     const todayQ = applyBranch(applySalon(
-      supabase.from("appointments").select("*", { count: "exact", head: true })
-        .eq("status", "confirmed").gte("starts_at", startToday).lt("starts_at", endToday)
+      supabase.from("appointments").select("id", { count: "exact" })
+        .eq("status", "confirmed").gte("starts_at", startToday).lt("starts_at", endToday).limit(1)
     ));
     const weekQ = applyBranch(applySalon(
-      supabase.from("appointments").select("*", { count: "exact", head: true })
-        .eq("status", "confirmed").gte("starts_at", nowIso).lt("starts_at", weekEnd)
+      supabase.from("appointments").select("id", { count: "exact" })
+        .eq("status", "confirmed").gte("starts_at", nowIso).lt("starts_at", weekEnd).limit(1)
     ));
 
     const [s, m, today, week] = await Promise.all([salonsQ, mastersQ, todayQ, weekQ]);

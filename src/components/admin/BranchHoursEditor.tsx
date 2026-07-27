@@ -1,6 +1,7 @@
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
 
 const WEEKDAYS = [
   { dow: 1, label: "Понедельник" },
@@ -29,9 +30,26 @@ export function BranchHoursEditor({ value, onChange }: { value: BranchHours | nu
     onChange({ ...hours, [String(dow)]: intervals });
   }
 
+  function applyToAllDays() {
+    // Take the first open day as the template (owner usually configures Monday first).
+    // Fall back to a sensible default.
+    const template = WEEKDAYS.map((d) => (hours[String(d.dow)] ?? [])[0]).find((x) => x) ?? {
+      start: "09:00",
+      end: "20:00",
+    };
+    const next: BranchHours = {};
+    for (const d of WEEKDAYS) next[String(d.dow)] = [{ ...template }];
+    onChange(next);
+  }
+
   return (
     <div className="space-y-2">
-      <Label>График работы филиала</Label>
+      <div className="flex items-center justify-between gap-2">
+        <Label>График работы филиала</Label>
+        <Button type="button" size="sm" variant="outline" onClick={applyToAllDays}>
+          Изменить все
+        </Button>
+      </div>
       <p className="text-xs text-muted-foreground">Если филиал закрыт — снимите галочку. Слоты записи учитывают эти часы.</p>
       <div className="rounded-lg border divide-y">
         {WEEKDAYS.map((d) => {

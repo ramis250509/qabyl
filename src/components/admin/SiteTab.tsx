@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useServerFn } from "@tanstack/react-start";
+import { generateSiteContent } from "@/lib/site-content.functions";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -13,12 +15,7 @@ const TEMPLATES = [
   { id: "minimal", name: "Минимал", desc: "Белый фон, много воздуха, тонкая типографика" },
   { id: "premium", name: "Премиум", desc: "Тёмный фон, золотые акценты, serif-заголовки" },
   { id: "vivid", name: "Яркий", desc: "Градиенты на бренд-цветах, жирный шрифт, тени" },
-  { id: "custom", name: "Кастомный (HTML)", desc: "Вставь свой HTML, сгенерированный любой ИИ" },
-];
-
-const DAYS = [
-  { k: "mon", l: "Понедельник" }, { k: "tue", l: "Вторник" }, { k: "wed", l: "Среда" },
-  { k: "thu", l: "Четверг" }, { k: "fri", l: "Пятница" }, { k: "sat", l: "Суббота" }, { k: "sun", l: "Воскресенье" },
+  { id: "custom", name: "Свой HTML", desc: "Полный контроль над оформлением — вставьте собственный HTML-код" },
 ];
 
 export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => void }) {
@@ -35,11 +32,32 @@ export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => v
     tiktok_url: salon.tiktok_url ?? "",
     whatsapp_url: salon.whatsapp_url ?? "",
     telegram_url: salon.telegram_url ?? "",
-    working_hours: salon.working_hours ?? {},
     custom_html: salon.custom_html ?? "",
   });
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const genContent = useServerFn(generateSiteContent);
+
+  // Generate site text (hero + about) in the salon's niche voice — unique each time (the server
+  // uses the LLM, falling back to a per-industry example). Never overwrites what the owner wrote.
+  async function fillSiteExamples() {
+    setGenerating(true);
+    try {
+      const ex = await genContent({ data: { salonId: salon.id } });
+      setForm((f: any) => ({
+        ...f,
+        hero_title: f.hero_title?.trim() ? f.hero_title : ex.hero_title,
+        hero_subtitle: f.hero_subtitle?.trim() ? f.hero_subtitle : ex.hero_subtitle,
+        about_text: f.about_text?.trim() ? f.about_text : ex.about_text,
+      }));
+      toast.success("Текст сайта сгенерирован под вашу нишу — отредактируйте под свой салон");
+    } catch (e: any) {
+      toast.error(e?.message ?? "Не удалось сгенерировать текст");
+    } finally {
+      setGenerating(false);
+    }
+  }
 
   async function uploadFile(file: File, kind: "hero" | "gallery") {
     setUploading(true);
@@ -131,14 +149,32 @@ export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => v
               <p><code className="bg-muted px-1 rounded">{"{{hero_title}}"}</code> · <code className="bg-muted px-1 rounded">{"{{hero_subtitle}}"}</code> · <code className="bg-muted px-1 rounded">{"{{hero_image}}"}</code> · <code className="bg-muted px-1 rounded">{"{{salon_name}}"}</code> · <code className="bg-muted px-1 rounded">{"{{about}}"}</code> · <code className="bg-muted px-1 rounded">{"{{phone}}"}</code> · <code className="bg-muted px-1 rounded">{"{{address}}"}</code></p>
               <p><code className="bg-muted px-1 rounded">{"{{booking_button}}"}</code> · <code className="bg-muted px-1 rounded">{"{{services}}"}</code> · <code className="bg-muted px-1 rounded">{"{{masters}}"}</code> · <code className="bg-muted px-1 rounded">{"{{gallery}}"}</code> · <code className="bg-muted px-1 rounded">{"{{reviews}}"}</code> · <code className="bg-muted px-1 rounded">{"{{contacts}}"}</code></p>
               <p>URL соцсетей: <code className="bg-muted px-1 rounded">{"{{instagram}}"}</code> · <code className="bg-muted px-1 rounded">{"{{tiktok}}"}</code> · <code className="bg-muted px-1 rounded">{"{{whatsapp}}"}</code> · <code className="bg-muted px-1 rounded">{"{{telegram}}"}</code></p>
-              <p className="pt-1">⚠️ Скрипты вырезаются автоматически (для безопасности). Стили (CSS) и любая разметка — работают.</p>
+              <p className="pt-1">Скрипты вырезаются автоматически (для безопасности). Стили (CSS) и любая разметка — работают.</p>
             </div>
           </div>
         )}
       </Card>
 
       <Card className="p-6 space-y-4">
-        <h3 className="font-semibold">Hero (первый экран)</h3>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="font-semibold">Hero (первый экран)</h3>
+            <p className="text-sm text-muted-foreground">
+              Заголовок, подзаголовок и «О салоне» можно сгенерировать под вашу нишу — каждый раз
+              по-новому.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            onClick={fillSiteExamples}
+            disabled={generating}
+          >
+            {generating ? "Генерирую…" : "Сгенерировать текст"}
+          </Button>
+        </div>
         <div>
           <Label>Заголовок</Label>
           <Input value={form.hero_title} onChange={(e) => setForm({ ...form, hero_title: e.target.value })} placeholder={salon.name} />
@@ -206,21 +242,6 @@ export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => v
           <div><Label>WhatsApp</Label><Input value={form.whatsapp_url} onChange={(e) => setForm({ ...form, whatsapp_url: e.target.value })} placeholder="https://wa.me/7..." /></div>
           <div><Label>Telegram</Label><Input value={form.telegram_url} onChange={(e) => setForm({ ...form, telegram_url: e.target.value })} placeholder="https://t.me/..." /></div>
         </div>
-      </Card>
-
-      <Card className="p-6 space-y-3">
-        <h3 className="font-semibold">Часы работы</h3>
-        {DAYS.map(({ k, l }) => (
-          <div key={k} className="flex items-center gap-3 text-sm">
-            <div className="w-32">{l}</div>
-            <Input
-              value={form.working_hours[k] ?? ""}
-              onChange={(e) => setForm({ ...form, working_hours: { ...form.working_hours, [k]: e.target.value } })}
-              placeholder="10:00–20:00 или Выходной"
-              className="max-w-xs"
-            />
-          </div>
-        ))}
       </Card>
 
       <div className="flex gap-3 items-center">

@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { signOutFromApp, useAuth } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { LayoutDashboard, Building2, Calendar, LogOut, BarChart3, Settings, Menu, Bell, UserCog } from "lucide-react";
+import { LayoutDashboard, Building2, Calendar, LogOut, BarChart3, Settings, Menu, Bell, UserCog, Activity, AlertOctagon } from "lucide-react";
 import { useNotifications } from "@/hooks/use-notifications";
 import { FullScreenLoader } from "@/components/ui/loading-state";
 import { RefreshProvider } from "@/lib/refresh-context";
@@ -78,6 +78,8 @@ function AdminLayout() {
     : isSuperAdmin
     ? [
         { to: "/admin", label: "Дашборд", icon: LayoutDashboard, exact: true },
+        { to: "/admin/ops", label: "Ops Dashboard", icon: Activity },
+        { to: "/admin/errors", label: "Ошибки", icon: AlertOctagon },
         { to: "/admin/salons", label: "Салоны", icon: Building2 },
         { to: "/admin/calendar", label: "Календарь", icon: Calendar },
         { to: "/admin/notifications", label: "Уведомления", icon: Bell, badge: unreadCount },

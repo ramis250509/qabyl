@@ -9,14 +9,19 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
+import { Route as RobotsDottxtRouteImport } from './routes/robots[.]txt'
 import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminIndexRouteImport } from './routes/admin/index'
+import { Route as ManageTokenRouteImport } from './routes/manage.$token'
 import { Route as BookSlugRouteImport } from './routes/book.$slug'
 import { Route as AdminStatsRouteImport } from './routes/admin/stats'
+import { Route as AdminOpsRouteImport } from './routes/admin/ops'
 import { Route as AdminNotificationsRouteImport } from './routes/admin/notifications'
+import { Route as AdminErrorsRouteImport } from './routes/admin/errors'
 import { Route as AdminCalendarRouteImport } from './routes/admin/calendar'
 import { Route as AdminAccountRouteImport } from './routes/admin/account'
 import { Route as AdminSalonsIndexRouteImport } from './routes/admin/salons/index'
@@ -24,6 +29,16 @@ import { Route as PreviewSalonSalonIdRouteImport } from './routes/preview.salon.
 import { Route as AdminSalonsSalonIdRouteImport } from './routes/admin/salons/$salonId'
 import { Route as ApiPublicWaSalonIdRouteImport } from './routes/api/public/wa.$salonId'
 
+const SitemapDotxmlRoute = SitemapDotxmlRouteImport.update({
+  id: '/sitemap.xml',
+  path: '/sitemap.xml',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RobotsDottxtRoute = RobotsDottxtRouteImport.update({
+  id: '/robots.txt',
+  path: '/robots.txt',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PrivacyRoute = PrivacyRouteImport.update({
   id: '/privacy',
   path: '/privacy',
@@ -49,6 +64,11 @@ const AdminIndexRoute = AdminIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AdminRoute,
 } as any)
+const ManageTokenRoute = ManageTokenRouteImport.update({
+  id: '/manage/$token',
+  path: '/manage/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const BookSlugRoute = BookSlugRouteImport.update({
   id: '/book/$slug',
   path: '/book/$slug',
@@ -59,9 +79,19 @@ const AdminStatsRoute = AdminStatsRouteImport.update({
   path: '/stats',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminOpsRoute = AdminOpsRouteImport.update({
+  id: '/ops',
+  path: '/ops',
+  getParentRoute: () => AdminRoute,
+} as any)
 const AdminNotificationsRoute = AdminNotificationsRouteImport.update({
   id: '/notifications',
   path: '/notifications',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminErrorsRoute = AdminErrorsRouteImport.update({
+  id: '/errors',
+  path: '/errors',
   getParentRoute: () => AdminRoute,
 } as any)
 const AdminCalendarRoute = AdminCalendarRouteImport.update({
@@ -100,11 +130,16 @@ export interface FileRoutesByFullPath {
   '/admin': typeof AdminRouteWithChildren
   '/auth': typeof AuthRoute
   '/privacy': typeof PrivacyRoute
+  '/robots.txt': typeof RobotsDottxtRoute
+  '/sitemap.xml': typeof SitemapDotxmlRoute
   '/admin/account': typeof AdminAccountRoute
   '/admin/calendar': typeof AdminCalendarRoute
+  '/admin/errors': typeof AdminErrorsRoute
   '/admin/notifications': typeof AdminNotificationsRoute
+  '/admin/ops': typeof AdminOpsRoute
   '/admin/stats': typeof AdminStatsRoute
   '/book/$slug': typeof BookSlugRoute
+  '/manage/$token': typeof ManageTokenRoute
   '/admin/': typeof AdminIndexRoute
   '/admin/salons/$salonId': typeof AdminSalonsSalonIdRoute
   '/preview/salon/$salonId': typeof PreviewSalonSalonIdRoute
@@ -115,11 +150,16 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/privacy': typeof PrivacyRoute
+  '/robots.txt': typeof RobotsDottxtRoute
+  '/sitemap.xml': typeof SitemapDotxmlRoute
   '/admin/account': typeof AdminAccountRoute
   '/admin/calendar': typeof AdminCalendarRoute
+  '/admin/errors': typeof AdminErrorsRoute
   '/admin/notifications': typeof AdminNotificationsRoute
+  '/admin/ops': typeof AdminOpsRoute
   '/admin/stats': typeof AdminStatsRoute
   '/book/$slug': typeof BookSlugRoute
+  '/manage/$token': typeof ManageTokenRoute
   '/admin': typeof AdminIndexRoute
   '/admin/salons/$salonId': typeof AdminSalonsSalonIdRoute
   '/preview/salon/$salonId': typeof PreviewSalonSalonIdRoute
@@ -132,11 +172,16 @@ export interface FileRoutesById {
   '/admin': typeof AdminRouteWithChildren
   '/auth': typeof AuthRoute
   '/privacy': typeof PrivacyRoute
+  '/robots.txt': typeof RobotsDottxtRoute
+  '/sitemap.xml': typeof SitemapDotxmlRoute
   '/admin/account': typeof AdminAccountRoute
   '/admin/calendar': typeof AdminCalendarRoute
+  '/admin/errors': typeof AdminErrorsRoute
   '/admin/notifications': typeof AdminNotificationsRoute
+  '/admin/ops': typeof AdminOpsRoute
   '/admin/stats': typeof AdminStatsRoute
   '/book/$slug': typeof BookSlugRoute
+  '/manage/$token': typeof ManageTokenRoute
   '/admin/': typeof AdminIndexRoute
   '/admin/salons/$salonId': typeof AdminSalonsSalonIdRoute
   '/preview/salon/$salonId': typeof PreviewSalonSalonIdRoute
@@ -150,11 +195,16 @@ export interface FileRouteTypes {
     | '/admin'
     | '/auth'
     | '/privacy'
+    | '/robots.txt'
+    | '/sitemap.xml'
     | '/admin/account'
     | '/admin/calendar'
+    | '/admin/errors'
     | '/admin/notifications'
+    | '/admin/ops'
     | '/admin/stats'
     | '/book/$slug'
+    | '/manage/$token'
     | '/admin/'
     | '/admin/salons/$salonId'
     | '/preview/salon/$salonId'
@@ -165,11 +215,16 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/privacy'
+    | '/robots.txt'
+    | '/sitemap.xml'
     | '/admin/account'
     | '/admin/calendar'
+    | '/admin/errors'
     | '/admin/notifications'
+    | '/admin/ops'
     | '/admin/stats'
     | '/book/$slug'
+    | '/manage/$token'
     | '/admin'
     | '/admin/salons/$salonId'
     | '/preview/salon/$salonId'
@@ -181,11 +236,16 @@ export interface FileRouteTypes {
     | '/admin'
     | '/auth'
     | '/privacy'
+    | '/robots.txt'
+    | '/sitemap.xml'
     | '/admin/account'
     | '/admin/calendar'
+    | '/admin/errors'
     | '/admin/notifications'
+    | '/admin/ops'
     | '/admin/stats'
     | '/book/$slug'
+    | '/manage/$token'
     | '/admin/'
     | '/admin/salons/$salonId'
     | '/preview/salon/$salonId'
@@ -198,13 +258,30 @@ export interface RootRouteChildren {
   AdminRoute: typeof AdminRouteWithChildren
   AuthRoute: typeof AuthRoute
   PrivacyRoute: typeof PrivacyRoute
+  RobotsDottxtRoute: typeof RobotsDottxtRoute
+  SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   BookSlugRoute: typeof BookSlugRoute
+  ManageTokenRoute: typeof ManageTokenRoute
   PreviewSalonSalonIdRoute: typeof PreviewSalonSalonIdRoute
   ApiPublicWaSalonIdRoute: typeof ApiPublicWaSalonIdRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/sitemap.xml': {
+      id: '/sitemap.xml'
+      path: '/sitemap.xml'
+      fullPath: '/sitemap.xml'
+      preLoaderRoute: typeof SitemapDotxmlRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/robots.txt': {
+      id: '/robots.txt'
+      path: '/robots.txt'
+      fullPath: '/robots.txt'
+      preLoaderRoute: typeof RobotsDottxtRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/privacy': {
       id: '/privacy'
       path: '/privacy'
@@ -240,6 +317,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminIndexRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/manage/$token': {
+      id: '/manage/$token'
+      path: '/manage/$token'
+      fullPath: '/manage/$token'
+      preLoaderRoute: typeof ManageTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/book/$slug': {
       id: '/book/$slug'
       path: '/book/$slug'
@@ -254,11 +338,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminStatsRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/ops': {
+      id: '/admin/ops'
+      path: '/ops'
+      fullPath: '/admin/ops'
+      preLoaderRoute: typeof AdminOpsRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/notifications': {
       id: '/admin/notifications'
       path: '/notifications'
       fullPath: '/admin/notifications'
       preLoaderRoute: typeof AdminNotificationsRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/errors': {
+      id: '/admin/errors'
+      path: '/errors'
+      fullPath: '/admin/errors'
+      preLoaderRoute: typeof AdminErrorsRouteImport
       parentRoute: typeof AdminRoute
     }
     '/admin/calendar': {
@@ -309,7 +407,9 @@ declare module '@tanstack/react-router' {
 interface AdminRouteChildren {
   AdminAccountRoute: typeof AdminAccountRoute
   AdminCalendarRoute: typeof AdminCalendarRoute
+  AdminErrorsRoute: typeof AdminErrorsRoute
   AdminNotificationsRoute: typeof AdminNotificationsRoute
+  AdminOpsRoute: typeof AdminOpsRoute
   AdminStatsRoute: typeof AdminStatsRoute
   AdminIndexRoute: typeof AdminIndexRoute
   AdminSalonsSalonIdRoute: typeof AdminSalonsSalonIdRoute
@@ -319,7 +419,9 @@ interface AdminRouteChildren {
 const AdminRouteChildren: AdminRouteChildren = {
   AdminAccountRoute: AdminAccountRoute,
   AdminCalendarRoute: AdminCalendarRoute,
+  AdminErrorsRoute: AdminErrorsRoute,
   AdminNotificationsRoute: AdminNotificationsRoute,
+  AdminOpsRoute: AdminOpsRoute,
   AdminStatsRoute: AdminStatsRoute,
   AdminIndexRoute: AdminIndexRoute,
   AdminSalonsSalonIdRoute: AdminSalonsSalonIdRoute,
@@ -333,7 +435,10 @@ const rootRouteChildren: RootRouteChildren = {
   AdminRoute: AdminRouteWithChildren,
   AuthRoute: AuthRoute,
   PrivacyRoute: PrivacyRoute,
+  RobotsDottxtRoute: RobotsDottxtRoute,
+  SitemapDotxmlRoute: SitemapDotxmlRoute,
   BookSlugRoute: BookSlugRoute,
+  ManageTokenRoute: ManageTokenRoute,
   PreviewSalonSalonIdRoute: PreviewSalonSalonIdRoute,
   ApiPublicWaSalonIdRoute: ApiPublicWaSalonIdRoute,
 }

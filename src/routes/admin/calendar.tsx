@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { ChevronLeft, ChevronRight, Phone, Clock, Scissors, User, RotateCcw, Plus, ArrowRightLeft, ZoomIn, ZoomOut } from "lucide-react";
+import { ChevronLeft, ChevronRight, Phone, Clock, Scissors, User, RotateCcw, Plus, ArrowRightLeft, ZoomIn, ZoomOut, UserX, Check } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth-client";
 import { useAdminFilters } from "@/hooks/use-branch-filter";
@@ -185,7 +185,9 @@ function CalendarPage() {
     let q = supabase.from("appointments")
       .select(selectCols)
       .eq("salon_id", effectiveSalonId)
-      .eq("status", "confirmed")
+      // Attendance-marked visits (no_show/completed) stay on the calendar so the outcome is
+      // visible and reversible; only cancelled bookings are hidden from the grid.
+      .in("status", ["confirmed", "no_show", "completed"])
       .gte("starts_at", range.start.toISOString())
       .lt("starts_at", range.end.toISOString())
       .order("starts_at");
@@ -238,6 +240,19 @@ function CalendarPage() {
     if (error) return toast.error(error.message);
     toast.success("Запись отменена");
     setSelected(null);
+    loadAppointments();
+  }
+
+  // Mark attendance outcome for a past visit. "no_show" powers the No-Show analytics; "completed"
+  // records a normal visit; both are reversible back to "confirmed". No client WhatsApp is sent —
+  // the change trigger only messages on cancel/reschedule, so attendance stays internal.
+  async function markStatus(id: string, status: "no_show" | "completed" | "confirmed") {
+    const { error } = await supabase.from("appointments").update({ status }).eq("id", id);
+    if (error) return toast.error(error.message);
+    toast.success(
+      status === "no_show" ? "Отмечено: клиент не пришёл" : status === "completed" ? "Отмечено: визит состоялся" : "Возвращено в подтверждённые",
+    );
+    setSelected((prev: any) => (prev && prev.id === id ? { ...prev, status } : prev));
     loadAppointments();
   }
 
@@ -439,6 +454,29 @@ function CalendarPage() {
                       ? "Для восстановления записи обратитесь к администратору салона."
                       : "Нажмите «Восстановить эту запись», чтобы вернуть её в календарь. Перед восстановлением мы проверим, что время свободно."}
                   </div>
+                </div>
+              )}
+              {(selected.status === "no_show" || selected.status === "completed") && (
+                <div className="rounded-md border p-3 text-xs flex items-center justify-between gap-2">
+                  <span className="font-semibold">
+                    {selected.status === "no_show" ? "❌ Клиент не пришёл" : "✅ Визит состоялся"}
+                  </span>
+                  {!lockedMaster && (
+                    <Button size="sm" variant="ghost" onClick={() => markStatus(selected.id, "confirmed")}>
+                      <RotateCcw className="h-4 w-4 mr-1" />Вернуть
+                    </Button>
+                  )}
+                </div>
+              )}
+              {/* Attendance controls appear once the visit time has passed, so no-shows can be logged. */}
+              {!lockedMaster && selected.status === "confirmed" && new Date(selected.starts_at).getTime() < Date.now() && (
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" className="flex-1" onClick={() => markStatus(selected.id, "completed")}>
+                    <Check className="h-4 w-4 mr-1" />Пришёл
+                  </Button>
+                  <Button size="sm" variant="outline" className="flex-1" onClick={() => markStatus(selected.id, "no_show")}>
+                    <UserX className="h-4 w-4 mr-1" />Не пришёл
+                  </Button>
                 </div>
               )}
               <div className="flex flex-wrap justify-end gap-2 pt-2">
@@ -685,8 +723,10 @@ function PositionedBlock({ a, tz, hourStart, hourPx, onSelect, dragRef, addons, 
   const color = a.services?.color ?? "#0ea5e9";
   const durationMin = (end.getTime() - start.getTime()) / 60000;
   const isCancelled = a.status === "cancelled";
+  const isNoShow = a.status === "no_show";
   const isPast = !isCancelled && end.getTime() < Date.now();
   const isDimmed = isCancelled || isPast;
+  const attendanceLabel = isNoShow ? " · не пришёл" : a.status === "completed" ? " · пришёл" : isCancelled ? " · отменено" : isPast ? " · завершено" : "";
   const serviceText = (a.services?.name ?? "") + (addons && addons.length > 0 ? " + " + addons.map((x) => x.name).join(", ") : "");
   return (
     <div
@@ -705,7 +745,7 @@ function PositionedBlock({ a, tz, hourStart, hourPx, onSelect, dragRef, addons, 
       tabIndex={0}
       title={serviceText}
     >
-      <div className="font-medium truncate">{a.client_name}{isCancelled ? " · отменено" : isPast ? " · завершено" : ""}</div>
+      <div className="font-medium truncate">{a.client_name}{attendanceLabel}</div>
       {!compact && <div className="text-muted-foreground truncate">{serviceText}</div>}
 
       <div className="text-muted-foreground">

@@ -5,6 +5,8 @@ import { SalonSite } from "@/components/site/SalonSite";
 
 export const Route = createFileRoute("/preview/salon/$salonId")({
   ssr: false,
+  // Internal owner preview — duplicates the live salon site, so keep it out of the index.
+  head: () => ({ meta: [{ name: "robots", content: "noindex, nofollow" }] }),
   component: PreviewSalonSite,
 });
 

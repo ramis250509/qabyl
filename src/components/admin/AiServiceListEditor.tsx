@@ -146,7 +146,7 @@ export function AiServiceListEditor({ salonId }: { salonId: string }) {
   }
 
   async function resetToServicesList() {
-    if (!confirm("Сбросить кастомный список для ИИ к обычному списку услуг?")) return;
+    if (!confirm("Сбросить кастомный список для Ассистента к обычному списку услуг?")) return;
     const [{ error: delErr }, { error: upErr }] = await Promise.all([
       supabase.from("ai_service_overrides").delete().eq("salon_id", salonId),
       supabase
@@ -155,7 +155,7 @@ export function AiServiceListEditor({ salonId }: { salonId: string }) {
     ]);
     if (delErr) return toast.error(delErr.message);
     if (upErr) return toast.error(upErr.message);
-    toast.success("Список для ИИ сброшен");
+    toast.success("Список для Ассистента сброшен");
     load();
   }
 
@@ -169,7 +169,7 @@ export function AiServiceListEditor({ salonId }: { salonId: string }) {
             <ListChecks className="h-5 w-5 text-primary" />
           </div>
           <div>
-            <h3 className="font-semibold">Список услуг для ИИ</h3>
+            <h3 className="font-semibold">Список услуг для Ассистента</h3>
             <p className="text-sm text-muted-foreground mt-1">
               Свой порядок и видимость категорий/услуг для чата с клиентом — не влияет на
               вкладку «Услуги» и публичную запись. Стрелки меняют порядок, переключатель
@@ -216,7 +216,7 @@ export function AiServiceListEditor({ salonId }: { salonId: string }) {
                   type="button"
                   className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground shrink-0"
                   onClick={() => toggleCategoryHidden(cat)}
-                  title={isHidden ? "Показать ИИ" : "Скрыть от ИИ"}
+                  title={isHidden ? "Показать Ассистенту" : "Скрыть от Ассистента"}
                 >
                   {isHidden ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   {isHidden ? "Скрыта" : "Видна"}

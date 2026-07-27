@@ -1,0 +1,16 @@
+-- Fix: duplicate WhatsApp message on a manual reschedule (client gets both a "Вы успешно
+-- записаны" and a "Ваша запись перенесена").
+--
+-- Root cause: the legacy trigger `appointments_dispatch_whatsapp_upd` (AFTER UPDATE OF status,
+-- starts_at) calls dispatch_whatsapp_confirmation(), which sends a kind='confirmation'
+-- ("Вы успешно записаны") message on ANY update where NEW.status = 'confirmed' — including a
+-- reschedule (starts_at changes, status stays 'confirmed'). It does not check TG_OP, does not
+-- compare OLD vs NEW, and does not skip service_role.
+--
+-- Since 20260718120000 a dedicated trigger (dispatch_whatsapp_appointment_change) plus the
+-- calendar server function already send the correct "перенесена" / "отменена" message on
+-- update. So the legacy UPDATE trigger is now redundant and double-notifies on every reschedule.
+--
+-- Drop it. Creation is still announced by the INSERT trigger
+-- (appointments_dispatch_whatsapp_ins → dispatch_whatsapp_confirmation), which is untouched.
+DROP TRIGGER IF EXISTS appointments_dispatch_whatsapp_upd ON public.appointments;

@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-client";
@@ -14,7 +14,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
-import { ArrowLeft, Plus, Trash2, Edit, Copy, UserPlus, ChevronDown, FolderPlus, MapPin, GripVertical } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Edit, Copy, UserPlus, ChevronDown, FolderPlus, MapPin, GripVertical, CheckCircle2, Circle, ArrowRight, X, Sparkles } from "lucide-react";
 import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, DragOverlay, type DragEndEvent, type DragStartEvent, useDroppable } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -32,7 +32,61 @@ import { BranchHoursEditor, defaultBranchHours, type BranchHours } from "@/compo
 import { MasterDayOverrides } from "@/components/admin/MasterDayOverrides";
 import { SalonDayOverridesCard } from "@/components/admin/SalonDayOverridesCard";
 import { AiAssistantTab } from "@/components/admin/AiAssistantTab";
+import { INDUSTRIES_META, INDUSTRY_ORDER, normalizeIndustry, type IndustryKey } from "@/lib/industries";
+import { SERVICE_CATALOG_TEMPLATES, colorForCategoryIndex } from "@/lib/service-catalog-templates";
 // WaChatsTab tab hidden from UI by request; component kept for future use.
+
+// Business industry — the single source of truth chosen here in the "Салон" tab and read by the
+// whole cabinet (Assistant expertise, Site example copy, per-industry photo instructions). Stored
+// on salon_ai_assistant.industry so the WhatsApp agent (which already reads that row) needs no
+// change; the Assistant tab shows it read-only.
+function IndustrySelectCard({ salonId }: { salonId: string }) {
+  const [industry, setIndustry] = useState<IndustryKey | null>(null);
+
+  useEffect(() => {
+    supabase
+      .from("salon_ai_assistant")
+      .select("industry")
+      .eq("salon_id", salonId)
+      .maybeSingle()
+      .then(({ data }) => setIndustry(normalizeIndustry(data?.industry)));
+  }, [salonId]);
+
+  async function change(v: IndustryKey) {
+    setIndustry(v);
+    const { error } = await supabase
+      .from("salon_ai_assistant")
+      .upsert({ salon_id: salonId, industry: v }, { onConflict: "salon_id" });
+    if (error) return toast.error(error.message);
+    toast.success("Сфера бизнеса сохранена — применится во всём кабинете");
+  }
+
+  if (!industry) return null;
+
+  return (
+    <Card className="p-4 sm:p-6 space-y-3">
+      <div>
+        <h2 className="font-semibold">Сфера бизнеса</h2>
+        <p className="text-xs text-muted-foreground">
+          Один выбор для всего кабинета: экспертиза Ассистента, тексты сайта и примеры под нишу
+          берутся отсюда.
+        </p>
+      </div>
+      <Select value={industry} onValueChange={(v) => change(v as IndustryKey)}>
+        <SelectTrigger className="max-w-sm">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {INDUSTRY_ORDER.map((k) => (
+            <SelectItem key={k} value={k}>
+              {INDUSTRIES_META[k].emoji} {INDUSTRIES_META[k].label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </Card>
+  );
+}
 
 export const Route = createFileRoute("/admin/salons/$salonId")({
   component: SalonEdit,
@@ -60,12 +114,180 @@ const TIMEZONES: { value: string; label: string }[] = [
   { value: "Europe/Istanbul", label: "Стамбул (UTC+3)" },
 ];
 
+// Guided first-run setup. Complements (does not replace) the full tab config: one step per main
+// section (Салон · Услуги · Мастера · Сайт), each deep-linking to its tab, with live progress,
+// disappearing once all are done. Pattern: the dismissible onboarding checklist used by
+// Stripe/Notion, not a blocking modal.
+function OnboardingChecklist({
+  salon,
+  activeTab,
+  onGoTo,
+}: {
+  salon: any;
+  activeTab: string;
+  onGoTo: (tab: string) => void;
+}) {
+  const [counts, setCounts] = useState<{ services: number; masters: number } | null>(null);
+  const dismissKey = `qabyl:onboarding-dismissed:${salon.id}`;
+  const [dismissed, setDismissed] = useState(false);
+
+  useEffect(() => {
+    try {
+      setDismissed(localStorage.getItem(dismissKey) === "1");
+    } catch {
+      /* localStorage unavailable — just show the checklist */
+    }
+  }, [dismissKey]);
+
+  // Re-count whenever the salon changes or the user switches tabs, so the progress updates after
+  // they add a service/master and come back. Uses GET + count (limit 1), not HEAD: authenticated
+  // HEAD count requests intermittently 503 on the free tier under the page's concurrent load burst.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [s, m] = await Promise.all([
+        supabase.from("services").select("id", { count: "exact" }).eq("salon_id", salon.id).limit(1),
+        supabase.from("masters").select("id", { count: "exact" }).eq("salon_id", salon.id).limit(1),
+      ]);
+      if (cancelled) return;
+      setCounts({ services: s.count ?? 0, masters: m.count ?? 0 });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [salon.id, activeTab]);
+
+  if (!counts || dismissed) return null;
+
+  // One step per main section, in the same order as the tabs (Салон · Услуги · Мастера · Сайт).
+  const steps = [
+    {
+      done: !!(salon.phone?.trim() || salon.address?.trim()),
+      title: "Салон и график",
+      desc: "Контакты, часовой пояс и часы работы",
+      tab: "salon",
+    },
+    {
+      done: counts.services > 0,
+      title: "Услуги",
+      desc: "На что клиент может записаться",
+      tab: "services",
+    },
+    {
+      done: counts.masters > 0,
+      title: "Мастера",
+      desc: "Кто оказывает услуги и когда работает",
+      tab: "masters",
+    },
+    {
+      done: !!(salon.about_text?.trim() || salon.hero_title?.trim() || salon.hero_image_url),
+      title: "Сайт салона",
+      desc: "Оформите страницу, которую увидят клиенты",
+      tab: "site",
+    },
+  ];
+
+  const doneCount = steps.filter((s) => s.done).length;
+  // Fully configured — no reason to keep nudging.
+  if (doneCount === steps.length) return null;
+
+  // Bookable once there's at least one service and one master (the schedule always exists).
+  const ready = counts.services > 0 && counts.masters > 0;
+  const nextStep = steps.find((s) => !s.done);
+
+  function dismiss() {
+    try {
+      localStorage.setItem(dismissKey, "1");
+    } catch {
+      /* ignore */
+    }
+    setDismissed(true);
+  }
+
+  return (
+    <Card className="p-5 sm:p-6 space-y-5">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold tracking-tight">Быстрый старт</h2>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            {ready
+              ? "Салон уже принимает записи. Осталось пара штрихов."
+              : "Настройте салон, чтобы начать принимать записи."}
+          </p>
+        </div>
+        <button
+          onClick={dismiss}
+          className="shrink-0 text-muted-foreground/70 hover:text-foreground transition-colors"
+          title="Скрыть"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <div className="h-1.5 flex-1 rounded-full bg-muted overflow-hidden">
+          <div
+            className="h-full rounded-full bg-primary transition-all duration-500"
+            style={{ width: `${(doneCount / steps.length) * 100}%` }}
+          />
+        </div>
+        <span className="text-sm font-medium tabular-nums text-muted-foreground shrink-0">
+          {doneCount} из {steps.length}
+        </span>
+      </div>
+
+      <div className="divide-y">
+        {steps.map((s) => {
+          const isNext = s === nextStep;
+          return (
+            <div key={s.tab} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
+              {s.done ? (
+                <CheckCircle2 className="h-5 w-5 shrink-0 text-primary" />
+              ) : (
+                <Circle className="h-5 w-5 shrink-0 text-muted-foreground/40" />
+              )}
+              <div className="min-w-0 flex-1">
+                <p className={`text-sm font-medium ${s.done ? "text-muted-foreground line-through" : ""}`}>
+                  {s.title}
+                </p>
+                {!s.done && <p className="text-xs text-muted-foreground mt-0.5">{s.desc}</p>}
+              </div>
+              {!s.done && (
+                <Button
+                  size="sm"
+                  variant={isNext ? "default" : "outline"}
+                  onClick={() => onGoTo(s.tab)}
+                  className="shrink-0"
+                >
+                  Настроить
+                  <ArrowRight className="h-3.5 w-3.5 ml-1" />
+                </Button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
 function SalonEdit() {
   const { salonId } = Route.useParams();
   const navigate = useNavigate();
   const { isSuperAdmin } = useAuth();
   const [salon, setSalon] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState("info");
+  const [activeTab, setActiveTab] = useState("salon");
+  const tabsRef = useRef<HTMLDivElement>(null);
+  const branchesRef = useRef<HTMLDivElement>(null);
+
+  // Switch to a tab and bring its content into view, so onboarding "Настроить" never leaves
+  // the user hunting for the right section.
+  const goToTab = (tab: string) => {
+    setActiveTab(tab);
+    requestAnimationFrame(() =>
+      tabsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+    );
+  };
 
   useEffect(() => {
     supabase.from("salons").select("*").eq("id", salonId).maybeSingle().then(({ data }) => setSalon(data));
@@ -87,39 +309,79 @@ function SalonEdit() {
 
       <SalonShareCard slug={salon.slug} name={salon.name} />
 
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
-          <TabsList className="w-max">
-            <TabsTrigger value="info">Информация</TabsTrigger>
-            <TabsTrigger value="branches">Филиалы</TabsTrigger>
-            <TabsTrigger value="site">Сайт</TabsTrigger>
-            <TabsTrigger value="reviews">Отзывы</TabsTrigger>
-            <TabsTrigger value="masters">Мастера</TabsTrigger>
-            <TabsTrigger value="services">Услуги</TabsTrigger>
-            <TabsTrigger value="addons">Доп. услуги</TabsTrigger>
-            <TabsTrigger value="faq">FAQ</TabsTrigger>
-            <TabsTrigger value="integrations">WhatsApp</TabsTrigger>
-            {(isSuperAdmin || salon.ai_assistant_enabled) && <TabsTrigger value="ai">Ассистент</TabsTrigger>}
-            
-            {isSuperAdmin && <TabsTrigger value="access">Доступ</TabsTrigger>}
-          </TabsList>
-        </div>
+      <OnboardingChecklist salon={salon} activeTab={activeTab} onGoTo={goToTab} />
 
-        <TabsContent value="info"><SalonInfoTab salon={salon} onSaved={(s) => setSalon(s)} onOpenBranchesTab={() => setActiveTab("branches")} /></TabsContent>
-        <TabsContent value="branches"><BranchesTab salonId={salonId} /></TabsContent>
-        <TabsContent value="site"><SiteTab salon={salon} onSaved={(s) => setSalon(s)} /></TabsContent>
-        <TabsContent value="reviews"><ReviewsTab salonId={salonId} /></TabsContent>
-        <TabsContent value="masters"><MastersTab salonId={salonId} /></TabsContent>
-        <TabsContent value="services"><ServicesTab salonId={salonId} /></TabsContent>
-        <TabsContent value="addons"><AddonsTab salonId={salonId} /></TabsContent>
-        <TabsContent value="faq"><FaqTab salonId={salonId} /></TabsContent>
-        <TabsContent value="integrations"><IntegrationsTab salon={salon} onSaved={(s) => setSalon(s)} /></TabsContent>
-        {(isSuperAdmin || salon.ai_assistant_enabled) && (
-          <TabsContent value="ai"><AiAssistantTab salonId={salonId} salonName={salon.name} onOpenWhatsAppTab={() => setActiveTab("integrations")} /></TabsContent>
-        )}
-        {isSuperAdmin && <TabsContent value="access"><AccessTab salonId={salonId} /></TabsContent>}
-      </Tabs>
+      <div ref={tabsRef} className="scroll-mt-4">
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+            <TabsList className="w-max">
+              <TabsTrigger value="salon">Салон</TabsTrigger>
+              <TabsTrigger value="services">Услуги</TabsTrigger>
+              <TabsTrigger value="masters">Мастера</TabsTrigger>
+              <TabsTrigger value="site">Сайт</TabsTrigger>
+              <TabsTrigger value="integrations">WhatsApp</TabsTrigger>
+              {(isSuperAdmin || salon.ai_assistant_enabled) && (
+                <TabsTrigger value="ai">Ассистент</TabsTrigger>
+              )}
+              {isSuperAdmin && <TabsTrigger value="access">Доступ</TabsTrigger>}
+            </TabsList>
+          </div>
 
+          <TabsContent value="salon">
+            <div className="space-y-6">
+              <IndustrySelectCard salonId={salonId} />
+              <SalonInfoTab
+                salon={salon}
+                onSaved={(s) => setSalon(s)}
+                onOpenBranchesTab={() =>
+                  branchesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
+                }
+              />
+              <div ref={branchesRef} className="scroll-mt-4">
+                <BranchesTab salonId={salonId} />
+              </div>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="services">
+            <div className="space-y-6">
+              <ServicesTab salonId={salonId} />
+              <AddonsTab salonId={salonId} />
+            </div>
+          </TabsContent>
+
+          <TabsContent value="masters">
+            <MastersTab salonId={salonId} />
+          </TabsContent>
+
+          <TabsContent value="site">
+            <div className="space-y-6">
+              <SiteTab salon={salon} onSaved={(s) => setSalon(s)} />
+              <ReviewsTab salonId={salonId} />
+              <FaqTab salonId={salonId} />
+            </div>
+          </TabsContent>
+
+          <TabsContent value="integrations">
+            <IntegrationsTab salon={salon} onSaved={(s) => setSalon(s)} />
+          </TabsContent>
+
+          {(isSuperAdmin || salon.ai_assistant_enabled) && (
+            <TabsContent value="ai">
+              <AiAssistantTab
+                salonId={salonId}
+                salonName={salon.name}
+                onOpenWhatsAppTab={() => setActiveTab("integrations")}
+              />
+            </TabsContent>
+          )}
+          {isSuperAdmin && (
+            <TabsContent value="access">
+              <AccessTab salonId={salonId} />
+            </TabsContent>
+          )}
+        </Tabs>
+      </div>
     </div>
   );
 }
@@ -218,7 +480,7 @@ function SalonInfoTab({ salon, onSaved, onOpenBranchesTab }: { salon: any; onSav
         </p>
         {tzMismatch && (
           <div className="mt-2 text-xs rounded-md border border-yellow-500/40 bg-yellow-500/10 px-3 py-2 space-y-1">
-            <p>⚠️ Время выше не совпадает с часами на вашем устройстве ({browserTz}). Если салон находится там же, где и вы — нажмите кнопку ниже.</p>
+            <p>Время выше не совпадает с часами на вашем устройстве ({browserTz}). Если салон находится там же, где и вы — нажмите кнопку ниже.</p>
             <Button type="button" variant="outline" size="sm" onClick={() => setForm({ ...form, timezone: browserTz })}>
               Использовать моё время ({browserTz})
             </Button>
@@ -262,7 +524,7 @@ function SalonInfoTab({ salon, onSaved, onOpenBranchesTab }: { salon: any; onSav
       </div>
       <Button onClick={save} disabled={saving}>{saving ? "..." : "Сохранить"}</Button>
     </Card>
-    <SalonScheduleCard salonId={salon.id} onOpenBranchesTab={onOpenBranchesTab} />
+    <SalonScheduleCard salonId={salon.id} salonName={salon.name} onOpenBranchesTab={onOpenBranchesTab} />
     <SalonDayOverridesCard salonId={salon.id} timezone={salon.timezone} />
     </div>
   );
@@ -286,7 +548,15 @@ function formatWorkingHoursForAgent(hours: BranchHours): Record<string, string> 
 // напрямую редактируем branches.working_hours (единственный источник, который читает
 // get_available_slots()). При >=2 филиалах график настраивается отдельно для каждого
 // во вкладке «Филиалы», чтобы не терять гибкость сетевых салонов.
-function SalonScheduleCard({ salonId, onOpenBranchesTab }: { salonId: string; onOpenBranchesTab?: () => void }) {
+function SalonScheduleCard({
+  salonId,
+  salonName,
+  onOpenBranchesTab,
+}: {
+  salonId: string;
+  salonName?: string;
+  onOpenBranchesTab?: () => void;
+}) {
   const [branches, setBranches] = useState<any[] | null>(null);
   const [hours, setHours] = useState<BranchHours>(defaultBranchHours());
   const [saving, setSaving] = useState(false);
@@ -294,31 +564,53 @@ function SalonScheduleCard({ salonId, onOpenBranchesTab }: { salonId: string; on
   const [pendingSave, setPendingSave] = useState(false);
 
   async function load() {
-    const { data } = await supabase
-      .from("branches")
-      .select("id, working_hours")
-      .eq("salon_id", salonId)
-      .order("sort_order");
-    setBranches(data ?? []);
-    if (data && data.length === 1) {
-      setHours((data[0].working_hours as BranchHours) ?? defaultBranchHours());
+    let rows =
+      (
+        await supabase
+          .from("branches")
+          .select("id, working_hours")
+          .eq("salon_id", salonId)
+          .order("sort_order")
+      ).data ?? [];
+    // Every salon has an implicit "main location" so a single-salon owner can set working
+    // hours right away, without ever dealing with the "branch" concept. Create it lazily.
+    if (rows.length === 0) {
+      const { data: created } = await supabase
+        .from("branches")
+        .insert({
+          salon_id: salonId,
+          name: salonName || "Основная точка",
+          is_active: true,
+          working_hours: defaultBranchHours(),
+        })
+        .select("id, working_hours")
+        .single();
+      if (created) rows = [created];
+    }
+    setBranches(rows);
+    if (rows.length === 1) {
+      setHours((rows[0].working_hours as BranchHours) ?? defaultBranchHours());
     }
   }
-  useEffect(() => { load(); }, [salonId]);
+  useEffect(() => {
+    load();
+  }, [salonId]);
 
   if (branches === null) return null;
 
+  // Multiple locations: hours are set per branch just below, in the branches list.
   if (branches.length !== 1) {
     return (
       <Card className="p-4 sm:p-6 space-y-2">
         <h2 className="font-semibold">График работы</h2>
         <p className="text-sm text-muted-foreground">
-          {branches.length === 0
-            ? "Сначала добавьте филиал во вкладке «Филиалы» — там же настраивается график работы."
-            : "У салона несколько филиалов — график настраивается отдельно для каждого во вкладке «Филиалы»."}
+          У салона несколько точек — график настраивается отдельно для каждой в списке филиалов
+          ниже.
         </p>
         {onOpenBranchesTab && (
-          <Button variant="outline" size="sm" onClick={onOpenBranchesTab}>Перейти к филиалам</Button>
+          <Button variant="outline" size="sm" onClick={onOpenBranchesTab}>
+            К филиалам
+          </Button>
         )}
       </Card>
     );
@@ -422,60 +714,73 @@ function BranchesTab({ salonId }: { salonId: string }) {
   }
   useEffect(() => { load(); }, [salonId]);
 
+  // 0 or 1 branch = one location: hide the branch list entirely (the single "main point" is an
+  // implementation detail) and just offer to add more. 2+ = a real multi-location network.
+  const multi = branches.length >= 2;
+
   return (
     <Card className="p-4 sm:p-6 space-y-4">
-      <div className="flex justify-between items-center">
-        <div>
+      <div className="flex justify-between items-center gap-3">
+        <div className="min-w-0">
           <h2 className="font-semibold">Филиалы</h2>
-          <p className="text-xs text-muted-foreground">Если филиалов больше одного, клиент выберет нужный перед записью.</p>
+          <p className="text-xs text-muted-foreground">
+            {multi
+              ? "Клиент выберет нужную точку перед записью. График у каждой точки — свой."
+              : "Работаете в нескольких точках? Добавьте филиалы — клиент сможет выбрать нужный при записи."}
+          </p>
         </div>
-        <Button size="sm" onClick={() => setEditing({ salon_id: salonId, name: "", address: "", phone: "", is_active: true })}>
-          <Plus className="h-4 w-4 mr-1" />Добавить
+        <Button
+          size="sm"
+          className="shrink-0"
+          onClick={() =>
+            setEditing({ salon_id: salonId, name: "", address: "", phone: "", is_active: true })
+          }
+        >
+          <Plus className="h-4 w-4 mr-1" />
+          Добавить филиал
         </Button>
       </div>
 
-      {branches.length === 0 && (
+      {multi ? (
         <div className="space-y-2">
-          <p className="text-muted-foreground text-sm">Пока нет филиалов</p>
-          <div className="rounded-lg border border-dashed p-3 flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium">Логины мастеров салона</p>
-              <p className="text-xs text-muted-foreground">
-                Создайте общий логин для мастеров — они увидят только Календарь и Уведомления салона.
-              </p>
-            </div>
-            <Button size="sm" variant="outline" onClick={() => setSalonMastersOpen(true)}>
-              <KeyRound className="h-4 w-4 mr-1" />Управлять
-            </Button>
-          </div>
-        </div>
-      )}
-      <div className="space-y-2">
-        {branches.map((b) => (
-          <div key={b.id} className="flex items-start justify-between gap-2 p-3 border rounded-lg">
-            <div className="flex items-start gap-3 min-w-0">
-              <div className="h-9 w-9 rounded-md bg-muted flex items-center justify-center shrink-0"><MapPin className="h-4 w-4" /></div>
-              <div className="min-w-0">
-                <p className="font-medium truncate">{b.name}</p>
-                {b.address && <p className="text-xs text-muted-foreground truncate">{b.address}</p>}
-                {b.phone && <p className="text-xs text-muted-foreground truncate">{b.phone}</p>}
+          {branches.map((b) => (
+            <div key={b.id} className="flex items-start justify-between gap-2 p-3 border rounded-lg">
+              <div className="flex items-start gap-3 min-w-0">
+                <div className="h-9 w-9 rounded-md bg-muted flex items-center justify-center shrink-0"><MapPin className="h-4 w-4" /></div>
+                <div className="min-w-0">
+                  <p className="font-medium truncate">{b.name}</p>
+                  {b.address && <p className="text-xs text-muted-foreground truncate">{b.address}</p>}
+                  {b.phone && <p className="text-xs text-muted-foreground truncate">{b.phone}</p>}
+                </div>
+              </div>
+              <div className="flex gap-1 shrink-0">
+                <Button size="sm" variant="ghost" title="Логины мастеров филиала" onClick={() => setMastersForBranch(b)}>
+                  <KeyRound className="h-4 w-4" />
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setEditing(b)}><Edit className="h-4 w-4" /></Button>
+                <Button size="sm" variant="ghost" onClick={async () => {
+                  if (!confirm(`Удалить филиал «${b.name}»? Мастера и записи останутся, но привязка к филиалу пропадёт.`)) return;
+                  const { error } = await supabase.from("branches").delete().eq("id", b.id);
+                  if (error) return toast.error(error.message);
+                  load();
+                }}><Trash2 className="h-4 w-4 text-destructive" /></Button>
               </div>
             </div>
-            <div className="flex gap-1 shrink-0">
-              <Button size="sm" variant="ghost" title="Логины мастеров филиала" onClick={() => setMastersForBranch(b)}>
-                <KeyRound className="h-4 w-4" />
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setEditing(b)}><Edit className="h-4 w-4" /></Button>
-              <Button size="sm" variant="ghost" onClick={async () => {
-                if (!confirm(`Удалить филиал «${b.name}»? Мастера и записи останутся, но привязка к филиалу пропадёт.`)) return;
-                const { error } = await supabase.from("branches").delete().eq("id", b.id);
-                if (error) return toast.error(error.message);
-                load();
-              }}><Trash2 className="h-4 w-4 text-destructive" /></Button>
-            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-lg border border-dashed p-3 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm font-medium">Логины мастеров салона</p>
+            <p className="text-xs text-muted-foreground">
+              Общий логин для мастеров — они видят только Календарь и Уведомления салона.
+            </p>
           </div>
-        ))}
-      </div>
+          <Button size="sm" variant="outline" className="shrink-0" onClick={() => setSalonMastersOpen(true)}>
+            <KeyRound className="h-4 w-4 mr-1" />Управлять
+          </Button>
+        </div>
+      )}
 
       {editing && (
         <BranchDialog
@@ -850,6 +1155,7 @@ function MasterDialog({ master, salonId, branches, onClose, onSaved }: { master:
   const [services, setServices] = useState<any[]>([]);
   const [linked, setLinked] = useState<Set<string>>(new Set());
   const [schedule, setSchedule] = useState<Record<number, { start: string; end: string } | null>>({});
+  const [svcSearch, setSvcSearch] = useState("");
 
   useEffect(() => {
     supabase.from("services").select("*").eq("salon_id", salonId).then(({ data }) => setServices(data ?? []));
@@ -871,6 +1177,8 @@ function MasterDialog({ master, salonId, branches, onClose, onSaved }: { master:
     const payload = {
       name: form.name, specialization: form.specialization, photo_url: form.photo_url || null,
       is_active: form.is_active ?? true, branch_id: form.branch_id || null,
+      rating: form.rating === "" || form.rating == null ? null : Number(form.rating),
+      experience_years: form.experience_years === "" || form.experience_years == null ? null : Number(form.experience_years),
     };
     if (id) {
       const { error } = await supabase.from("masters").update(payload).eq("id", id);
@@ -900,6 +1208,25 @@ function MasterDialog({ master, salonId, branches, onClose, onSaved }: { master:
         <div className="space-y-3">
           <div><Label>Имя</Label><Input value={form.name ?? ""} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
           <div><Label>Специализация</Label><Input value={form.specialization ?? ""} onChange={(e) => setForm({ ...form, specialization: e.target.value })} /></div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Опыт работы (лет)</Label>
+              <Input
+                type="number" min={0} max={80} placeholder="Например, 5"
+                value={form.experience_years ?? ""}
+                onChange={(e) => setForm({ ...form, experience_years: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label>Рейтинг (1–5)</Label>
+              <Input
+                type="number" min={1} max={5} step={0.1} placeholder="Например, 4.8"
+                value={form.rating ?? ""}
+                onChange={(e) => setForm({ ...form, rating: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground mt-1">Показывается звёздами клиентам. Пусто — рейтинг не отображается.</p>
+            </div>
+          </div>
           <div>
             <Label>Фото мастера</Label>
             <div className="flex items-center gap-3 mt-2">
@@ -951,21 +1278,97 @@ function MasterDialog({ master, salonId, branches, onClose, onSaved }: { master:
 
           <div>
             <Label>Услуги мастера</Label>
-            <div className="space-y-1 mt-2 max-h-40 overflow-y-auto border rounded p-2">
-              {services.map((s) => (
-                <label key={s.id} className="flex items-center gap-2 text-sm">
-                  <Checkbox checked={linked.has(s.id)} onCheckedChange={(v) => {
-                    const n = new Set(linked); if (v) n.add(s.id); else n.delete(s.id); setLinked(n);
-                  }} />
-                  {s.name} <span className="text-muted-foreground">({s.duration_min} мин · {formatPrice(s)})</span>
-                </label>
-              ))}
-              {services.length === 0 && <p className="text-xs text-muted-foreground">Сначала добавьте услуги во вкладке "Услуги"</p>}
+            {services.length > 0 && (
+              <div className="flex items-center gap-2 mt-2">
+                <Input
+                  placeholder="Поиск услуг…"
+                  value={svcSearch}
+                  onChange={(e) => setSvcSearch(e.target.value)}
+                  className="h-8 flex-1"
+                />
+                {(() => {
+                  const q = svcSearch.trim().toLowerCase();
+                  const visible = q
+                    ? services.filter((s) => s.name.toLowerCase().includes(q))
+                    : services;
+                  const visibleIds = visible.map((s) => s.id);
+                  const allSelected =
+                    visibleIds.length > 0 && visibleIds.every((id) => linked.has(id));
+                  return (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        const n = new Set(linked);
+                        if (allSelected) for (const id of visibleIds) n.delete(id);
+                        else for (const id of visibleIds) n.add(id);
+                        setLinked(n);
+                      }}
+                    >
+                      {allSelected ? "Снять все" : "Выбрать все"}
+                    </Button>
+                  );
+                })()}
+              </div>
+            )}
+            <div className="space-y-1 mt-2 max-h-56 overflow-y-auto border rounded p-2">
+              {(() => {
+                const q = svcSearch.trim().toLowerCase();
+                const list = q ? services.filter((s) => s.name.toLowerCase().includes(q)) : services;
+                if (services.length === 0) {
+                  return (
+                    <p className="text-xs text-muted-foreground">
+                      Сначала добавьте услуги во вкладке "Услуги"
+                    </p>
+                  );
+                }
+                if (list.length === 0) {
+                  return (
+                    <p className="text-xs text-muted-foreground">Ничего не найдено по «{svcSearch}»</p>
+                  );
+                }
+                return list.map((s) => (
+                  <label key={s.id} className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={linked.has(s.id)}
+                      onCheckedChange={(v) => {
+                        const n = new Set(linked);
+                        if (v) n.add(s.id);
+                        else n.delete(s.id);
+                        setLinked(n);
+                      }}
+                    />
+                    {s.name}{" "}
+                    <span className="text-muted-foreground">
+                      ({s.duration_min} мин · {formatPrice(s)})
+                    </span>
+                  </label>
+                ));
+              })()}
             </div>
           </div>
 
           <div>
-            <Label>График работы</Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label>График работы</Label>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  // Take the FIRST configured day (if any) as the template; otherwise a sensible
+                  // default. Apply it to all 7 days so the owner doesn't click day-by-day.
+                  const template =
+                    Object.values(schedule).find((d) => d) ?? { start: "10:00", end: "20:00" };
+                  const next: any = {};
+                  for (let i = 0; i < 7; i++) next[i] = { ...template };
+                  setSchedule(next);
+                }}
+              >
+                Изменить все
+              </Button>
+            </div>
             <div className="space-y-2 mt-2">
               {WEEKDAYS.map((wd, i) => {
                 const day = schedule[i];
@@ -1012,15 +1415,61 @@ function ServicesTab({ salonId }: { salonId: string }) {
   const [activeDrag, setActiveDrag] = useState<{ kind: "service" | "category"; id: string } | null>(null);
 
   const [collapsedCats, setCollapsedCats] = useState<string[]>([]);
+  const [industry, setIndustry] = useState<IndustryKey | null>(null);
+  const [autofillBusy, setAutofillBusy] = useState(false);
+  const [autofillConfirm, setAutofillConfirm] = useState(false);
 
   async function load() {
-    const [{ data: svc }, { data: salon }] = await Promise.all([
+    const [{ data: svc }, { data: salon }, { data: assistant }] = await Promise.all([
       supabase.from("services").select("*").eq("salon_id", salonId).order("sort_order"),
       supabase.from("salons").select("category_order, collapsed_categories").eq("id", salonId).maybeSingle(),
+      supabase.from("salon_ai_assistant").select("industry").eq("salon_id", salonId).maybeSingle(),
     ]);
     setServices(svc ?? []);
     setCatOrder((salon?.category_order as string[]) ?? []);
     setCollapsedCats(((salon as any)?.collapsed_categories as string[]) ?? []);
+    setIndustry(normalizeIndustry((assistant as any)?.industry));
+  }
+
+  // One-click starter catalog for the salon's industry (see service-catalog-templates.ts).
+  // Skips any service whose name already exists (case-insensitive) so re-running it after manual
+  // edits only ever ADDS what's missing — never creates duplicates.
+  async function autofillCatalog() {
+    if (!industry) return;
+    setAutofillBusy(true);
+    try {
+      const template = SERVICE_CATALOG_TEMPLATES[industry];
+      const existingNames = new Set(services.map((s) => String(s.name ?? "").trim().toLowerCase()));
+      const toInsert = template.filter((t) => !existingNames.has(t.name.trim().toLowerCase()));
+      if (toInsert.length === 0) {
+        toast.info("Все услуги шаблона уже есть в каталоге");
+        return;
+      }
+      const templateCats = Array.from(new Set(template.map((t) => t.category)));
+      let nextSort = services.length ? Math.max(...services.map((s) => s.sort_order ?? 0)) + 1 : 0;
+      const rows = toInsert.map((t) => ({
+        salon_id: salonId,
+        name: t.name,
+        category: t.category,
+        description: t.description ?? null,
+        duration_min: t.duration_min,
+        duration_max_min: t.duration_max_min ?? null,
+        price: t.price,
+        price_max: t.price_max ?? null,
+        price_type: t.price_type,
+        color: colorForCategoryIndex(templateCats, t.category),
+        sort_order: nextSort++,
+      }));
+      const { error } = await supabase.from("services").insert(rows as any);
+      if (error) return toast.error(error.message);
+      const mergedCatOrder = [...catOrder, ...templateCats.filter((c) => !catOrder.includes(c))];
+      await persistCategoryOrder(mergedCatOrder);
+      toast.success(`Добавлено услуг: ${toInsert.length}`);
+      setAutofillConfirm(false);
+      load();
+    } finally {
+      setAutofillBusy(false);
+    }
   }
   useEffect(() => { load(); }, [salonId]);
 
@@ -1078,14 +1527,86 @@ function ServicesTab({ salonId }: { salonId: string }) {
 
   async function deleteCategory(name: string) {
     const inCat = services.filter((s) => (s.category ?? "") === name);
-    if (inCat.length > 0) {
-      if (!confirm(`В категории "${name}" ${inCat.length} услуг. Удалить категорию? Услуги останутся, но станут без категории.`)) return;
-      const { error } = await supabase.from("services").update({ category: null }).in("id", inCat.map((s) => s.id));
-      if (error) return toast.error(error.message);
+    if (inCat.length === 0) {
+      // Empty category: just drop it from category_order/extraCats.
+      setExtraCats(extraCats.filter((c) => c !== name));
+      await persistCategoryOrder(catOrder.filter((c) => c !== name));
+      load();
+      return;
     }
-    setExtraCats(extraCats.filter((c) => c !== name));
-    await persistCategoryOrder(catOrder.filter((c) => c !== name));
-    load();
+    // appointments.service_id is ON DELETE RESTRICT — hard-delete of a service with any
+    // booking (past or future) fails with FK error and breaks history/analytics. Split into
+    // two groups: services with bookings get soft-deleted (is_active=false + detached from
+    // category, so booking flow and admin lists hide them, but historical rows still resolve
+    // service_id → name). Truly unused services get hard-deleted with dependency cleanup.
+    const ids = inCat.map((s) => s.id);
+    const { data: usedRows, error: usedErr } = await supabase
+      .from("appointments")
+      .select("service_id")
+      .in("service_id", ids)
+      .limit(1000);
+    if (usedErr) return toast.error(usedErr.message);
+    const usedSet = new Set((usedRows ?? []).map((r: any) => r.service_id));
+    const softIds = ids.filter((id) => usedSet.has(id));
+    const hardIds = ids.filter((id) => !usedSet.has(id));
+    const softCount = softIds.length;
+    const hardCount = hardIds.length;
+    const parts: string[] = [];
+    parts.push(`В категории «${name}» ${inCat.length} услуг(и).`);
+    if (hardCount) parts.push(`${hardCount} без записей — будут удалены полностью.`);
+    if (softCount)
+      parts.push(
+        `${softCount} с историей записей — будут скрыты и деактивированы (записи в истории останутся корректно, но услуга исчезнет из каталога/бота/сайта).`,
+      );
+    parts.push("Продолжить?");
+    if (!confirm(parts.join("\n"))) return;
+
+    try {
+      // 1) Detach master_services links for BOTH groups (safe for soft too — they won't
+      // appear in booking selectors and can be re-linked if the owner reactivates later).
+      if (ids.length > 0) {
+        const { error } = await supabase.from("master_services").delete().in("service_id", ids);
+        if (error) throw new Error(`master_services: ${error.message}`);
+      }
+      // 2) Clean ai_service_overrides for BOTH groups (this table gates AI visibility per
+      // service — the service list Editor was already removed from the UI, but rows may
+      // still exist from earlier configuration).
+      if (ids.length > 0) {
+        const { error } = await supabase
+          .from("ai_service_overrides")
+          .delete()
+          .in("service_id", ids);
+        // Ignore "table does not exist" style errors — this table is optional.
+        if (error && !/does not exist/i.test(error.message)) {
+          console.warn(`ai_service_overrides cleanup: ${error.message}`);
+        }
+      }
+      // 3) Soft-delete services with historical bookings.
+      if (softIds.length > 0) {
+        const { error } = await supabase
+          .from("services")
+          .update({ is_active: false, category: null })
+          .in("id", softIds);
+        if (error) throw new Error(`soft-delete: ${error.message}`);
+      }
+      // 4) Hard-delete truly unused services.
+      if (hardIds.length > 0) {
+        const { error } = await supabase.from("services").delete().in("id", hardIds);
+        if (error) throw new Error(`hard-delete: ${error.message}`);
+      }
+      setExtraCats(extraCats.filter((c) => c !== name));
+      await persistCategoryOrder(catOrder.filter((c) => c !== name));
+      const msg =
+        softCount && hardCount
+          ? `Категория удалена: ${hardCount} услуг удалены, ${softCount} скрыты (в истории записей).`
+          : softCount
+            ? `Категория удалена. ${softCount} услуг скрыты, потому что у них есть записи в истории.`
+            : `Категория удалена вместе с ${hardCount} услугами.`;
+      toast.success(msg);
+      load();
+    } catch (e: any) {
+      toast.error(`Не удалось удалить: ${e?.message ?? e}`);
+    }
   }
 
   // Group services by category
@@ -1248,13 +1769,40 @@ function ServicesTab({ salonId }: { salonId: string }) {
 
       {/* Services with DnD */}
       <div className="space-y-3 border-t pt-4">
-        <div className="flex justify-between">
-          <h2 className="font-semibold">Услуги</h2>
-          <Button size="sm" onClick={() => setEditing({ salon_id: salonId, name: "", category: "", duration_min: 60, buffer_after_min: 0, price: 0, price_max: null, price_type: "fixed", color: "#0ea5e9", is_active: true })}>
-            <Plus className="h-4 w-4 mr-1" />Добавить
-          </Button>
+        <div className="flex justify-between items-center gap-2 flex-wrap">
+          <h2 className="font-semibold shrink-0">Услуги</h2>
+          <div className="flex gap-2 flex-wrap justify-end min-w-0">
+            {industry && (
+              <Button size="sm" variant="outline" className="shrink-0" onClick={() => setAutofillConfirm(true)}>
+                Заполнить каталог автоматически
+              </Button>
+            )}
+            <Button size="sm" className="shrink-0" onClick={() => setEditing({ salon_id: salonId, name: "", category: "", duration_min: 60, buffer_after_min: 0, price: 0, price_max: null, price_type: "fixed", color: "#0ea5e9", is_active: true })}>
+              <Plus className="h-4 w-4 mr-1" />Добавить
+            </Button>
+          </div>
         </div>
         <p className="text-xs text-muted-foreground">Перетаскивайте услуги между категориями и категории между собой. Изменения сохраняются автоматически.</p>
+
+        <AlertDialog open={autofillConfirm} onOpenChange={setAutofillConfirm}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Заполнить каталог для отрасли «{industry ? INDUSTRIES_META[industry].label : ""}»?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Будет добавлен готовый профессиональный список услуг с категориями, длительностью
+                и ценами — как отправная точка, которую можно потом отредактировать. Услуги, уже
+                существующие в вашем каталоге (по названию), не дублируются — добавятся только
+                недостающие.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Отмена</AlertDialogCancel>
+              <AlertDialogAction disabled={autofillBusy} onClick={autofillCatalog}>
+                {autofillBusy ? "Добавляем…" : "Заполнить"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {services.length === 0 && allCats.length === 0 && <p className="text-muted-foreground text-sm">Пока нет ни категорий, ни услуг</p>}
 
@@ -1275,7 +1823,7 @@ function ServicesTab({ salonId }: { salonId: string }) {
                 const list = groups.get(cat) ?? [];
                 const open = openCats.has(cat);
                 return (
-                  <SortableCategory key={cat} cat={cat} count={list.length} open={open} onToggle={() => toggleCat(cat)}>
+                  <SortableCategory key={cat} cat={cat} count={list.length} open={open} onToggle={() => toggleCat(cat)} onDelete={() => deleteCategory(cat)}>
                     {open && (
                       <DroppableArea id={`drop:${cat}`}>
                         <SortableContext items={list.map((s) => `svc:${s.id}`)} strategy={verticalListSortingStrategy}>
@@ -1338,7 +1886,7 @@ function ServicesTab({ salonId }: { salonId: string }) {
   );
 }
 
-function SortableCategory({ cat, count, open, onToggle, children }: { cat: string; count: number; open: boolean; onToggle: () => void; children?: React.ReactNode }) {
+function SortableCategory({ cat, count, open, onToggle, onDelete, children }: { cat: string; count: number; open: boolean; onToggle: () => void; onDelete?: () => void; children?: React.ReactNode }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: `cat:${cat}` });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 };
   return (
@@ -1353,6 +1901,16 @@ function SortableCategory({ cat, count, open, onToggle, children }: { cat: strin
           </span>
           <ChevronDown className={`h-4 w-4 transition ${open ? "rotate-180" : ""}`} />
         </button>
+        {onDelete && (
+          <button
+            onClick={onDelete}
+            className="p-1 text-muted-foreground hover:text-destructive"
+            aria-label={`Удалить категорию ${cat}`}
+            title="Удалить категорию"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        )}
       </div>
       {children}
     </div>
@@ -1419,9 +1977,13 @@ function ServiceDialog({ editing, setEditing, salonId, categories, onSaved }: {
     const priceType = editing.price_type === "range" ? "range" : "fixed";
     const priceMax = priceType === "range" && editing.price_max != null && Number(editing.price_max) > Number(editing.price)
       ? Number(editing.price_max) : null;
+    // Range-duration: kept only when the max is a real number above the base duration; otherwise
+    // the service has a single fixed duration (duration_max_min = null).
+    const durationMax = editing.duration_max_min != null && Number(editing.duration_max_min) > Number(editing.duration_min)
+      ? Number(editing.duration_max_min) : null;
     const payload = {
       name: editing.name, category, description: editing.description,
-      duration_min: editing.duration_min, buffer_after_min: editing.buffer_after_min ?? 0,
+      duration_min: editing.duration_min, duration_max_min: durationMax, buffer_after_min: editing.buffer_after_min ?? 0,
       price: editing.price, price_max: priceMax, price_type: priceType, color: editing.color,
     };
     let serviceId = editing.id;
@@ -1479,6 +2041,27 @@ function ServiceDialog({ editing, setEditing, salonId, categories, onSaved }: {
               <Input type="number" min={0} value={editing.buffer_after_min ?? 0} onChange={(e) => setEditing({ ...editing, buffer_after_min: Math.max(0, Number(e.target.value)) })} />
               <p className="text-xs text-muted-foreground mt-1">Только для CRM: клиент видит чистую длительность</p>
             </div>
+          </div>
+
+          <div>
+            <Label>Макс. длительность (мин) — опционально</Label>
+            <Input
+              type="number"
+              min={0}
+              value={editing.duration_max_min ?? ""}
+              onChange={(e) =>
+                setEditing({
+                  ...editing,
+                  duration_max_min: e.target.value === "" ? null : Number(e.target.value),
+                })
+              }
+              placeholder="напр. 240 — для услуг «3–4 часа»"
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Если работа занимает по-разному (напр. 3–4 часа) — укажите верхнюю границу. Ассистент
+              выберет точную длительность по фото клиента; запись через сайт всегда на обычную
+              длительность.
+            </p>
           </div>
 
           <div className="space-y-2">
@@ -1652,7 +2235,7 @@ function IntegrationsTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => 
               /restart test command). Make that consequence visible instead of losing it quietly. */}
           {!loading && !ownerPhone.replace(/[^\d]/g, "") && (
             <p className="text-xs text-amber-700 mt-1">
-              ⚠️ Номер не указан. WhatsApp-уведомления владельцу отправляться не будут — в том числе
+              Номер не указан. WhatsApp-уведомления владельцу отправляться не будут — в том числе
               когда ИИ передаёт диалог живому администратору. Такие случаи будут видны только во
               вкладке «Уведомления».
             </p>

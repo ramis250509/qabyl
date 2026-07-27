@@ -1,4 +1,4 @@
-// WhatsApp assistant — server-only.
+﻿// WhatsApp assistant — server-only.
 // Direct Google AI Studio (Gemini API) integration + explicit state machine.
 // No Lovable Gateway, no tool-loop hallucinations — deterministic TS code drives
 // services/masters/slots from DB; Gemini only classifies intent and renders text.
@@ -8,6 +8,38 @@ async function getAdmin() {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
   return supabaseAdmin;
 }
+
+// Public base URL for the client's self-service booking link. Read per-call (Cloudflare binds
+// env at request time); production default is qabyl.com.
+function appBaseUrl(): string {
+  try {
+    return (process.env.PUBLIC_APP_URL ?? "https://qabyl.com").replace(/\/+$/, "");
+  } catch {
+    return "https://qabyl.com";
+  }
+}
+
+// Look up a freshly-created appointment's manage_token and build its self-service URL. Best-effort:
+// a failure here must never break the booking confirmation, so it returns null on any error.
+async function fetchManageUrl(db: AdminClient, appointmentId: string): Promise<string | null> {
+  try {
+    const { data } = await db
+      .from("appointments")
+      .select("manage_token")
+      .eq("id", appointmentId)
+      .maybeSingle();
+    const token = (data as any)?.manage_token as string | undefined;
+    return token ? `${appBaseUrl()}/manage/${token}` : null;
+  } catch {
+    return null;
+  }
+}
+
+// "I'll go check / one moment" filler the client must never see (see the v4 twin). v3 already
+// builds the full answer in `factual` before composing, so this is a defense-in-depth catch on
+// the rare case Gemini prepends filler while phrasing — we then render `factual` deterministically.
+const V3_STALL_RE =
+  /(сейчас\s+(проверю|гляну|узна|посмотрю|уточню|выясню|определю|подберу|рассчита|загляну)|\b(проверю|проверяю|уточняю|уточню|выясняю|посмотрю|гляну|подберу)\b|секундоч|минуточ|минутку|подожд|обожд|ожидайте|одну\s+секунд|азыр\s+(текшер|кара|көр|бил)|текшерип\s+көр|күтө\s+тур|бир\s+аз\s+күт|let me (check|see)|one moment|hold on|bear with)/i;
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 // Note: gemini-1.5-* models were retired on Sept 24, 2025 → 404 on new API keys.
@@ -133,6 +165,10 @@ export type WaAgentInput = {
   state: WaAgentState;
   stateData: WaAgentStateData;
   salonInfo?: WaSalonInfo | null; // optional: for schedule/address questions
+  // V4: text of any manual messages the live salon admin sent the client in this session (kind=
+  // system, direction=out). Injected into the prompt so that when the AI resumes after a takeover
+  // pause it knows what the human already told the client and never contradicts them.
+  handoffContext?: string[];
 };
 
 export type WaInteractiveMessage =
@@ -273,7 +309,8 @@ export async function greenApiDownloadFile(
     try {
       json = JSON.parse(txt);
     } catch {}
-    if (!r.ok) return { ok: false, error: `green-api downloadFile ${r.status}: ${txt.slice(0, 200)}` };
+    if (!r.ok)
+      return { ok: false, error: `green-api downloadFile ${r.status}: ${txt.slice(0, 200)}` };
     return { ok: true, downloadUrl: json?.downloadUrl };
   } catch (e: any) {
     return { ok: false, error: e?.message ?? String(e) };
@@ -511,6 +548,10 @@ async function callGemini(opts: {
   temperature?: number;
   maxOutputTokens?: number;
   thinkingBudget?: number;
+  // Integer seed for deterministic sampling. With temperature:0 + seed, the same content
+  // produces the same output on repeat calls — required for photo pricing where two
+  // identical photos must not yield different price ranges.
+  seed?: number;
   // Caps tokens spent per image (MEDIA_RESOLUTION_LOW/MEDIUM/HIGH) — controls Gemini's
   // per-image billing without us having to resize anything ourselves (we can't: Cloudflare
   // Workers has no native image codecs, so a library like sharp isn't an option here).
@@ -527,6 +568,7 @@ async function callGemini(opts: {
       thinkingConfig: { thinkingBudget: opts.thinkingBudget ?? 5000 },
     },
   };
+  if (typeof opts.seed === "number") body.generationConfig.seed = opts.seed;
   if (opts.responseMimeType) body.generationConfig.responseMimeType = opts.responseMimeType;
   if (opts.responseSchema) body.generationConfig.responseSchema = opts.responseSchema;
   if (opts.mediaResolution) body.generationConfig.mediaResolution = opts.mediaResolution;
@@ -1633,7 +1675,7 @@ type MergedSlot = {
 export async function loadServicesForSalon(db: AdminClient, salonId: string) {
   const { data } = await db
     .from("services")
-    .select("id, name, category, price, price_max, price_type, duration_min")
+    .select("id, name, category, price, price_max, price_type, duration_min, duration_max_min")
     .eq("salon_id", salonId)
     .eq("is_active", true)
     .order("sort_order");
@@ -1772,22 +1814,36 @@ export async function fetchMergedSlots(opts: {
   minStartTime?: Date;
   limit?: number;
 }): Promise<MergedSlot[]> {
+  // Fan out one RPC per master IN PARALLEL. The previous serial for-await loop was the single
+  // biggest cause of the 60–120s "AI is slow" regression: for a salon with N masters the drain
+  // spent N × RPC round-trip (200–500 ms each from Cloudflare Worker → Supabase) just for slots,
+  // and the V4 tool loop can call this 3–5× per turn (get_available_slots, check_time,
+  // mastersFreeAtRequestedTime, emptyDayReasonScoped fallbacks). 10 masters × 400 ms × 4 calls
+  // = 16 s BURNT on serialization alone. Promise.all reduces it to ~1 round-trip regardless of N.
+  const perMaster = await Promise.all(
+    opts.masters.map(async (m) => {
+      const { data } = await opts.db.rpc("get_available_slots", {
+        _master_id: m.id,
+        _service_id: opts.serviceId,
+        _date: opts.day,
+      });
+      return {
+        masterId: m.id,
+        rows: (data ?? []) as Array<{ slot_start: string; slot_end: string }>,
+      };
+    }),
+  );
   const map = new Map<string, MergedSlot>();
-  for (const m of opts.masters) {
-    const { data } = await opts.db.rpc("get_available_slots", {
-      _master_id: m.id,
-      _service_id: opts.serviceId,
-      _date: opts.day,
-    });
-    for (const s of data ?? []) {
+  for (const { masterId, rows } of perMaster) {
+    for (const s of rows) {
       const key = s.slot_start as string;
       if (opts.part && !isInPart(key, opts.tz, opts.part)) continue;
       if (opts.minStartTime && new Date(key).getTime() <= opts.minStartTime.getTime()) continue;
       const cur = map.get(key);
       if (cur) {
-        if (!cur.master_ids.includes(m.id)) cur.master_ids.push(m.id);
+        if (!cur.master_ids.includes(masterId)) cur.master_ids.push(masterId);
       } else {
-        map.set(key, { start: key, end: s.slot_end as string, master_ids: [m.id] });
+        map.set(key, { start: key, end: s.slot_end as string, master_ids: [masterId] });
       }
     }
   }
@@ -1799,6 +1855,23 @@ export async function fetchMergedSlots(opts: {
 // Photo pricing (Gemini Vision)
 // ============================================================
 
+// Deterministic 32-bit hash from a string — used to derive a stable Gemini `seed` per
+// (image + service + salon-config). Same photo + same salon → same seed → same price on
+// repeat calls. Cheap and dependency-free (djb2-xor).
+function stableSeed(input: string): number {
+  let h = 5381;
+  for (let i = 0; i < input.length; i++) h = ((h << 5) + h) ^ input.charCodeAt(i);
+  // Gemini seed field is a positive int32; mask to 31 bits so we're always in-range.
+  return h & 0x7fffffff;
+}
+
+// Quantize a price to the nearest step, clamped inside [min, max]. Prevents "4732" answers
+// and lets the salon think in round numbers (default 500 сом buckets).
+function quantizePrice(p: number, step: number, min: number, max: number): number {
+  const q = Math.round(p / step) * step;
+  return Math.max(min, Math.min(max, q));
+}
+
 async function priceFromPhoto(opts: {
   apiKey: string;
   imageBase64: string;
@@ -1808,41 +1881,82 @@ async function priceFromPhoto(opts: {
   priceMax: number;
   pricingRules: string | null;
   language: "ru" | "ky" | "en";
+  // Quantization step in salon currency (default: 500). All returned prices are rounded to
+  // this bucket so two runs on the same photo cannot differ by a few сом.
+  priceStep?: number;
 }): Promise<
-  { price: number; explanation: string; confidence: "high" | "medium" | "low" } | { error: string }
+  {
+    // Narrow range the client sees ("3000–3500 сом"). low === high when confidence is high
+    // and the model committed to a single bucket.
+    price_low: number;
+    price_high: number;
+    // Backwards-compatible midpoint used by legacy call sites that still expect a single number.
+    price: number;
+    explanation: string;
+    confidence: "high" | "medium" | "low";
+  }
+  | { error: string }
 > {
   const langName =
     opts.language === "ky" ? "кыргызском" : opts.language === "en" ? "английском" : "русском";
+  const step = opts.priceStep ?? 500;
+  // Ceiling/floor to a valid multiple of `step` so the LLM is asked to pick within a
+  // quantized set from the start (fewer rounding surprises after the fact).
+  const stepMin = Math.ceil(opts.priceMin / step) * step;
+  const stepMax = Math.floor(opts.priceMax / step) * step;
   const sys = `Ты оцениваешь стоимость услуги «${opts.serviceName}» по фото клиента.
-Цена ОБЯЗАНА быть числом в диапазоне [${opts.priceMin}, ${opts.priceMax}] сом, не выходи за границы.
-${opts.pricingRules ? `Правила оценки от салона: ${opts.pricingRules}` : ""}
-Честно оцени свою уверенность в поле confidence: "low", если фото нечёткое, снято не с того
-ракурса, не показывает объём/сложность работы, или на фото вообще не то, о чём просит клиент —
-в этих случаях НЕ придумывай цену наугад, ставь low и объясни в explanation, что именно не видно.
-"medium" — видно достаточно для примерной оценки, но есть сомнения. "high" — фото ясно показывает
-всё нужное для оценки.
-Поле "explanation" ОБЯЗАТЕЛЬНО пиши на ${langName} языке — клиент пишет боту именно на нём, смешение
-языков в одном сообщении недопустимо.
-Верни строго JSON: {"price": число, "explanation": "1 короткое предложение на ${langName} языке", "confidence": "high"|"medium"|"low"}.`;
+
+ТВОЯ ЗАДАЧА — рассуждать как опытный мастер салона, а не выдавать среднее число. По шагам:
+1) Что видно на фото (длина/густота/состояние волос, длина/форма/дизайн ногтей, объём работы, признаки повреждений, сложность).
+2) Каков предполагаемый объём работы и расход материалов — короткая, длинная, простая, сложная.
+3) Какой узкий ценовой диапазон это даёт внутри вилки [${opts.priceMin}, ${opts.priceMax}] сом.
+
+ПРАВИЛА ОТВЕТА (жёстко):
+- Итоговые price_low и price_high ОБЯЗАНЫ быть кратны ${step} сомам и лежать в [${stepMin}, ${stepMax}].
+- Ширина диапазона (price_high − price_low) ≤ ${step} сомам. Если очень уверен — верни price_low = price_high (одно значение).
+- price_low ≤ price_high; оба ≥ 0.
+- Короткие/тонкие/простые случаи → нижняя часть вилки, длинные/густые/сложные → верхняя.
+${opts.pricingRules ? `- Правила оценки от салона (СОБЛЮДАЙ): ${opts.pricingRules}` : ""}
+
+ЧЕСТНОСТЬ ПО УВЕРЕННОСТИ (confidence):
+- "low" — фото нечёткое, не с того ракурса, не показывает нужное или это вообще не то, о чём просит клиент. НЕ гадай — верни широкий диапазон (может доходить до всей вилки) и в explanation честно скажи, чего не хватает.
+- "medium" — видно достаточно, но есть сомнения. Диапазон обычно шириной ${step} сомам.
+- "high" — фото ясно показывает всё нужное. price_low обычно = price_high.
+
+Поле "explanation" ОБЯЗАТЕЛЬНО пиши на ${langName} языке — клиент пишет боту именно на нём, смешение языков недопустимо. 1 короткое предложение по существу (что видишь + от чего зависит цена).
+
+Верни СТРОГО JSON:
+{"price_low": число, "price_high": число, "explanation": "1 предложение на ${langName}", "confidence": "high"|"medium"|"low"}`;
+
+  // Same photo + same service + same price band + same salon rules → same seed → same
+  // model output. This is the CORE fix for the "4500–5000 vs 4000–4500 on repeat" bug.
+  const seed = stableSeed(
+    `${opts.serviceName}|${opts.priceMin}|${opts.priceMax}|${step}|${opts.pricingRules ?? ""}|${opts.language}|${opts.imageBase64.length}|${opts.imageBase64.slice(0, 4096)}|${opts.imageBase64.slice(-4096)}`,
+  );
+
   const res = await callGemini({
     model: MODEL_VISION,
     apiKey: opts.apiKey,
     systemInstruction: sys,
     parts: [
       { inline_data: { mime_type: opts.mime, data: opts.imageBase64 } },
-      { text: "Оцени стоимость по фото." },
+      { text: "Оцени стоимость по фото по правилам выше." },
     ],
     responseMimeType: "application/json",
     responseSchema: {
       type: "object",
       properties: {
-        price: { type: "number" },
+        price_low: { type: "number" },
+        price_high: { type: "number" },
         explanation: { type: "string" },
         confidence: { type: "string", enum: ["high", "medium", "low"] },
       },
-      required: ["price", "explanation", "confidence"],
+      required: ["price_low", "price_high", "explanation", "confidence"],
     },
-    temperature: 0.2,
+    // temperature: 0 + integer seed → maximally deterministic sampling. Any residual jitter
+    // is bucketed away by quantizePrice() below.
+    temperature: 0,
+    seed,
     maxOutputTokens: 1024,
     // Vision call returns a tiny JSON — don't waste budget on hidden "thinking",
     // it leaves nothing for the actual output and we get finishReason=MAX_TOKENS.
@@ -1855,10 +1969,28 @@ ${opts.pricingRules ? `Правила оценки от салона: ${opts.pri
   if (!res.ok || !res.text) return { error: res.error ?? "vision failed" };
   try {
     const j = JSON.parse(res.text);
-    const p = Math.max(opts.priceMin, Math.min(opts.priceMax, Number(j.price)));
+    let lo = quantizePrice(Number(j.price_low), step, opts.priceMin, opts.priceMax);
+    let hi = quantizePrice(Number(j.price_high), step, opts.priceMin, opts.priceMax);
+    if (hi < lo) [lo, hi] = [hi, lo];
+    // Cap width at 1 step — anything wider means the model hedged; keep the model's midpoint
+    // but tighten to a single bucket for consistency with the prompt contract.
+    if (hi - lo > step) {
+      const mid = quantizePrice((lo + hi) / 2, step, opts.priceMin, opts.priceMax);
+      lo = mid;
+      hi = Math.min(opts.priceMax, mid + step);
+    }
     const confidence: "high" | "medium" | "low" =
       j.confidence === "low" || j.confidence === "medium" ? j.confidence : "high";
-    return { price: Math.round(p), explanation: String(j.explanation ?? ""), confidence };
+    // Legacy `price` = midpoint of the range, quantized to the bucket. Existing call sites
+    // that only look at a single number still work, they just get a stable rounded value.
+    const price = quantizePrice((lo + hi) / 2, step, opts.priceMin, opts.priceMax);
+    return {
+      price_low: lo,
+      price_high: hi,
+      price,
+      explanation: String(j.explanation ?? ""),
+      confidence,
+    };
   } catch (e: any) {
     return { error: e?.message ?? "parse failed" };
   }
@@ -2067,6 +2199,10 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
   let selectedBranchId: string | null = input.selectedBranchId;
   let appointmentId: string | null = null;
   let factual = "";
+  // Self-service link appended to the booking-confirmation reply. The INSERT confirmation
+  // trigger skips ai_assistant bookings (the agent replies itself), so the link would never
+  // reach WhatsApp-booked clients otherwise — the agent's own reply carries it.
+  let bookingManageUrl: string | null = null;
 
   const tone = input.config.tone_instructions;
   const islamicGreeting = /ассаламу?\s*а?лейку?м|ассалму|салам\s+а?ллейку?м/i.test(
@@ -2432,7 +2568,11 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
       } else {
         sd.priced_value = priced.price;
         state = "collecting"; // move past awaiting_photo so next turn goes to day selection
-        factual = `Скажи: по фото ориентировочная стоимость «${svcRow.name}» — около ${priced.price} сом (${priced.explanation}). Цена примерная, точную мастер уточнит на месте. Затем сразу спроси на какой день записать.`;
+        const range =
+          priced.price_low === priced.price_high
+            ? `${priced.price_low} сом`
+            : `${priced.price_low}–${priced.price_high} сом`;
+        factual = `Скажи: по фото ориентировочная стоимость «${svcRow.name}» — ${range} (${priced.explanation}). Цена примерная, точную мастер уточнит на месте. Затем сразу спроси на какой день записать.`;
         return finish();
       }
     } else if (state === "awaiting_photo") {
@@ -2712,6 +2852,7 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
   }
 
   appointmentId = newId as string;
+  bookingManageUrl = await fetchManageUrl(db, appointmentId);
   const dateHuman = formatDateInTz(sd.slot_start!, input.salon.timezone);
   const timeHuman = formatTimeInTz(sd.slot_start!, input.salon.timezone);
   factual = `Скажи тепло и радостно: клиент успешно записан. Салон «${input.salon.salonName}», ${dateHuman} в ${timeHuman}, мастер ${sd.master_name}, услуга «${sd.service_name}». Поблагодари, скажи что ждём в гости, добавь один-два дружелюбных эмодзи.`;
@@ -2769,6 +2910,12 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
     let reply: string;
     try {
       reply = await compose1(factual);
+      // Defense-in-depth: if the composer slipped in "сейчас проверю…"-style filler, drop it and
+      // render the already-computed answer deterministically — the client always gets the result.
+      if (V3_STALL_RE.test(reply)) {
+        debug.errors.push("v3_stall_filtered");
+        reply = instructionFallbackReply(factual, language, input.salon.salonName);
+      }
     } catch (e: any) {
       const raw = instructionFallbackReply(factual, language, input.salon.salonName);
       if (isFirstContact && !/^\s*(здрав|привет|саламат|салам|hello|hi|hey|добр)/iu.test(raw)) {
@@ -2780,6 +2927,11 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
         reply = raw;
       }
       debug.errors.push(`compose: ${e?.message ?? String(e)}`);
+    }
+    // Append the self-service link to the booking confirmation (deterministic — never let the
+    // model paraphrase or drop the URL).
+    if (bookingManageUrl && !reply.includes(bookingManageUrl)) {
+      reply = `${reply}\n\n🔗 Перенести или отменить запись: ${bookingManageUrl}`;
     }
     return {
       reply,
@@ -2793,19 +2945,68 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
 }
 
 // ============================================================
-// V2: Gemini Function Calling Agent (replaces the state machine)
+// Gemini tool-calling helper (used by V4 engine)
 // ============================================================
 
 export type GeminiV2Content = { role: "user" | "model"; parts: any[] };
 
-export async function callGeminiTools(opts: {
+// Create a Gemini cachedContents resource holding the stable per-conversation prefix
+// (systemInstruction + tool declarations). Reused across every tool-loop iteration and
+// every turn in the same session — cache reads process the prefix ~4x faster and cost
+// ~25% of a fresh input token, so a 5-iteration turn saves ~15-20 s of wall time.
+// Returns { name, expireTime } or null on failure — caller falls back to inline prompt.
+// Minimum cacheable size is model-specific (~1024–4096 tokens for gemini-2.5-flash) — small
+// prompts return 400; we silently return null and the caller keeps working non-cached.
+export async function createGeminiCache(opts: {
   apiKey: string;
   systemInstruction: string;
-  contents: GeminiV2Content[];
   tools: any[];
-  allowedFunctionNames?: string[]; // restrict which tools can fire on this turn
-}): Promise<{ ok: boolean; parts?: any[]; error?: string }> {
-  // Empty array → block all tools (mode NONE). Non-empty → restrict to that list.
+  ttlSeconds?: number; // default 3600
+}): Promise<{ name: string; expireTime: string } | null> {
+  const ttl = opts.ttlSeconds ?? 3600;
+  const body = {
+    model: `models/${MODEL_TEXT}`,
+    systemInstruction: { parts: [{ text: opts.systemInstruction }] },
+    tools: opts.tools?.length ? [{ functionDeclarations: opts.tools }] : undefined,
+    ttl: `${ttl}s`,
+  };
+  // cachedContents lives at /v1beta/cachedContents — NOT under /models/. GEMINI_BASE ends in
+  // "/models", so we strip that segment. (The earlier `${GEMINI_BASE}/cachedContents` built a
+  // 404 path, so caching silently failed and always fell back to inline.)
+  const cacheBase = GEMINI_BASE.replace(/\/models$/, "");
+  const url = `${cacheBase}/cachedContents?key=${encodeURIComponent(opts.apiKey)}`;
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const txt = await r.text();
+      // 400 → prompt too small to cache; 4xx → skip caching this session
+      console.warn(`[gemini-cache] create failed ${r.status}: ${txt.slice(0, 200)}`);
+      return null;
+    }
+    const json = (await r.json()) as any;
+    if (!json?.name || !json?.expireTime) return null;
+    return { name: json.name, expireTime: json.expireTime };
+  } catch (e: any) {
+    console.warn(`[gemini-cache] create threw: ${e?.message ?? e}`);
+    return null;
+  }
+}
+
+export async function callGeminiTools(opts: {
+  apiKey: string;
+  // Provide EITHER systemInstruction+tools inline (legacy path) OR cachedContent
+  // (name from createGeminiCache) — cached path skips resending the prefix, saving
+  // ~75% of input tokens processed per call and materially cutting latency.
+  systemInstruction?: string;
+  cachedContent?: string; // "cachedContents/xxx"
+  contents: GeminiV2Content[];
+  tools?: any[];
+  allowedFunctionNames?: string[];
+}): Promise<{ ok: boolean; parts?: any[]; error?: string; cacheMiss?: boolean }> {
   const noTools =
     Array.isArray(opts.allowedFunctionNames) && opts.allowedFunctionNames.length === 0;
   const fcConfig: any = noTools
@@ -2813,13 +3014,28 @@ export async function callGeminiTools(opts: {
     : opts.allowedFunctionNames
       ? { mode: "AUTO", allowedFunctionNames: opts.allowedFunctionNames }
       : { mode: "AUTO" };
+  const usingCache = Boolean(opts.cachedContent);
   const body: any = {
-    systemInstruction: { parts: [{ text: opts.systemInstruction }] },
+    // When using cache: system + tools come from the cached resource — do NOT resend them
+    // (Gemini rejects the request with 400 if both cache and systemInstruction are set).
+    ...(usingCache
+      ? { cachedContent: opts.cachedContent }
+      : {
+          ...(opts.systemInstruction
+            ? { systemInstruction: { parts: [{ text: opts.systemInstruction }] } }
+            : {}),
+          ...(!noTools && opts.tools?.length
+            ? { tools: [{ functionDeclarations: opts.tools }] }
+            : {}),
+        }),
     contents: opts.contents,
-    ...(noTools ? {} : { tools: [{ functionDeclarations: opts.tools }] }),
     toolConfig: { functionCallingConfig: fcConfig },
     generationConfig: {
-      temperature: 0.4,
+      // 0.3 (down from 0.4) — tighter sampling for the V4 dialog. Still natural-sounding but
+      // materially reduces run-to-run drift on quantitative outputs the model authors as text
+      // (price_band strings, times, durations). Combined with the "price step" prompt rule in
+      // buildSystemPromptV4, two identical inputs converge on the same price bucket.
+      temperature: 0.3,
       maxOutputTokens: 2048,
       thinkingConfig: { thinkingBudget: 0 },
     },
@@ -2827,16 +3043,9 @@ export async function callGeminiTools(opts: {
 
   const url = `${GEMINI_BASE}/${MODEL_TEXT}:generateContent?key=${encodeURIComponent(opts.apiKey)}`;
 
-  // Transient failures (free-tier 429 rate limits, 5xx, network blips) used to surface as a bare
-  // "техническая ошибка" to the client — often mid-booking, which kills the conversion. Retry
-  // with backoff so a one-off hiccup never reaches the client. 429 gets short retries too: the
-  // free tier limit is per-minute, and a brief wait often clears it. Only a persistent failure
-  // (real quota exhaustion, malformed request) falls through to the caller's fallback message.
-  const MAX_ATTEMPTS = 4; // was 3: one more retry survives brief 429/503 bursts
-  const BACKOFF_CAP_MS = 4000; // per-wait cap so the webhook doesn't stall too long
+  const MAX_ATTEMPTS = 4;
+  const BACKOFF_CAP_MS = 4000;
   const lastAttempt = MAX_ATTEMPTS - 1;
-  // Wait suggested by the server (429/503): Retry-After header (seconds) or Gemini's RetryInfo
-  // (`"retryDelay":"7s"` in the body). Falls back to exponential backoff with jitter.
   const waitFor = (retryAfterHdr: string | null, bodyTxt: string, attempt: number) => {
     let ms = 0;
     const hdr = Number(retryAfterHdr);
@@ -2845,8 +3054,8 @@ export async function callGeminiTools(opts: {
       const m = bodyTxt.match(/retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/);
       if (m) ms = Math.round(Number(m[1]) * 1000);
     }
-    if (!ms) ms = 600 * 2 ** attempt; // 600, 1200, 2400…
-    return Math.min(ms, BACKOFF_CAP_MS) + Math.floor(Math.random() * 250); // + jitter
+    if (!ms) ms = 600 * 2 ** attempt;
+    return Math.min(ms, BACKOFF_CAP_MS) + Math.floor(Math.random() * 250);
   };
 
   let lastErr = "gemini unknown";
@@ -2862,12 +3071,26 @@ export async function callGeminiTools(opts: {
       if (r.status === 429 || r.status >= 500) {
         lastErr = `gemini ${r.status}: ${txt.slice(0, 300)}`;
         if (attempt < lastAttempt) {
-          await new Promise((res) => setTimeout(res, waitFor(r.headers.get("retry-after"), txt, attempt)));
+          await new Promise((res) =>
+            setTimeout(res, waitFor(r.headers.get("retry-after"), txt, attempt)),
+          );
           continue;
         }
         return { ok: false, error: lastErr };
       }
-      if (!r.ok) return { ok: false, error: `gemini ${r.status}: ${txt.slice(0, 300)}` };
+      if (!r.ok) {
+        // Cache-miss detection: when the caller supplied cachedContent and Gemini rejects
+        // with 400/404 mentioning the cache (expired TTL, wrong region, revoked), signal
+        // it so runWaAgentV4 drops the stale cache name and retries inline this turn.
+        const looksLikeCacheMiss =
+          usingCache &&
+          (r.status === 404 || (r.status === 400 && /cached ?content|cachedcontents/i.test(txt)));
+        return {
+          ok: false,
+          error: `gemini ${r.status}: ${txt.slice(0, 300)}`,
+          ...(looksLikeCacheMiss ? { cacheMiss: true } : {}),
+        };
+      }
       let json: any;
       try {
         json = JSON.parse(txt);
@@ -2888,354 +3111,6 @@ export async function callGeminiTools(opts: {
     }
   }
   return { ok: false, error: lastErr };
-}
-
-function buildSystemPromptV2(
-  salon: WaSalonContext,
-  config: WaAssistantConfig,
-  branches: WaBranchInfo[],
-  todayDate: string,
-  todayHuman: string,
-): string {
-  const lines: string[] = [
-    `Ты — живой администратор «${salon.salonName}».`,
-    `Пишешь клиенту в WhatsApp. Коротко, по-человечески, без канцелярита. 1–3 предложения. Никакого markdown. Эмодзи — не более одного.`,
-    `Отвечай СТРОГО на том языке, на котором написал клиент — русский или кыргызский. Не смешивай языки.`,
-    config.greeting ? `Первое сообщение клиенту начни с: ${config.greeting}` : "",
-    config.tone_instructions
-      ? `Правила общения (обязательно соблюдай): ${config.tone_instructions}`
-      : "",
-    `Сегодня: ${todayHuman} (${todayDate}).`,
-    ``,
-    `ЦЕЛЬ — помочь клиенту записаться. Порядок шагов:`,
-    branches.length > 1
-      ? `0. Сначала ВСЕГДА спроси, в какой из наших филиалов хочет записаться клиент (вызови get_branches). Не переходи к услуге пока филиал не выбран.`
-      : ``,
-    `1. Спроси «На какую услугу вас записать?» — НЕ перечисляй услуги сразу проактивно.`,
-    `   - Клиент спрашивает «что у вас есть?» / «какие услуги?» → вызови get_services и покажи список.`,
-    `   - Клиент назвал услугу или спросил «вы делаете X?» → вызови get_services, найди совпадение.`,
-    `     Если услуги нет — честно скажи что такой нет. Если есть — подтверди и уточни детали.`,
-    `2. Если найденная услуга имеет price_type=range → попроси клиента прислать фото для оценки стоимости.`,
-    `   После получения фото — назови диапазон цены (из данных услуги) и скажи что точную цену мастер подтвердит на месте.`,
-    config.pricing_rules ? `   Правила оценки по фото: ${config.pricing_rules}` : "",
-    `3. Узнай дату и удобное время суток (утро/день/вечер).`,
-    `4. Покажи свободные слоты — вызови get_available_slots.`,
-    `5. Если мастеров несколько — предложи выбрать (через get_masters).`,
-    `6. Спроси имя клиента.`,
-    `7. Вслух подтверди все детали: «Записываю: [услуга], [дата], [время], мастер [имя], стоимость [цена]. Всё верно?»`,
-    `8. После явного «да» — вызови create_appointment.`,
-    `9. Поздравь с записью.`,
-    ``,
-    `ВАЖНО:`,
-    `- ВСЕГДА проверяй наличие услуги через get_services перед ответом. Не отвечай по памяти.`,
-    `- Используй только данные из инструментов. Не выдумывай цены, слоты, имена мастеров.`,
-    `- create_appointment — только после явного «да» клиента.`,
-    `- Если слот занят (ошибка create_appointment) — извинись и предложи другое время.`,
-  ];
-  return lines.filter(Boolean).join("\n");
-}
-
-const V2_TOOL_DECLARATIONS = [
-  {
-    name: "get_branches",
-    description: "Получить список филиалов салона",
-    parameters: { type: "object", properties: {} },
-  },
-  {
-    name: "get_services",
-    description: "Получить список услуг с ценами и длительностью",
-    parameters: {
-      type: "object",
-      properties: {
-        branch_id: { type: "string", description: "ID филиала (необязательно)" },
-      },
-    },
-  },
-  {
-    name: "get_masters",
-    description: "Получить мастеров, выполняющих данную услугу",
-    parameters: {
-      type: "object",
-      properties: {
-        service_id: { type: "string", description: "ID услуги" },
-        branch_id: { type: "string", description: "ID филиала (необязательно)" },
-      },
-      required: ["service_id"],
-    },
-  },
-  {
-    name: "get_available_slots",
-    description: "Получить свободные временные слоты на дату. Возвращает до 5 ближайших.",
-    parameters: {
-      type: "object",
-      properties: {
-        service_id: { type: "string", description: "ID услуги" },
-        date: { type: "string", description: "Дата в формате YYYY-MM-DD" },
-        master_id: { type: "string", description: "ID конкретного мастера (необязательно)" },
-      },
-      required: ["service_id", "date"],
-    },
-  },
-  {
-    name: "create_appointment",
-    description: "Создать запись клиента. Вызывать ТОЛЬКО после явного подтверждения клиента.",
-    parameters: {
-      type: "object",
-      properties: {
-        service_id: { type: "string" },
-        master_id: { type: "string" },
-        slot_start: {
-          type: "string",
-          description: "ISO timestamp начала слота (из get_available_slots)",
-        },
-        client_name: { type: "string" },
-        branch_id: { type: "string", description: "ID выбранного филиала (если несколько)" },
-        price_override: { type: "number", description: "Согласованная цена для range-услуг" },
-      },
-      required: ["service_id", "master_id", "slot_start", "client_name"],
-    },
-  },
-];
-
-async function executeV2Tool(
-  name: string,
-  args: Record<string, any>,
-  input: WaAgentInput,
-  db: AdminClient,
-): Promise<any> {
-  switch (name) {
-    case "get_branches":
-      return {
-        branches: input.branches.map((b) => ({ id: b.id, name: b.name, address: b.address })),
-      };
-
-    case "get_services": {
-      const services = await loadServicesForSalon(db, input.salon.salonId);
-      return {
-        services: services.map((s: any) => ({
-          id: s.id,
-          name: s.name,
-          price: s.price_type === "range" ? `${s.price}–${s.price_max} сом` : `${s.price} сом`,
-          price_type: s.price_type,
-          duration_min: s.duration_min,
-        })),
-      };
-    }
-
-    case "get_masters": {
-      const masters = await loadMastersForService(
-        db,
-        input.salon.salonId,
-        args.service_id as string,
-        (args.branch_id as string | null) ?? null,
-      );
-      return { masters: masters.map((m) => ({ id: m.id, name: m.name })) };
-    }
-
-    case "get_available_slots": {
-      const { isoLocalDate } = nowInTz(input.salon.timezone);
-      const minStart = args.date === isoLocalDate ? new Date() : undefined;
-      let masters: DbMaster[];
-      if (args.master_id) {
-        masters = [
-          {
-            id: args.master_id as string,
-            name: "",
-            branch_id: null,
-            sort_order: 0,
-            service_ids: [],
-          },
-        ];
-      } else {
-        masters = await loadMastersForService(
-          db,
-          input.salon.salonId,
-          args.service_id as string,
-          null,
-        );
-      }
-      const slots = await fetchMergedSlots({
-        db,
-        masters,
-        serviceId: args.service_id as string,
-        day: args.date as string,
-        tz: input.salon.timezone,
-        minStartTime: minStart,
-        limit: 5,
-      });
-      return {
-        date: args.date,
-        slots: slots.map((s) => ({
-          start: s.start,
-          time: formatTimeInTz(s.start, input.salon.timezone),
-          master_ids: s.master_ids,
-        })),
-      };
-    }
-
-    case "create_appointment": {
-      const rpcArgs: any = {
-        _salon_id: input.salon.salonId,
-        _master_id: args.master_id,
-        _service_id: args.service_id,
-        _starts_at: args.slot_start,
-        _client_name: args.client_name,
-        _client_phone: input.client.phone,
-        _client_notes: null,
-        _branch_id: (args.branch_id as string | null) ?? null,
-        _addon_ids: [],
-        _source: "ai_assistant",
-      };
-      if (args.price_override != null) rpcArgs._price_override = args.price_override;
-      const { data: newId, error } = await db.rpc("create_appointment", rpcArgs);
-      if (error) return { success: false, error: error.message };
-      return { success: true, appointment_id: newId };
-    }
-
-    default:
-      return { error: `Unknown tool: ${name}` };
-  }
-}
-
-export async function runWaAgentV2(input: WaAgentInput): Promise<WaAgentResult> {
-  const db = await getAdmin();
-  const apiKey = process.env.GEMINI_API_KEY ?? "";
-  const { isoLocalDate, humanDate } = nowInTz(input.salon.timezone);
-
-  const debug: WaAgentResult["debug"] = { actions: [], errors: [] };
-  let appointmentId: string | null = null;
-  let selectedBranchId = input.selectedBranchId;
-
-  // V2 stores full Gemini conversation in state_data.v2_history
-  const v2History: GeminiV2Content[] = ((input.stateData as any).v2_history ??
-    []) as GeminiV2Content[];
-
-  // Build client message parts (text + optional inline image)
-  const clientParts: any[] = [];
-  for (const m of input.lastMessages) {
-    if (m.kind === "image" && m.media_signed_url) {
-      try {
-        const r = await fetch(m.media_signed_url);
-        if (r.ok) {
-          const ab = await r.arrayBuffer();
-          const bytes = new Uint8Array(ab);
-          let bin = "";
-          for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-          if (m.text_body) clientParts.push({ text: m.text_body });
-          clientParts.push({
-            inlineData: { mimeType: m.media_mime ?? "image/jpeg", data: btoa(bin) },
-          });
-        }
-      } catch (e: any) {
-        debug.errors.push(`image_fetch: ${e?.message ?? String(e)}`);
-        if (m.text_body) clientParts.push({ text: m.text_body });
-      }
-    } else if (m.text_body) {
-      clientParts.push({ text: m.text_body });
-    }
-  }
-
-  if (clientParts.length === 0) {
-    return {
-      reply: "",
-      nextState: input.state === "done" ? "done" : "collecting",
-      nextStateData: input.stateData,
-      appointmentId: null,
-      selectedBranchId,
-      debug,
-    };
-  }
-
-  const systemPrompt = buildSystemPromptV2(
-    input.salon,
-    input.config,
-    input.branches,
-    isoLocalDate,
-    humanDate,
-  );
-  const contents: GeminiV2Content[] = [...v2History, { role: "user", parts: clientParts }];
-
-  let reply = "";
-  const MAX_TOOL_ITERS = 8;
-  // On the very first user message restrict which tools Gemini can call.
-  // Single-branch: no tools at all (empty list → no function calls, Gemini just greets + asks service).
-  // Multi-branch: only get_branches, so Gemini can list branches but not proactively dump services.
-  const isFirstMessage = v2History.length === 0;
-  const firstTurnAllowed = isFirstMessage
-    ? input.branches.length > 1
-      ? ["get_branches"]
-      : []
-    : undefined;
-
-  for (let iter = 0; iter < MAX_TOOL_ITERS; iter++) {
-    const allowedNames = iter === 0 ? firstTurnAllowed : undefined;
-    const res = await callGeminiTools({
-      apiKey,
-      systemInstruction: systemPrompt,
-      contents,
-      tools: V2_TOOL_DECLARATIONS,
-      allowedFunctionNames: allowedNames,
-    });
-
-    if (!res.ok || !res.parts) {
-      debug.errors.push(`gemini_tools iter${iter}: ${res.error ?? "no parts"}`);
-      reply =
-        input.stateData.language === "ky"
-          ? "Кечиресиз, техникалык ката. Бир аздан кийин кайра жазыңыз."
-          : "Извините, техническая ошибка. Попробуйте чуть позже.";
-      break;
-    }
-
-    const parts = res.parts;
-    contents.push({ role: "model", parts });
-
-    const functionCalls = parts.filter((p: any) => p.functionCall);
-    const textPart = parts.find((p: any) => typeof p.text === "string" && p.text.trim());
-
-    if (functionCalls.length === 0) {
-      reply = textPart?.text?.trim() ?? "";
-      break;
-    }
-
-    const toolResults: any[] = [];
-    for (const part of functionCalls) {
-      const { name, args } = part.functionCall as { name: string; args: Record<string, any> };
-      debug.actions.push(`tool:${name}`);
-      try {
-        const result = await executeV2Tool(name, args ?? {}, input, db);
-        if (name === "create_appointment" && result.appointment_id) {
-          appointmentId = result.appointment_id as string;
-          if (args.branch_id) selectedBranchId = args.branch_id as string;
-        }
-        toolResults.push({ functionResponse: { name, response: result } });
-      } catch (e: any) {
-        debug.errors.push(`tool_${name}: ${e?.message ?? String(e)}`);
-        toolResults.push({
-          functionResponse: { name, response: { error: e?.message ?? "failed" } },
-        });
-      }
-    }
-    contents.push({ role: "user", parts: toolResults });
-  }
-
-  if (!reply) {
-    reply = "Извините, не удалось обработать запрос. Напишите ещё раз.";
-    debug.errors.push("no text reply after tool loop");
-  }
-
-  // Strip inlineData from history before saving (avoid storing large base64 images in DB)
-  const historyToSave = contents.slice(-30).map((c) => ({
-    ...c,
-    parts: c.parts.map((p: any) => (p.inlineData ? { text: "[фото]" } : p)),
-  }));
-
-  const nextState: WaAgentState = appointmentId ? "done" : "collecting";
-  const nextStateData: WaAgentStateData = {
-    language: input.stateData.language,
-    ...(appointmentId ? {} : ({ v2_history: historyToSave } as any)),
-  };
-
-  return { reply, nextState, nextStateData, appointmentId, selectedBranchId, debug };
 }
 
 // ============================================================
@@ -3390,6 +3265,7 @@ type V3BookingState = {
   price_max?: number;
   price_override?: number;
   price_skipped?: boolean;
+  duration_min?: number; // service duration in minutes, shown in the confirmation summary
   photo_attempts?: number; // low-confidence photo pricing retries, before escalating to admin
   date?: string;
   slot_start?: string;
@@ -3682,8 +3558,14 @@ function buildPostBookingMsg(language: "ru" | "ky" | "en"): WaInteractiveMessage
         id: "postbook_reschedule",
         text: language === "ky" ? "🔄 Убакытты которуу" : "🔄 Перенести запись",
       },
-      { id: "postbook_cancel", text: language === "ky" ? "❌ Жокко чыгаруу" : "❌ Отменить запись" },
-      { id: "postbook_change", text: language === "ky" ? "✏️ Кызматты которуу" : "✏️ Изменить запись" },
+      {
+        id: "postbook_cancel",
+        text: language === "ky" ? "❌ Жокко чыгаруу" : "❌ Отменить запись",
+      },
+      {
+        id: "postbook_change",
+        text: language === "ky" ? "✏️ Кызматты которуу" : "✏️ Изменить запись",
+      },
     ],
   };
 }
@@ -4004,6 +3886,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       price_type: svcRow.price_type,
       price_min: svcRow.price,
       price_max: svcRow.price_max,
+      duration_min: svcRow.duration_min ?? undefined,
     };
     if (svcRow.price_type === "range" && !newV3.price_override && !newV3.price_skipped) {
       const ask =
@@ -4017,7 +3900,12 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       language === "ky"
         ? `*${svcRow.name}* — кайсы күнгө жазыласыз?`
         : `*${svcRow.name}* — выберите дату:`;
-    return finish(q, "awaiting_date_choice", newV3, buildDateListMsg(dateMap, language, { back: true }));
+    return finish(
+      q,
+      "awaiting_date_choice",
+      newV3,
+      buildDateListMsg(dateMap, language, { back: true }),
+    );
   }
 
   // Re-show the service menu after an unrecognized reply, honoring the category-first gating
@@ -4034,12 +3922,36 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     const timeLabel = nextV3.slot_start ? formatTimeInTz(nextV3.slot_start, tz) : "—";
     const masterLabel =
       nextV3.master_name ?? (language === "ky" ? "кез келген мастер" : "любой мастер");
-    const priceStr =
-      nextV3.price_override != null
-        ? language === "ky"
-          ? `\n💰 Болжолдуу баа: ${nextV3.price_override} сом`
-          : `\n💰 Ориентировочная стоимость: ${nextV3.price_override} сом`
-        : "";
+    // Price line — ALWAYS shown when the salon knows a price for this service (owner requirement).
+    // Priority: a photo-agreed sum (price_override) → a range → a fixed price. Only truly
+    // unknown prices (no data at all) omit the line.
+    const priceStr = (() => {
+      const rangeLabel =
+        language === "ky"
+          ? "Болжолдуу баа"
+          : language === "en"
+            ? "Estimated price"
+            : "Ориентировочная стоимость";
+      const fixedLabel = language === "ky" ? "Баасы" : language === "en" ? "Price" : "Стоимость";
+      if (nextV3.price_override != null) {
+        return `\n💰 ${rangeLabel}: ${nextV3.price_override} сом`;
+      }
+      if (nextV3.price_type === "range" && nextV3.price_min != null && nextV3.price_max != null) {
+        return `\n💰 ${rangeLabel}: ${nextV3.price_min}–${nextV3.price_max} сом`;
+      }
+      if (nextV3.price_min != null) {
+        return `\n💰 ${fixedLabel}: ${nextV3.price_min} сом`;
+      }
+      return "";
+    })();
+    const durationStrRaw = formatDurationV3(nextV3.duration_min, language);
+    const durationStr = durationStrRaw
+      ? language === "ky"
+        ? `\n⏳ Узактыгы: ${durationStrRaw}`
+        : language === "en"
+          ? `\n⏳ Duration: ${durationStrRaw}`
+          : `\n⏳ Продолжительность: ${durationStrRaw}`
+      : "";
     // Prefer the specific branch's address (multi-branch salon) over the salon-wide one.
     const branchAddress = nextV3.branch_id
       ? input.branches.find((b) => b.id === nextV3.branch_id)?.address
@@ -4048,8 +3960,8 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
     const addressLine = address ? `\n📍 ${address}` : "";
     const details =
       language === "ky"
-        ? `✅ Жазылуу маалыматы:\n\n💇 ${nextV3.service_name}\n📅 ${dateLabel}\n⏰ ${timeLabel}\n👤 Мастер: ${masterLabel}\n🙍 Ат: ${nextV3.client_name}${priceStr}${addressLine}\n\nРастайсызбы?`
-        : `✅ Данные записи:\n\n💇 ${nextV3.service_name}\n📅 ${dateLabel}\n⏰ ${timeLabel}\n👤 Мастер: ${masterLabel}\n🙍 Имя: ${nextV3.client_name}${priceStr}${addressLine}\n\nПодтверждаете?`;
+        ? `✅ Жазылуу маалыматы:\n\n💇 ${nextV3.service_name}\n📅 ${dateLabel}\n⏰ ${timeLabel}${durationStr}\n👤 Мастер: ${masterLabel}\n🙍 Ат: ${nextV3.client_name}${priceStr}${addressLine}\n\nРастайсызбы?`
+        : `✅ Данные записи:\n\n💇 ${nextV3.service_name}\n📅 ${dateLabel}\n⏰ ${timeLabel}${durationStr}\n👤 Мастер: ${masterLabel}\n🙍 Имя: ${nextV3.client_name}${priceStr}${addressLine}\n\nПодтверждаете?`;
     return finish(
       details,
       "awaiting_final_confirm",
@@ -4400,7 +4312,11 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       debug.actions.push("back:service");
       const services = await loadAiVisibleServicesForSalon(db, input.salon.salonId);
       const msg = language === "ky" ? "Кызматты кайра тандаңыз:" : "Выберите услугу заново:";
-      return reaskServiceMenu(msg, { branch_id: v3.branch_id, client_name: v3.client_name }, services);
+      return reaskServiceMenu(
+        msg,
+        { branch_id: v3.branch_id, client_name: v3.client_name },
+        services,
+      );
     }
     if (state === "awaiting_slot_choice") {
       debug.actions.push("back:date");
@@ -4424,7 +4340,13 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       return finish(
         msg,
         "awaiting_slot_choice",
-        { ...v3, slot_start: undefined, slot_end: undefined, master_id: undefined, master_name: undefined },
+        {
+          ...v3,
+          slot_start: undefined,
+          slot_end: undefined,
+          master_id: undefined,
+          master_name: undefined,
+        },
         buildSlotListMsg(mockSlots, tz, language, undefined, { back: true }),
       );
     }
@@ -4453,7 +4375,8 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
       // If translation still fails, show the admin's actual greeting (in Russian) rather than a
       // bare "Чем помочь?" — the client at least sees the salon's promo/instructions. Only fall
       // back to the tiny native line when the salon never set a custom greeting.
-      greet += translated || (input.config.greeting?.trim() ?? "") || NATIVE_FALLBACK_GREETING[language];
+      greet +=
+        translated || (input.config.greeting?.trim() ?? "") || NATIVE_FALLBACK_GREETING[language];
     }
 
     if (!singleBranch) {
@@ -4722,10 +4645,14 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         });
       }
 
+      const range =
+        priced.price_low === priced.price_high
+          ? `${priced.price_low} сом`
+          : `${priced.price_low}–${priced.price_high} сом`;
       const msg =
         language === "ky"
-          ? `💰 *Болжолдуу баа: ${priced.price} сом*\n${priced.explanation}\n\nТак баасын мастер жерде тактайт.`
-          : `💰 *Ориентировочная стоимость: ${priced.price} сом*\n${priced.explanation}\n\nТочную сумму мастер уточнит на месте.`;
+          ? `💰 *Болжолдуу баа: ${range}*\n${priced.explanation}\n\nТак баасын мастер жерде тактайт.`
+          : `💰 *Ориентировочная стоимость: ${range}*\n${priced.explanation}\n\nТочную сумму мастер уточнит на месте.`;
       const dateQ = language === "ky" ? "\n\nКайсы күнгө жазыласыз?" : "\n\nНа какую дату?";
       return finish(
         msg + dateQ,
@@ -4803,7 +4730,12 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         language === "ky"
           ? "Бул күнгө мастер жок. Башка күн тандаңыз:"
           : "На эту дату мастеров нет. Выберите другую дату:";
-      return finish(msg, "awaiting_date_choice", v3, buildDateListMsg(dateMap, language, { back: true }));
+      return finish(
+        msg,
+        "awaiting_date_choice",
+        v3,
+        buildDateListMsg(dateMap, language, { back: true }),
+      );
     }
 
     const { isoLocalDate } = nowInTz(tz);
@@ -4823,7 +4755,12 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         language === "ky"
           ? "Бул күнгө бош убакыт жок. Башка күн тандаңыз:"
           : "На эту дату нет свободных слотов. Выберите другую дату:";
-      return finish(msg, "awaiting_date_choice", v3, buildDateListMsg(dateMap, language, { back: true }));
+      return finish(
+        msg,
+        "awaiting_date_choice",
+        v3,
+        buildDateListMsg(dateMap, language, { back: true }),
+      );
     }
 
     const newV3: V3BookingState = {
@@ -5445,6 +5382,7 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         .from("appointments")
         .update({ status: "cancelled" })
         .eq("id", v3.managing_appointment_id!)
+        .eq("salon_id", input.salon.salonId)
         .eq("client_phone", input.client.phone);
       if (error) {
         debug.errors.push(`cancel_appointment:${error.message}`);

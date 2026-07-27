@@ -6,6 +6,13 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-client";
 import { toast } from "sonner";
@@ -13,21 +20,12 @@ import { Sparkles, Lock, Copy, RefreshCw, Webhook, MessageCircle } from "lucide-
 import { getWaWebhookConfig, regenerateWaWebhookToken } from "@/lib/wa-config.functions";
 import {
   INDUSTRIES_META,
-  INDUSTRY_ORDER,
   INDUSTRY_PRICING,
   DEFAULT_INDUSTRY,
   normalizeIndustry,
   type IndustryKey,
 } from "@/lib/industries";
-
-// Every industry's default "how to price" text, used to detect whether the owner has customised
-// the field. If the current text equals one of these, switching industry safely replaces it with
-// the new industry's text; a custom text is left untouched.
-const PRICING_DEFAULTS = new Set(
-  Object.values(INDUSTRY_PRICING).map((p) => p.default),
-);
 import { WaSimulator } from "./WaSimulator";
-import { AiServiceListEditor } from "./AiServiceListEditor";
 
 type Assistant = {
   salon_id: string;
@@ -38,12 +36,14 @@ type Assistant = {
   pricing_rules: string | null;
   languages: string[];
   manage_cutoff_hours: number;
+  reminder_lead_hours: number;
   engine: "v3" | "v4";
   knowledge_base: string | null;
   client_addressing: string | null;
   industry: IndustryKey;
   knowledge_answers: Record<string, string>;
   sales_mode: boolean;
+  assistant_branch_id: string | null;
 };
 
 const DEFAULT_GREETING =
@@ -51,7 +51,15 @@ const DEFAULT_GREETING =
 const DEFAULT_TONE =
   "Общайся вежливо, дружелюбно и по делу. Отвечай на русском или кыргызском — на том языке, на котором написал клиент. Если клиент пишет на другом языке, отвечай на русском. Не используй сложных терминов.";
 
-export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salonId: string; salonName: string; onOpenWhatsAppTab?: () => void }) {
+export function AiAssistantTab({
+  salonId,
+  salonName,
+  onOpenWhatsAppTab,
+}: {
+  salonId: string;
+  salonName: string;
+  onOpenWhatsAppTab?: () => void;
+}) {
   const { isSuperAdmin } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -69,24 +77,34 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
     pricing_rules: INDUSTRY_PRICING[DEFAULT_INDUSTRY].default,
     languages: ["ru", "ky"],
     manage_cutoff_hours: 0,
-    engine: "v3",
+    reminder_lead_hours: 2,
+    engine: "v4",
     knowledge_base: "",
     client_addressing: "",
     industry: DEFAULT_INDUSTRY,
     knowledge_answers: {},
     sales_mode: false,
+    assistant_branch_id: null,
   });
+  const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const [{ data: salon }, { data: row }] = await Promise.all([
+      const [{ data: salon }, { data: row }, { data: branchRows }] = await Promise.all([
         supabase.from("salons").select("ai_assistant_enabled").eq("id", salonId).maybeSingle(),
         supabase.from("salon_ai_assistant").select("*").eq("salon_id", salonId).maybeSingle(),
+        supabase
+          .from("branches")
+          .select("id, name")
+          .eq("salon_id", salonId)
+          .eq("is_active", true)
+          .order("sort_order"),
       ]);
       if (cancelled) return;
       setPremiumEnabled(!!(salon as any)?.ai_assistant_enabled);
+      setBranches((branchRows as any) ?? []);
       if (row) {
         setData({
           salon_id: salonId,
@@ -98,12 +116,14 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
             row.pricing_rules ?? INDUSTRY_PRICING[normalizeIndustry((row as any).industry)].default,
           languages: row.languages?.length ? row.languages : ["ru", "ky"],
           manage_cutoff_hours: (row as any).manage_cutoff_hours ?? 0,
-          engine: (row as any).engine === "v4" ? "v4" : "v3",
+          reminder_lead_hours: (row as any).reminder_lead_hours ?? 2,
+          engine: (row as any).engine === "v3" ? "v3" : "v4",
           knowledge_base: (row as any).knowledge_base ?? "",
           client_addressing: (row as any).client_addressing ?? "",
           industry: normalizeIndustry((row as any).industry),
           knowledge_answers: ((row as any).knowledge_answers as Record<string, string>) ?? {},
           sales_mode: !!(row as any).sales_mode,
+          assistant_branch_id: (row as any).assistant_branch_id ?? null,
         });
       }
       setLoading(false);
@@ -174,12 +194,14 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
         pricing_rules: data.pricing_rules || null,
         languages: data.languages,
         manage_cutoff_hours: data.manage_cutoff_hours,
+        reminder_lead_hours: data.reminder_lead_hours,
         engine: data.engine,
         knowledge_base: data.knowledge_base || null,
         client_addressing: data.client_addressing || null,
         industry: data.industry,
         knowledge_answers: data.knowledge_answers ?? {},
         sales_mode: data.sales_mode,
+        assistant_branch_id: data.assistant_branch_id,
       } as any,
       { onConflict: "salon_id" },
     );
@@ -230,9 +252,9 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
               )}
             </div>
             <p className="text-sm text-muted-foreground mt-1">
-              Ассистент общается с клиентами от имени салона «{salonName}» в WhatsApp:
-              отвечает на вопросы, оценивает услуги по фото, проверяет свободное время
-              и сам создаёт запись в расписании.
+              Ассистент общается с клиентами от имени салона «{salonName}» в WhatsApp: отвечает на
+              вопросы, оценивает услуги по фото, проверяет свободное время и сам создаёт запись в
+              расписании.
             </p>
             <div className="mt-3 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm flex items-start gap-2">
               <MessageCircle className="h-4 w-4 mt-0.5 text-primary shrink-0" />
@@ -251,7 +273,11 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
             </div>
             {isSuperAdmin ? (
               <div className="mt-4 flex items-center gap-3">
-                <Switch checked={premiumEnabled} onCheckedChange={togglePremium} disabled={saving} />
+                <Switch
+                  checked={premiumEnabled}
+                  onCheckedChange={togglePremium}
+                  disabled={saving}
+                />
                 <Label className="text-sm">Премиум-доступ для салона</Label>
               </div>
             ) : !premiumEnabled ? (
@@ -265,27 +291,46 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
       </Card>
 
       {isSuperAdmin && (
-        <Card className={`p-5 space-y-3 ${!premiumEnabled ? "opacity-60 pointer-events-none select-none" : ""}`}>
+        <Card
+          className={`p-5 space-y-3 ${!premiumEnabled ? "opacity-60 pointer-events-none select-none" : ""}`}
+        >
           <div className="flex items-start gap-3">
             <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
               <Webhook className="h-5 w-5 text-primary" />
             </div>
             <div className="flex-1">
-              <h3 className="font-semibold">Webhook для Green-API <Badge variant="outline" className="ml-2">Только супер-админ</Badge></h3>
+              <h3 className="font-semibold">
+                Webhook для Green-API{" "}
+                <Badge variant="outline" className="ml-2">
+                  Только супер-админ
+                </Badge>
+              </h3>
               <p className="text-sm text-muted-foreground mt-1">
-                Скопируйте этот URL и вставьте в настройках Green-API в поле
-                «webhookUrl». Также включите событие <code>incomingMessageReceived</code>.
-                Токен зашит в URL — никому не передавайте его.
+                Скопируйте этот URL и вставьте в настройках Green-API в поле «webhookUrl». Также
+                включите событие <code>incomingMessageReceived</code>. Токен зашит в URL — никому не
+                передавайте его.
               </p>
             </div>
           </div>
           {webhookUrl ? (
             <div className="flex gap-2">
               <Input value={webhookUrl} readOnly className="font-mono text-xs" />
-              <Button type="button" variant="outline" size="icon" onClick={() => copyText(webhookUrl)}>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={() => copyText(webhookUrl)}
+              >
                 <Copy className="h-4 w-4" />
               </Button>
-              <Button type="button" variant="outline" size="icon" onClick={refreshWebhook} disabled={webhookBusy} title="Сгенерировать новый">
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={refreshWebhook}
+                disabled={webhookBusy}
+                title="Сгенерировать новый"
+              >
                 <RefreshCw className={`h-4 w-4 ${webhookBusy ? "animate-spin" : ""}`} />
               </Button>
             </div>
@@ -297,7 +342,9 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
         </Card>
       )}
 
-      <Card className={`p-5 space-y-5 ${!premiumEnabled ? "opacity-60 pointer-events-none select-none" : ""}`}>
+      <Card
+        className={`p-5 space-y-5 ${!premiumEnabled ? "opacity-60 pointer-events-none select-none" : ""}`}
+      >
         <div className="flex items-center justify-between gap-3">
           <div>
             <h3 className="font-semibold">Настройки ассистента</h3>
@@ -315,38 +362,15 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
         </div>
 
         <div className="space-y-2">
-          <Label>Тип бизнеса (ИИ-администратор)</Label>
-          <div className="flex flex-wrap gap-2">
-            {INDUSTRY_ORDER.map((key) => {
-              const m = INDUSTRIES_META[key];
-              return (
-                <Button
-                  key={key}
-                  type="button"
-                  variant={data.industry === key ? "default" : "outline"}
-                  size="sm"
-                  onClick={() =>
-                    setData((d) => ({
-                      ...d,
-                      industry: key,
-                      // Swap in the new industry's pricing guidance, but only if the owner hasn't
-                      // written their own (current text is empty or is one of the presets).
-                      pricing_rules:
-                        !d.pricing_rules || PRICING_DEFAULTS.has(d.pricing_rules)
-                          ? INDUSTRY_PRICING[key].default
-                          : d.pricing_rules,
-                    }))
-                  }
-                >
-                  <span className="mr-1">{m.emoji}</span>
-                  {m.label}
-                </Button>
-              );
-            })}
+          <Label>Сфера бизнеса</Label>
+          <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 max-w-sm">
+            <span>{INDUSTRIES_META[data.industry].emoji}</span>
+            <span className="text-sm font-medium">{INDUSTRIES_META[data.industry].label}</span>
           </div>
           <p className="text-xs text-muted-foreground">
-            Определяет экспертизу, терминологию и сценарии консультаций ассистента.{" "}
-            {INDUSTRIES_META[data.industry].tagline}.
+            Сфера выбирается один раз во вкладке «Салон» и здесь менять нельзя — она определяет
+            экспертизу, терминологию и сценарии Ассистента. {INDUSTRIES_META[data.industry].tagline}
+            .
           </p>
           {data.engine === "v3" && (
             <p className="text-xs text-amber-600 dark:text-amber-500">
@@ -364,10 +388,41 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
             onChange={(e) => setData({ ...data, whatsapp_phone: e.target.value })}
           />
           <p className="text-xs text-muted-foreground">
-            Номер, к которому подключён Green-API Instance этого салона. Учётные данные
-            Green-API задаются на вкладке «WhatsApp».
+            Номер, к которому подключён Green-API Instance этого салона. Учётные данные Green-API
+            задаются на вкладке «WhatsApp».
           </p>
         </div>
+
+        {isSuperAdmin && branches.length > 1 && (
+          <div className="space-y-2">
+            <Label>Филиал ассистента</Label>
+            <Select
+              value={data.assistant_branch_id ?? "__all__"}
+              onValueChange={(v) =>
+                setData({ ...data, assistant_branch_id: v === "__all__" ? null : v })
+              }
+            >
+              <SelectTrigger className="max-w-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Все филиалы (спрашивать у клиента)</SelectItem>
+                {branches.map((b) => (
+                  <SelectItem key={b.id} value={b.id}>
+                    {b.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Если закрепить конкретный филиал — ассистент будет работать ИСКЛЮЧИТЕЛЬНО с его
+              данными: мастерами, расписанием, свободными окнами и записями. Он больше не будет
+              спрашивать клиента, в какой филиал записать, и не упомянет мастеров других филиалов.
+              Выберите «Все филиалы», чтобы вернуть прежнее поведение — ассистент сам спросит
+              клиента, в какой филиал он хочет записаться.
+            </p>
+          </div>
+        )}
 
         <div className="space-y-2">
           <Label>Режим работы ассистента</Label>
@@ -375,7 +430,7 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
             {(
               [
                 { code: "v3", label: "Классический (пошаговое меню)" },
-                { code: "v4", label: "Живой диалог (бета)" },
+                { code: "v4", label: "Живой диалог" },
               ] as const
             ).map((m) => (
               <Button
@@ -390,9 +445,9 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
             ))}
           </div>
           <p className="text-xs text-muted-foreground">
-            «Живой диалог» — ассистент общается свободным текстом, как человек: понимает
-            голосовые сообщения, отвечает на вопросы о салоне и записывает без нумерованных
-            меню. Переключение действует сразу, откат — в один клик.
+            «Живой диалог» — ассистент общается свободным текстом, как человек: понимает голосовые
+            сообщения, отвечает на вопросы о салоне и записывает без нумерованных меню. Переключение
+            действует сразу, откат — в один клик.
           </p>
         </div>
 
@@ -432,25 +487,40 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
             onChange={(e) => setData({ ...data, tone_instructions: e.target.value })}
           />
           <p className="text-xs text-muted-foreground">
-            Управляет тоном и формулировками ассистента: вежливость, обращение на «вы»,
-            запрет сленга, фирменные фразы (например — «не использовать сленг», «всегда
-            предлагать комбо стрижка+укладка»). Шаги записи (услуга → день → время →
-            мастер → подтверждение) выстроены автоматически и всегда соблюдаются.
+            Управляет тоном и формулировками ассистента: вежливость, обращение на «вы», запрет
+            сленга, фирменные фразы (например — «не использовать сленг», «всегда предлагать комбо
+            стрижка+укладка»). Шаги записи (услуга → день → время → мастер → подтверждение)
+            выстроены автоматически и всегда соблюдаются.
           </p>
         </div>
 
         <div className="space-y-2">
-          <Label>{INDUSTRY_PRICING[data.industry].label}</Label>
+          <div className="flex items-center justify-between gap-3">
+            <Label>{INDUSTRY_PRICING[data.industry].label}</Label>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={() =>
+                setData((d) => ({ ...d, pricing_rules: INDUSTRY_PRICING[d.industry].default }))
+              }
+            >
+              Подставить пример
+            </Button>
+          </div>
           <Textarea
             rows={5}
             value={data.pricing_rules ?? ""}
             onChange={(e) => setData({ ...data, pricing_rules: e.target.value })}
           />
           <p className="text-xs text-muted-foreground">
-            Профессиональная подсказка для вашей ниши подставлена автоматически — отредактируйте
-            под свой салон или оставьте как есть.
-            {!INDUSTRY_PRICING[data.industry].photoPricing &&
-              " Точную цену по фото ассистент здесь не называет, но присланное фото (зона, кожа, зубы, снимок) он разберёт, чтобы сориентировать клиента и записать — диагноз и точную стоимость оставляет специалисту."}
+            Профессиональная подсказка для вашей ниши подставлена автоматически — отредактируйте под
+            свой салон или оставьте как есть.
+            {INDUSTRY_PRICING[data.industry].photoMode === "consultation" &&
+              " Цену по фото ассистент здесь не называет — он разбирает присланное фото (кожа, зубы, симптом), чтобы понять ситуацию клиента и довести до записи; диагноз и точную стоимость оставляет специалисту."}
+            {INDUSTRY_PRICING[data.industry].photoMode === "none" &&
+              " В этой сфере фото для оценки не используется — цена называется из списка услуг."}
           </p>
         </div>
 
@@ -489,7 +559,8 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
                     </h4>
                     <p className="text-xs text-muted-foreground mt-0.5">
                       Пара минут — и ассистент консультирует как опытный администратор вашей сферы.
-                      Услуги, цены и мастеров он уже знает из системы. Любой вопрос можно пропустить.
+                      Услуги, цены и мастеров он уже знает из системы. Любой вопрос можно
+                      пропустить.
                     </p>
                     <div className="flex flex-wrap items-center gap-2 mt-2 text-xs">
                       <span className="rounded-full bg-muted px-2 py-0.5">≈ 2–3 минуты</span>
@@ -499,7 +570,7 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
                     </div>
                   </div>
                   <Button type="button" variant="outline" size="sm" onClick={fillKnowledgeExamples}>
-                    <Sparkles className="h-4 w-4 mr-1.5" /> Заполнить примером
+                    Подставить пример
                   </Button>
                 </div>
 
@@ -575,15 +646,45 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
               onChange={(e) =>
                 setData({
                   ...data,
-                  manage_cutoff_hours: Math.max(0, Math.min(168, Math.floor(Number(e.target.value) || 0))),
+                  manage_cutoff_hours: Math.max(
+                    0,
+                    Math.min(168, Math.floor(Number(e.target.value) || 0)),
+                  ),
                 })
               }
             />
             <span className="text-sm text-muted-foreground">часов до визита</span>
           </div>
           <p className="text-xs text-muted-foreground">
-            Если до визита осталось меньше указанного времени, ассистент не будет отменять
-            или переносить запись сам, а попросит клиента позвонить в салон. 0 — без ограничений.
+            Если до визита осталось меньше указанного времени, ассистент не будет отменять или
+            переносить запись сам, а попросит клиента позвонить в салон. 0 — без ограничений.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <Label>Напоминание о записи</Label>
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              min={1}
+              max={72}
+              className="w-24"
+              value={data.reminder_lead_hours}
+              onChange={(e) =>
+                setData({
+                  ...data,
+                  reminder_lead_hours: Math.max(
+                    1,
+                    Math.min(72, Math.floor(Number(e.target.value) || 1)),
+                  ),
+                })
+              }
+            />
+            <span className="text-sm text-muted-foreground">часов до записи</span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            За сколько часов до визита клиенту автоматически придёт напоминание в WhatsApp.
+            Изменение действует сразу и применяется ко всем новым и уже созданным записям.
           </p>
         </div>
 
@@ -625,10 +726,6 @@ export function AiAssistantTab({ salonId, salonName, onOpenWhatsAppTab }: { salo
           </Button>
         </div>
       </Card>
-
-      <div className={!premiumEnabled ? "opacity-60 pointer-events-none select-none" : ""}>
-        <AiServiceListEditor salonId={salonId} />
-      </div>
 
       <WaSimulator salonId={salonId} />
     </div>

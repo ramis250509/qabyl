@@ -83,7 +83,7 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
     const branchRows = branchResult.data;
 
     // The simulator runs the same engine the live webhook would use for this salon.
-    const engine = (assistant as any)?.engine === "v4" ? "v4" : "v3";
+    const engine = (assistant as any)?.engine === "v3" ? "v3" : "v4";
     const runWaAgent =
       engine === "v4"
         ? (await import("@/lib/wa-agent-v4.server")).runWaAgentV4
@@ -123,7 +123,10 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
         industry: (assistant as any)?.industry ?? null,
         knowledge_answers: (assistant as any)?.knowledge_answers ?? null,
       },
-      client: { phone: "simulator_test", name: "Тест" },
+      // Valid-format test number (12 digits): the appointments phone-validation trigger requires
+      // 10–15 digits, so the placeholder "simulator_test" made every simulator booking fail. This
+      // clearly-fake KG number passes validation while staying obviously a test contact.
+      client: { phone: "996700000000", name: "Тест" },
       history: data.history as WaIncomingMessage[],
       lastMessages: [incomingMsg],
       branches: (branchRows ?? []).map((b: any) => ({

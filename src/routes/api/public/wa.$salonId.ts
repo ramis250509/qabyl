@@ -20,23 +20,47 @@ import {
 } from "@/lib/wa-agent.server";
 import { runWaAgentV4 } from "@/lib/wa-agent-v4.server";
 
-// Must outlast a slow turn. One turn can chain several Gemini calls (tool loop) and each may now
-// retry with backoff, so 25s could expire mid-processing — a second webhook for the SAME
-// conversation would then grab the lock and double-reply. 60s covers a realistic slow turn while
-// still releasing quickly if a worker dies (the lock is also released in a finally block).
-const LOCK_TTL_SECONDS = 60;
+// LOCK_TTL is the WORST-CASE ceiling: how long we let a stuck worker hold the conversation
+// before another worker is allowed to take over. Prod incident (2026-07-24) showed a Gemini
+// turn on a heavy service (keratin, big tool loop) took ~70 s while TTL was 60 s. Lock expired
+// mid-flight, a second worker took the lock, processed the SAME still-unprocessed message,
+// called Gemini AGAIN, and sent a DUPLICATE reply (with slightly different wording — Gemini is
+// non-deterministic). State writes from both workers also raced and lost context. Root cause
+// is closed two ways here:
+//   (a) TTL bumped to 180 s so a realistic worst-case turn (2 min of Gemini + tool loop +
+//       retries) never expires the lock mid-flight in the first place;
+//   (b) every state-mutating write later re-checks `processing_lock_id = ourLockId`, so even
+//       IF a lock somehow got stolen we refuse to overwrite state or resend the reply — a
+//       zombie worker's turn is silently dropped.
+// The lock is also released in a `finally`, so a dying worker frees it fast; the long TTL is
+// only the safety net for stuck-but-alive workers.
+const LOCK_TTL_SECONDS = 180;
+const LOCK_HEARTBEAT_MS = 45_000; // renew every 45s while a long turn is running
 const MAX_LOOP_ITERATIONS = 3;
 const LOCK_WAIT_TIMEOUT_MS = 8000;
 const LOCK_POLL_INTERVAL_MS = 400;
+// Burst coalescing (fixes the "half-typed message answered, then corrected a second later" double
+// reply): if the newest unprocessed inbound arrived within COALESCE_WINDOW_MS, the client is very
+// likely still typing the rest of their thought, so we wait COALESCE_WAIT_MS once and reload the
+// pending list — answering the COMPLETE burst with a single message instead of two.
+const COALESCE_WINDOW_MS = 1500;
+// Bumped 500 → 3500 ms (2026-07-27) at the owner's request. Real WA clients type in 3–5 short
+// bubbles ("здравствуйте" / "хочу записаться" / "на маникюр" / "на завтра") with 1–2 s pauses.
+// The old 500 ms window caught fast bursts but split slower ones into 2–3 agent runs, each
+// replying → felt impatient. ~4 s waits for the thought to finish, then one merged agent turn
+// produces one coherent reply. Trade-off: adds ~3 s to the first reply, kills double-replies.
+const COALESCE_WAIT_MS = 3500;
 
 export function resolveAssistantRuntimeConfig(salon: any, assistant: any, secrets: any) {
-  const assistantEnabled = (salon?.ai_assistant_enabled ?? true) !== false && (assistant?.enabled ?? true);
+  const assistantEnabled =
+    (salon?.ai_assistant_enabled ?? true) !== false && (assistant?.enabled ?? true);
   const hasGreenApiCreds = Boolean(secrets?.greenapi_instance && secrets?.greenapi_token);
   return {
     assistantEnabled,
     hasGreenApiCreds,
-    // V4 rollout flag: 'v3' (default, legacy state machine) | 'v4' (LLM tool-calling agent).
-    engine: assistant?.engine === "v4" ? ("v4" as const) : ("v3" as const),
+    // V4 is the sanctioned default (2026-07-27). V3 stays as an explicit opt-in fallback via
+    // the admin UI — flip a salon back to 'v3' only if V4 misbehaves for their specific setup.
+    engine: assistant?.engine === "v3" ? ("v3" as const) : ("v4" as const),
     assistantConfig: {
       greeting: assistant?.greeting ?? null,
       tone_instructions: assistant?.tone_instructions ?? null,
@@ -58,9 +82,21 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
       GET: async () => new Response("ok", { status: 200 }),
       POST: async ({ request, params }) => {
         const salonId = params.salonId;
+        // Short random tag for tracing one webhook end-to-end through Cloudflare logs.
+        // Every console.log/error in this request prefixes with it so an admin can grep the
+        // full lifecycle of "the message that broke". Kept small to stay readable in log lines.
+        const rid = Math.random().toString(36).slice(2, 8);
+        const log = (msg: string, ...rest: unknown[]) => console.log(`[wa ${rid}] ${msg}`, ...rest);
+        const errLog = (msg: string, ...rest: unknown[]) =>
+          console.error(`[wa ${rid}] ${msg}`, ...rest);
+        // Wall-clock stopwatch for per-stage latency. `ms()` = elapsed since webhook receipt.
+        // We log one compact TIMING line per processed message so latency is provable from
+        // Cloudflare logs (grep the rid) instead of guessed. This is how we separate transport
+        // overhead from Gemini time — the whole point of the "simulator fast, WhatsApp slow" hunt.
+        const t0 = Date.now();
+        const ms = () => Date.now() - t0;
         const url = new URL(request.url);
-        const token =
-          url.searchParams.get("token") || request.headers.get("x-wa-token") || "";
+        const token = url.searchParams.get("token") || request.headers.get("x-wa-token") || "";
         if (!salonId || !token) {
           return new Response("Forbidden", { status: 403 });
         }
@@ -89,7 +125,9 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             .maybeSingle(),
           supabaseAdmin
             .from("salon_ai_assistant")
-            .select("enabled, greeting, tone_instructions, pricing_rules, languages, manage_cutoff_hours, engine, knowledge_base, client_addressing, industry, knowledge_answers, sales_mode")
+            .select(
+              "enabled, greeting, tone_instructions, pricing_rules, languages, manage_cutoff_hours, engine, knowledge_base, client_addressing, industry, knowledge_answers, sales_mode, assistant_branch_id",
+            )
             .eq("salon_id", salonId)
             .maybeSingle(),
         ]);
@@ -101,10 +139,13 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
 
         // V4 rollout flag — needed before the content-type switch (voice notes are only
         // supported on the V4 engine; V3 salons keep the old "unsupported → ack" behavior).
-        const waEngine: "v3" | "v4" = (assistant as any)?.engine === "v4" ? "v4" : "v3";
+        const waEngine: "v3" | "v4" = (assistant as any)?.engine === "v3" ? "v3" : "v4";
 
         const webhookType = payload?.typeWebhook;
-        if (webhookType !== "incomingMessageReceived" && webhookType !== "outgoingMessageReceived") {
+        if (
+          webhookType !== "incomingMessageReceived" &&
+          webhookType !== "outgoingMessageReceived"
+        ) {
           return ack();
         }
 
@@ -113,10 +154,19 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         const chatId: string | undefined = sd?.chatId;
         if (!chatId || !chatId.endsWith("@c.us")) return ack();
 
-        const senderName: string | null = sd?.senderName ?? sd?.chatName ?? null;
+        // Strip potential prompt-injection attempts from the WhatsApp display name.
+        // A malicious user could set their name to "Ignore previous instructions..." etc.
+        const rawSenderName: string | null = sd?.senderName ?? sd?.chatName ?? null;
+        const senderName: string | null = rawSenderName
+          ? rawSenderName.replace(/[\n\r]/g, " ").slice(0, 60)
+          : null;
         const phone = normalizeChatIdToPhone(chatId);
         const greenIdMessage: string | undefined = payload?.idMessage;
         const nowIso = new Date().toISOString();
+
+        // Rate-limit constants (used per-conversation once existingConv is loaded below).
+        const RATE_LIMIT_MAX = 30;
+        const RATE_LIMIT_WINDOW_MS = 60_000;
 
         // ---- Human admin took over: a message sent manually from the phone connected
         // to this WhatsApp number. Green-API reports this as outgoingMessageReceived,
@@ -200,10 +250,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         let audioMime: string | null = null;
         const mt = md?.typeMessage;
         if (mt === "textMessage" || mt === "extendedTextMessage") {
-          textBody =
-            md?.textMessageData?.textMessage ??
-            md?.extendedTextMessageData?.text ??
-            null;
+          textBody = md?.textMessageData?.textMessage ?? md?.extendedTextMessageData?.text ?? null;
         } else if (mt === "imageMessage") {
           imageDownloadUrl = md?.fileMessageData?.downloadUrl ?? null;
           imageMime = md?.fileMessageData?.mimeType ?? "image/jpeg";
@@ -234,15 +281,68 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
           return ack();
         }
 
-        // ---- Load previous conversation before upsert.
-        // We need the pre-message timestamps to decide whether this WhatsApp turn
-        // belongs to the same short booking session or starts a new clean one.
-        const { data: existingConv } = await supabaseAdmin
-          .from("wa_conversations")
-          .select("id, status, session_started_at, last_appointment_at, last_message_at, state, ai_paused, ai_paused_at")
-          .eq("salon_id", salonId)
-          .eq("client_phone", phone)
-          .maybeSingle();
+        // ---- Load previous conversation + webhook dedup IN PARALLEL. These are independent
+        // (conversation is keyed by phone; dedup by green_api_message_id) and each is a separate
+        // ~300–400 ms round-trip from the Worker → Supabase. Running them concurrently and
+        // early-exiting on a duplicate BEFORE the upsert/rate-limit/insert work removes one full
+        // round-trip (and skips all downstream work for redelivered webhooks). Prod TIMING logs
+        // (2026-07-25) showed preAgent = 4.5–8 s dominated by sequential DB round-trips — this is
+        // the class of fix that shrinks it. The wa_messages_green_id_uniq index is the real
+        // duplicate guard; this query is just a fast early-out.
+        const [{ data: existingConv }, dupCheck] = await Promise.all([
+          supabaseAdmin
+            .from("wa_conversations")
+            .select(
+              "id, status, session_started_at, last_appointment_at, last_message_at, state, ai_paused, ai_paused_at",
+            )
+            .eq("salon_id", salonId)
+            .eq("client_phone", phone)
+            .maybeSingle(),
+          greenIdMessage
+            ? supabaseAdmin
+                .from("wa_messages")
+                .select("id")
+                .eq("salon_id", salonId)
+                .eq("green_api_message_id", greenIdMessage)
+                .maybeSingle()
+            : Promise.resolve({ data: null }),
+        ]);
+        if ((dupCheck as any)?.data) return ack(); // redelivered webhook — already processed
+
+        // ---- P0 rate-limit: hard cap of RATE_LIMIT_MAX inbound messages PER PHONE (via the
+        // conversation row) per RATE_LIMIT_WINDOW_MS. Protects Cloudflare/Supabase/Gemini spend
+        // from a broken client (WhatsApp loop) or targeted flood. Only inbound counts, so admin
+        // replies never eat the client's budget. Silent 200 ack keeps Green-API from retrying
+        // and stops us from confirming to an abuser that the number is live.
+        // Only runs for inbound messages AND only once a conversation row already exists — a
+        // client's very first message can't exceed the limit yet, and skipping the check saves
+        // a query on cold conversations.
+        // Only pay the count round-trip when messages are actually arriving in rapid succession
+        // (a possible flood). At normal conversational pace — a gap over RATE_LIMIT_PROBE_GAP_MS
+        // since the previous message — a flood is impossible, so we skip the query entirely. This
+        // removes one Worker→Supabase round-trip (~350ms) from virtually every real message while
+        // still catching an actual runaway client (which by definition sends with tiny gaps).
+        const RATE_LIMIT_PROBE_GAP_MS = 4000;
+        const prevMsgAtMs = existingConv?.last_message_at
+          ? new Date(existingConv.last_message_at as string).getTime()
+          : 0;
+        const rapidSuccession =
+          prevMsgAtMs > 0 && Date.now() - prevMsgAtMs < RATE_LIMIT_PROBE_GAP_MS;
+        if (webhookType === "incomingMessageReceived" && existingConv?.id && rapidSuccession) {
+          const since = new Date(Date.now() - RATE_LIMIT_WINDOW_MS).toISOString();
+          const { count: recentCount } = await supabaseAdmin
+            .from("wa_messages")
+            .select("id", { count: "exact", head: true })
+            .eq("conversation_id", existingConv.id)
+            .eq("direction", "in")
+            .gte("created_at", since);
+          if ((recentCount ?? 0) >= RATE_LIMIT_MAX) {
+            errLog(
+              `rate limit tripped: phone=${phone} conv=${existingConv.id} inbound=${recentCount} in last ${RATE_LIMIT_WINDOW_MS / 1000}s`,
+            );
+            return ack();
+          }
+        }
 
         const previousLastMessageAt = existingConv?.last_message_at
           ? new Date(existingConv.last_message_at).getTime()
@@ -298,17 +398,9 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
           return ack();
         }
         const convId = (conv as any).id as string;
-
-        // ---- Dedup webhook by green_api_message_id BEFORE inserting message
-        if (greenIdMessage) {
-          const { data: dup } = await supabaseAdmin
-            .from("wa_messages")
-            .select("id")
-            .eq("salon_id", salonId)
-            .eq("green_api_message_id", greenIdMessage)
-            .maybeSingle();
-          if (dup) return ack();
-        }
+        // (Webhook dedup already ran in parallel with the conversation load above — no second
+        // round-trip here. The wa_messages_green_id_uniq index still guards against a race where
+        // two redeliveries pass the early check simultaneously.)
 
         // ---- Hidden owner-only test command: "/restart" fully resets the conversation so the
         // salon owner can re-run the scenario from scratch during testing. Gated to the admin's
@@ -318,16 +410,32 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
           ? normalizeChatIdToPhone(secrets.owner_notify_phone)
           : "";
         const isRestartCmd = textBody?.trim().toLowerCase() === "/restart";
-        // Log rejected /restart so a misconfigured owner_notify_phone is diagnosable (it silently
-        // no-op'd before). /restart only ever clears the SENDER's own conversation, so a tolerant
-        // owner match is safe.
-        if (isRestartCmd && !ownerPhoneMatches(phone, ownerNotifyPhone)) {
-          console.warn(
-            `[wa] /restart ignored: sender ${phone} does not match owner_notify_phone ${ownerNotifyPhone || "(unset)"}`,
-          );
-        }
-        if (isRestartCmd && ownerPhoneMatches(phone, ownerNotifyPhone)) {
+        // /restart is available to ANY sender for their OWN chat: it just wipes conversation
+        // state/history-slice for the current phone, which is safe (a client can only reset
+        // themselves). The owner-notify-phone check ONLY gates the extra "cancel my future
+        // test appointments" step so a real client doesn't accidentally cancel their booking.
+        const isOwnerTester = isRestartCmd && ownerPhoneMatches(phone, ownerNotifyPhone);
+        if (isRestartCmd) {
           const resetIso = new Date().toISOString();
+          let cancelledCount = 0;
+          if (isOwnerTester) {
+            // Owner tester: also cancel every FUTURE confirmed appointment on this phone in
+            // this salon, so repeated test cycles don't pile bookings on the real calendar.
+            const { data: cancelled, error: cancelErr } = await supabaseAdmin
+              .from("appointments")
+              .update({ status: "cancelled" } as any)
+              .eq("salon_id", salonId)
+              .eq("client_phone", phone)
+              .eq("status", "confirmed")
+              .gte("starts_at", resetIso)
+              .select("id");
+            cancelledCount = cancelled?.length ?? 0;
+            if (cancelErr) {
+              errLog(`/restart: appointments cancel failed`, cancelErr.message);
+            } else {
+              log(`/restart: cancelled ${cancelledCount} future appointments for tester ${phone}`);
+            }
+          }
           // Drop any queued-but-unprocessed inbound so the fresh session starts truly clean.
           await supabaseAdmin
             .from("wa_messages")
@@ -349,10 +457,17 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             })
             .eq("id", convId);
           if (secrets.greenapi_instance && secrets.greenapi_token) {
+            const cancelNote =
+              isOwnerTester && cancelledCount > 0
+                ? ` Отменено тестовых записей: ${cancelledCount}.`
+                : "";
+            const body = isOwnerTester
+              ? `🔄 Сценарий перезапущен.${cancelNote} Можно тестировать заново.`
+              : `🔄 Диалог сброшен. Начинаем сначала — напишите, чем могу помочь.`;
             await greenApiSendMessage(
               { instance: secrets.greenapi_instance, token: secrets.greenapi_token },
               chatId,
-              "🔄 Сценарий перезапущен. Можно тестировать заново.",
+              body,
             );
           }
           return ack();
@@ -415,8 +530,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             const pausedNow =
               Boolean(existingConv?.ai_paused) &&
               existingConv?.ai_paused_at &&
-              Date.now() - new Date(existingConv.ai_paused_at as string).getTime() <
-                60 * 60 * 1000;
+              Date.now() - new Date(existingConv.ai_paused_at as string).getTime() < 60 * 60 * 1000;
             if (!pausedNow && dlCreds.instance && dlCreds.token) {
               await greenApiSendMessage(
                 dlCreds,
@@ -500,8 +614,13 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         // inbound message above is already stored (processed_at IS NULL) so whenever the
         // AI resumes it picks the message up normally (subject to the 12h staleness filter).
         const AI_PAUSE_MS = 60 * 60 * 1000;
-        const pausedAtMs = existingConv?.ai_paused_at ? new Date(existingConv.ai_paused_at as string).getTime() : 0;
-        const stillPaused = Boolean(existingConv?.ai_paused) && pausedAtMs > 0 && Date.now() - pausedAtMs < AI_PAUSE_MS;
+        const pausedAtMs = existingConv?.ai_paused_at
+          ? new Date(existingConv.ai_paused_at as string).getTime()
+          : 0;
+        const stillPaused =
+          Boolean(existingConv?.ai_paused) &&
+          pausedAtMs > 0 &&
+          Date.now() - pausedAtMs < AI_PAUSE_MS;
         if (stillPaused) {
           return ack();
         }
@@ -521,15 +640,18 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
           return ack();
         }
 
-        // Brief debounce: wait 700ms so that rapid follow-up messages (e.g. client sends
-        // "Привет" then "хочу на стрижку" in quick succession) accumulate before we start
-        // processing. The drain loop will then batch all pending messages into one turn.
-        await new Promise((r) => setTimeout(r, 700));
-
-        // ---- Try to acquire processing lock; if another worker holds it, wait briefly
-        // (it will pick up our just-inserted message in its loop).
+        // Brief debounce + lock acquisition, OVERLAPPED. The debounce (350ms) lets a rapid
+        // follow-up message ("Привет" then "хочу на стрижку") land as a row before we drain; the
+        // lock (a ~300-400ms Worker→Supabase round-trip) is independent — holding the lock while
+        // the debounce window elapses is perfectly safe. Running them concurrently instead of
+        // sequentially removes ~350ms from every turn's preAgent (prod TIMING showed preAgent is
+        // pure sequential-round-trip cost). The drain re-reads all pending after, so a follow-up
+        // that arrives during the window is still picked up.
         const lockId = crypto.randomUUID();
-        const acquired = await tryAcquireLockWithWait(supabaseAdmin, convId, lockId);
+        const [, acquired] = await Promise.all([
+          new Promise((r) => setTimeout(r, 350)),
+          tryAcquireLockWithWait(supabaseAdmin, convId, lockId),
+        ]);
         if (!acquired) {
           // Another worker is handling this conversation. Our message is queued via
           // processed_at IS NULL — that worker will pick it up.
@@ -537,19 +659,31 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         }
 
         // ---- Processing loop (worker drains unprocessed inbound messages)
+        // Declared outside try so `finally` can clear it regardless of where an error fires.
+        let heartbeatHandle: ReturnType<typeof setInterval> | null = null;
         try {
           // IMPORTANT: reload conversation after the lock is acquired. If this
           // webhook waited while another worker processed a previous message,
           // the `conv` object above is stale and contains the old state/state_data.
           // Using that stale snapshot caused the assistant to forget context on
           // every closely-spaced WhatsApp message.
-          const { data: lockedConv } = await supabaseAdmin
-            .from("wa_conversations")
-            .select(
-              "id, client_name, status, selected_branch_id, session_started_at, last_appointment_at, last_message_at, state, state_data",
-            )
-            .eq("id", convId)
-            .maybeSingle();
+          // Reload the conversation and load branches in parallel — the two queries are
+          // independent, so one round-trip instead of two shaves latency off every turn.
+          const [{ data: lockedConv }, { data: branchRows }] = await Promise.all([
+            supabaseAdmin
+              .from("wa_conversations")
+              .select(
+                "id, client_name, status, selected_branch_id, session_started_at, last_appointment_at, last_message_at, state, state_data",
+              )
+              .eq("id", convId)
+              .maybeSingle(),
+            supabaseAdmin
+              .from("branches")
+              .select("id, name, address")
+              .eq("salon_id", salonId)
+              .eq("is_active", true)
+              .order("sort_order"),
+          ]);
           const convSnapshot: any = lockedConv ?? conv;
 
           const creds: GreenApiCreds = {
@@ -557,14 +691,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             token: secrets.greenapi_token ?? "",
           };
 
-          // Load branches once.
-          const { data: branchRows } = await supabaseAdmin
-            .from("branches")
-            .select("id, name, address")
-            .eq("salon_id", salonId)
-            .eq("is_active", true)
-            .order("sort_order");
-          const branches: WaBranchInfo[] = (branchRows ?? []).map((b: any) => ({
+          let branches: WaBranchInfo[] = (branchRows ?? []).map((b: any) => ({
             id: b.id,
             name: b.name,
             address: b.address ?? null,
@@ -573,10 +700,43 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
           let curState: WaAgentState = (convSnapshot.state ?? "idle") as WaAgentState;
           let curStateData = convSnapshot.state_data ?? {};
           let curSelectedBranch: string | null = convSnapshot.selected_branch_id ?? null;
+
+          // Super-admin pinned this assistant to exactly one branch (salon settings → Ассистент).
+          // Replace the branch list with just that one and force selection from turn zero — every
+          // downstream consumer (both engines: masters roster, get_masters, get_available_slots,
+          // get_my_appointments, closed-day detection) already keys off `branches`/selectedBranchId,
+          // so this single choke point is enough to make masters/schedule/slots/appointments/
+          // knowledge from OTHER branches unreachable, without touching either engine's internals
+          // for the (still fully supported) multi-branch dynamic flow. Falls back to the normal
+          // dynamic flow if the pinned branch was deactivated or deleted since being set.
+          const pinnedBranchId = (assistant as any)?.assistant_branch_id as
+            | string
+            | null
+            | undefined;
+          if (pinnedBranchId) {
+            const pinned = branches.find((b) => b.id === pinnedBranchId);
+            if (pinned) {
+              branches = [pinned];
+              curSelectedBranch = pinned.id;
+            }
+          }
           const sessionStartedAt = (convSnapshot.session_started_at ?? nowIso) as string;
           // Track the last text we actually sent in THIS drain pass so we don't fire the exact
           // same WhatsApp message twice when the client double-texts within one webhook window.
           let lastSentReply: string | null = null;
+          // Coalesce at most once per drain pass, so a client sending many quick bursts can't stall
+          // the worker indefinitely (each real turn still gets processed).
+          let settledThisPass = false;
+
+          // Lock heartbeat: for turns that legitimately take long (heavy Gemini tool loops,
+          // photo pricing, etc.) we refresh the lock every LOCK_HEARTBEAT_MS. Prevents the
+          // observed prod bug where a >60 s Gemini turn lost its lock mid-flight and a second
+          // worker started a duplicate turn on the same still-unprocessed inbound message.
+          heartbeatHandle = setInterval(() => {
+            refreshLock(supabaseAdmin, convId, lockId).catch((e) =>
+              console.error("[wa] heartbeat refresh failed", e?.message ?? e),
+            );
+          }, LOCK_HEARTBEAT_MS);
 
           for (let iter = 0; iter < MAX_LOOP_ITERATIONS; iter++) {
             // 1) Load unprocessed inbound messages for this conversation
@@ -599,56 +759,119 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             // if nothing fresh remains this pass, skip straight to the next drain iteration.
             const STALE_MESSAGE_MS = 12 * 60 * 60 * 1000;
             const staleCutoff = Date.now() - STALE_MESSAGE_MS;
-            const stalePending = pending.filter((m: any) => new Date(m.created_at).getTime() < staleCutoff);
-            const freshPending = pending.filter((m: any) => new Date(m.created_at).getTime() >= staleCutoff);
+            const stalePending = pending.filter(
+              (m: any) => new Date(m.created_at).getTime() < staleCutoff,
+            );
+            const freshPending = pending.filter(
+              (m: any) => new Date(m.created_at).getTime() >= staleCutoff,
+            );
             if (stalePending.length > 0) {
               await supabaseAdmin
                 .from("wa_messages")
                 .update({ processed_at: new Date().toISOString() })
-                .in("id", stalePending.map((m: any) => m.id));
+                .in(
+                  "id",
+                  stalePending.map((m: any) => m.id),
+                );
             }
             if (freshPending.length === 0) continue;
 
-            // 2) Sign media URLs for any image messages
-            const lastMessages: WaIncomingMessage[] = [];
-            for (const m of freshPending) {
-              let signed: string | null = null;
-              if (m.kind === "image" && m.media_path) {
-                const { data: s } = await supabaseAdmin.storage
-                  .from("wa-media")
-                  .createSignedUrl(m.media_path, 600);
-                signed = s?.signedUrl ?? null;
+            // 1c) Burst coalescing: if the client's newest message landed just now, they're likely
+            // still typing the rest. Wait once and reload so we answer the WHOLE burst with a single
+            // reply — instead of answering a half-typed message and then correcting ourselves a
+            // second later (the "простите, не поняла… → а вот свободное время" double message).
+            if (!settledThisPass) {
+              const newestMs = Math.max(
+                ...freshPending.map((m: any) => new Date(m.created_at).getTime()),
+              );
+              if (Date.now() - newestMs < COALESCE_WINDOW_MS) {
+                settledThisPass = true;
+                await new Promise((r) => setTimeout(r, COALESCE_WAIT_MS));
+                continue; // reload pending — the follow-up message is now included
               }
-              lastMessages.push({
-                id: m.id,
-                direction: "in",
-                kind: m.kind as any,
-                text_body: m.text_body,
-                media_signed_url: signed,
-                media_path: m.media_path,
-                created_at: m.created_at,
-                selected_id: (m as any).meta?.selected_id ?? null,
-              });
             }
 
-            // 3) Load current-session history only. Old booked sessions are useful for
-            // the admin, but sending them to the agent made it reuse stale context.
-            const { data: histRows } = await supabaseAdmin
-              .from("wa_messages")
-              .select("id, direction, kind, text_body, media_path, created_at")
-              .eq("conversation_id", convId)
-              .gte("created_at", sessionStartedAt)
-              .order("created_at", { ascending: false })
-              .limit(30);
-            const history: WaIncomingMessage[] = ((histRows ?? []) as any[])
-              .reverse()
-              .map((m) => ({
-                id: m.id,
-                direction: m.direction,
-                kind: m.kind,
-                text_body: m.text_body,
-                created_at: m.created_at,
-              }));
+            // 2+3) Sign media URLs AND load per-engine context (handoff/history) CONCURRENTLY.
+            // Media signing depends on freshPending; the context query is independent of it, so
+            // running both in one Promise.all removes a full ~350ms Worker→Supabase round-trip
+            // from every turn's preAgent (prod TIMING showed preAgent is pure round-trip cost).
+            const signMedia = async (): Promise<WaIncomingMessage[]> =>
+              Promise.all(
+                freshPending.map(async (m: any) => {
+                  let signed: string | null = null;
+                  if (m.kind === "image" && m.media_path) {
+                    const { data: s } = await supabaseAdmin.storage
+                      .from("wa-media")
+                      .createSignedUrl(m.media_path, 600);
+                    signed = s?.signedUrl ?? null;
+                  }
+                  return {
+                    id: m.id,
+                    direction: "in",
+                    kind: m.kind as any,
+                    text_body: m.text_body,
+                    media_signed_url: signed,
+                    media_path: m.media_path,
+                    created_at: m.created_at,
+                    selected_id: m?.meta?.selected_id ?? null,
+                  };
+                }),
+              );
+
+            // 3) Load per-engine context for the current session only. Old booked sessions are
+            // useful for the admin, but feeding them to the agent made it reuse stale context.
+            //   - V3 replays the message history (it doesn't keep its own transcript).
+            //   - V4 keeps its own Gemini transcript in state_data.v4_history, so the 30-row
+            //     history query would be wasted latency. Instead V4 gets handoffContext: the text
+            //     of any manual messages the LIVE admin sent the client this session, so when the
+            //     AI resumes after a takeover pause it never contradicts what the human already said.
+            const loadContext = async (): Promise<{
+              history: WaIncomingMessage[];
+              handoffContext: string[];
+            }> => {
+              if (waEngine === "v4") {
+                const { data: adminMsgs } = await supabaseAdmin
+                  .from("wa_messages")
+                  .select("text_body, created_at")
+                  .eq("conversation_id", convId)
+                  .eq("direction", "out")
+                  .eq("kind", "system")
+                  .gte("created_at", sessionStartedAt)
+                  .not("text_body", "is", null)
+                  .order("created_at", { ascending: false })
+                  .limit(5);
+                return {
+                  history: [],
+                  handoffContext: ((adminMsgs ?? []) as any[])
+                    .map((m) => (m.text_body ?? "").trim())
+                    .filter(Boolean)
+                    .reverse(),
+                };
+              }
+              const { data: histRows } = await supabaseAdmin
+                .from("wa_messages")
+                .select("id, direction, kind, text_body, media_path, created_at")
+                .eq("conversation_id", convId)
+                .gte("created_at", sessionStartedAt)
+                .order("created_at", { ascending: false })
+                .limit(30);
+              return {
+                handoffContext: [],
+                history: ((histRows ?? []) as any[]).reverse().map((m) => ({
+                  id: m.id,
+                  direction: m.direction,
+                  kind: m.kind,
+                  text_body: m.text_body,
+                  created_at: m.created_at,
+                })),
+              };
+            };
+
+            // Run media-signing and context-loading concurrently — independent, ~350ms saved.
+            const [lastMessages, { history, handoffContext }] = await Promise.all([
+              signMedia(),
+              loadContext(),
+            ]);
 
             // 4) Run agent
             const input: WaAgentInput = {
@@ -669,13 +892,24 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
                 working_hours: (salon as any).working_hours ?? null,
                 address: (salon as any).address ?? null,
               },
+              ...(handoffContext.length ? { handoffContext } : {}),
             };
 
             let result;
+            const tPreAgent = ms();
             try {
               result = waEngine === "v4" ? await runWaAgentV4(input) : await runWaAgentV3(input);
             } catch (e: any) {
               console.error("[wa] runWaAgent threw", e?.message ?? e);
+              // Sink to error_logs for /admin/errors visibility. Best-effort — logError never throws.
+              const { logError } = await import("@/lib/error-log.server");
+              await logError({
+                source: waEngine === "v4" ? "wa-agent-v4" : "wa-agent-v3",
+                message: `runWaAgent threw: ${e?.message ?? String(e)}`,
+                error: e,
+                salonId,
+                context: { rid, phone, chatId, waEngine },
+              });
               const reply =
                 "Извините, не получилось обработать запрос. Попробуйте, пожалуйста, ещё раз.";
               const sent = await greenApiSendMessage(creds, chatId, reply);
@@ -685,14 +919,17 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
                 direction: "out",
                 kind: "text",
                 text_body: reply,
-                green_api_message_id: sent.ok ? sent.idMessage ?? null : null,
+                green_api_message_id: sent.ok ? (sent.idMessage ?? null) : null,
                 meta: { fatalError: e?.message ?? String(e) } as any,
               });
               // Mark pending as processed so future messages don't get stuck behind them.
               await supabaseAdmin
                 .from("wa_messages")
                 .update({ processed_at: new Date().toISOString() })
-                .in("id", freshPending.map((m: any) => m.id));
+                .in(
+                  "id",
+                  freshPending.map((m: any) => m.id),
+                );
               // Reset state so the client's NEXT message gets a clean run.
               await supabaseAdmin
                 .from("wa_conversations")
@@ -702,14 +939,17 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             }
 
             // 5) Send reply — skip network if byte-for-byte identical to previous in this pass.
-            // BOTH lists AND buttons go out as a plain-text numbered menu, and the agent maps a
-            // numeric reply back to the row/button id. Native sendInteractiveButtons taps were
-            // fixed to parse correctly (typeMessage "templateButtonsReplyMessage", verified
-            // against Green-API's own docs — the previous "interactiveButtonsReply" check never
-            // matched anything real), but a live test on the salon's actual account still didn't
-            // reliably deliver the tap end-to-end (Green-API's own docs mark this beta/unstable).
-            // Reverted to numbered text — the same proven path date/slot selection already uses
-            // reliably on every account. The parser fix is harmless to keep either way.
+            // BEFORE any user-visible side effect (send / mark-processed / state-write) we
+            // re-verify the lock is still OURS. If TTL elapsed and another worker took over,
+            // that worker's turn is authoritative — dropping our reply here is the ONLY way to
+            // avoid the "duplicate reply with different wording" incident (prod 2026-07-24).
+            const stillOwn = await stillHoldingLock(supabaseAdmin, convId, lockId);
+            if (!stillOwn) {
+              console.warn(
+                `[wa] lock lost mid-turn (conv=${convId}) — dropping stale reply + state write to avoid double-message`,
+              );
+              break; // exit the drain loop; the successor worker owns the conversation now
+            }
             const im = result.interactiveMessage;
             const sentText = im
               ? renderInteractiveAsText(
@@ -720,11 +960,19 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
               : result.reply;
             const isDuplicateReply = sentText.trim() === (lastSentReply ?? "").trim();
             let sentIdMessage: string | undefined;
+            const tAgentDone = ms();
             if (!isDuplicateReply) {
               const res = await greenApiSendMessage(creds, chatId, sentText);
               sentIdMessage = res.ok ? res.idMessage : undefined;
               lastSentReply = sentText;
             }
+            // One-line latency breakdown per reply. preAgent = all transport + DB + debounce +
+            // coalesce + lock before the LLM; agent = runWaAgentV4 (Gemini tool loop); send =
+            // Green-API round-trip. If agent ≫ preAgent+send, the LLM is the bottleneck; if
+            // preAgent is large, transport is. Grep "TIMING" in Cloudflare logs.
+            log(
+              `TIMING preAgent=${tPreAgent}ms agent=${tAgentDone - tPreAgent}ms send=${ms() - tAgentDone}ms total=${ms()}ms actions=${(result.debug.actions || []).join(",")}`,
+            );
             await supabaseAdmin.from("wa_messages").insert({
               conversation_id: convId,
               salon_id: salonId,
@@ -762,23 +1010,42 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             }
 
             // 5c) V4 escalation: alert the salon admin that a live human is needed (the state
-            // update below also pauses the bot).
+            // update below also pauses the bot). De-dupe: don't re-alert if we already alerted
+            // the admin within the last 4h and they still haven't responded — otherwise a
+            // stubborn client who keeps writing after each 60-min pause elapses would spam the
+            // admin's WhatsApp with the same escalation over and over.
             if (result.notifyAdminText) {
-              await notifyOwner({
-                salonId,
-                creds,
-                ownerNotifyPhoneRaw: secrets.owner_notify_phone,
-                kind: "escalation",
-                title: "Клиенту нужен администратор",
-                text: result.notifyAdminText,
-              });
+              const lastEscalatedAt = (curStateData as any)?.last_escalated_at as
+                | string
+                | undefined;
+              const recentlyAlerted =
+                lastEscalatedAt &&
+                Date.now() - new Date(lastEscalatedAt).getTime() < 4 * 60 * 60 * 1000;
+              if (!recentlyAlerted) {
+                await notifyOwner({
+                  salonId,
+                  creds,
+                  ownerNotifyPhoneRaw: secrets.owner_notify_phone,
+                  kind: "escalation",
+                  title: "Клиенту нужен администратор",
+                  text: result.notifyAdminText,
+                });
+                // Record on the state so subsequent turns can see it (persisted below at 7).
+                (result.nextStateData as any) = {
+                  ...(result.nextStateData ?? {}),
+                  last_escalated_at: new Date().toISOString(),
+                };
+              }
             }
 
             // 6) Mark these inbound messages as processed
             await supabaseAdmin
               .from("wa_messages")
               .update({ processed_at: new Date().toISOString() })
-              .in("id", freshPending.map((m: any) => m.id));
+              .in(
+                "id",
+                freshPending.map((m: any) => m.id),
+              );
 
             // 7) Persist conversation state
             const updates: Record<string, any> = {
@@ -802,7 +1069,10 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             if (result.selectedBranchId !== curSelectedBranch) {
               updates.selected_branch_id = result.selectedBranchId;
             }
-            await supabaseAdmin.from("wa_conversations").update(updates as any).eq("id", convId);
+            await supabaseAdmin
+              .from("wa_conversations")
+              .update(updates as any)
+              .eq("id", convId);
 
             curState = result.nextState;
             curStateData = result.nextStateData ?? {};
@@ -811,6 +1081,12 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             // Loop again only if more inbound messages arrived during processing.
           }
         } finally {
+          // Stop the heartbeat before releasing so we don't extend a lock we're about to drop.
+          if (heartbeatHandle) {
+            try {
+              clearInterval(heartbeatHandle);
+            } catch {}
+          }
           // Always release the lock.
           try {
             await supabaseAdmin.rpc("wa_release_lock" as any, {
@@ -901,11 +1177,35 @@ async function notifyOwner(opts: {
   await persistFallback(res.error ?? "неизвестная ошибка Green-API");
 }
 
-async function tryAcquireLockWithWait(
-  db: any,
-  convId: string,
-  lockId: string,
-): Promise<boolean> {
+// Refresh (re-acquire) the lock while we still legitimately hold it — extends TTL by
+// LOCK_TTL_SECONDS from `now`. The wa_try_acquire_lock RPC only succeeds when the current
+// row's lock is either absent, expired, OR belongs to the same lock_id — so the same worker
+// can extend its own TTL safely. Called on a heartbeat during long turns.
+async function refreshLock(db: any, convId: string, lockId: string): Promise<boolean> {
+  const { data } = await db.rpc("wa_try_acquire_lock", {
+    _conversation_id: convId,
+    _lock_id: lockId,
+    _ttl_seconds: LOCK_TTL_SECONDS,
+  });
+  return data === true;
+}
+
+// Am I still the exclusive owner of this conversation's lock? Used as the last-line
+// correctness check before any state-mutating write (send reply / mark processed / persist
+// state). If the lock was stolen (TTL expired and another worker grabbed it), we MUST NOT
+// send a stale reply or overwrite fresher state — the other worker's turn is authoritative.
+async function stillHoldingLock(db: any, convId: string, lockId: string): Promise<boolean> {
+  const { data } = await db
+    .from("wa_conversations")
+    .select("processing_lock_id, processing_lock_until")
+    .eq("id", convId)
+    .maybeSingle();
+  if (!data) return false;
+  const untilMs = data.processing_lock_until ? new Date(data.processing_lock_until).getTime() : 0;
+  return data.processing_lock_id === lockId && untilMs > Date.now();
+}
+
+async function tryAcquireLockWithWait(db: any, convId: string, lockId: string): Promise<boolean> {
   const deadline = Date.now() + LOCK_WAIT_TIMEOUT_MS;
   while (true) {
     const { data, error } = await db.rpc("wa_try_acquire_lock", {

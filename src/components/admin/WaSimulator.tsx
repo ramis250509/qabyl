@@ -50,6 +50,9 @@ export function WaSimulator({ salonId }: { salonId: string }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    // Skip the initial mount scroll — otherwise opening the "Ассистент" tab yanks the whole
+    // admin page down to the simulator. Only scroll once the user has actually sent something.
+    if (messages.length === 0 && !isLoading) return;
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isLoading]);
 
