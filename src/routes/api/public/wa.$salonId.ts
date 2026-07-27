@@ -56,8 +56,9 @@ export function resolveAssistantRuntimeConfig(salon: any, assistant: any, secret
   return {
     assistantEnabled,
     hasGreenApiCreds,
-    // V4 rollout flag: 'v3' (default, legacy state machine) | 'v4' (LLM tool-calling agent).
-    engine: assistant?.engine === "v4" ? ("v4" as const) : ("v3" as const),
+    // V4 is the sanctioned default (2026-07-27). V3 stays as an explicit opt-in fallback via
+    // the admin UI — flip a salon back to 'v3' only if V4 misbehaves for their specific setup.
+    engine: assistant?.engine === "v3" ? ("v3" as const) : ("v4" as const),
     assistantConfig: {
       greeting: assistant?.greeting ?? null,
       tone_instructions: assistant?.tone_instructions ?? null,
@@ -136,7 +137,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
 
         // V4 rollout flag — needed before the content-type switch (voice notes are only
         // supported on the V4 engine; V3 salons keep the old "unsupported → ack" behavior).
-        const waEngine: "v3" | "v4" = (assistant as any)?.engine === "v4" ? "v4" : "v3";
+        const waEngine: "v3" | "v4" = (assistant as any)?.engine === "v3" ? "v3" : "v4";
 
         const webhookType = payload?.typeWebhook;
         if (
@@ -895,6 +896,15 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
               result = waEngine === "v4" ? await runWaAgentV4(input) : await runWaAgentV3(input);
             } catch (e: any) {
               console.error("[wa] runWaAgent threw", e?.message ?? e);
+              // Sink to error_logs for /admin/errors visibility. Best-effort — logError never throws.
+              const { logError } = await import("@/lib/error-log.server");
+              await logError({
+                source: waEngine === "v4" ? "wa-agent-v4" : "wa-agent-v3",
+                message: `runWaAgent threw: ${e?.message ?? String(e)}`,
+                error: e,
+                salonId,
+                context: { rid, phone, chatId, waEngine },
+              });
               const reply =
                 "Извините, не получилось обработать запрос. Попробуйте, пожалуйста, ещё раз.";
               const sent = await greenApiSendMessage(creds, chatId, reply);

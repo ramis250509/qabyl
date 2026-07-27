@@ -545,6 +545,10 @@ async function callGemini(opts: {
   temperature?: number;
   maxOutputTokens?: number;
   thinkingBudget?: number;
+  // Integer seed for deterministic sampling. With temperature:0 + seed, the same content
+  // produces the same output on repeat calls — required for photo pricing where two
+  // identical photos must not yield different price ranges.
+  seed?: number;
   // Caps tokens spent per image (MEDIA_RESOLUTION_LOW/MEDIUM/HIGH) — controls Gemini's
   // per-image billing without us having to resize anything ourselves (we can't: Cloudflare
   // Workers has no native image codecs, so a library like sharp isn't an option here).
@@ -561,6 +565,7 @@ async function callGemini(opts: {
       thinkingConfig: { thinkingBudget: opts.thinkingBudget ?? 5000 },
     },
   };
+  if (typeof opts.seed === "number") body.generationConfig.seed = opts.seed;
   if (opts.responseMimeType) body.generationConfig.responseMimeType = opts.responseMimeType;
   if (opts.responseSchema) body.generationConfig.responseSchema = opts.responseSchema;
   if (opts.mediaResolution) body.generationConfig.mediaResolution = opts.mediaResolution;
@@ -1846,6 +1851,23 @@ export async function fetchMergedSlots(opts: {
 // Photo pricing (Gemini Vision)
 // ============================================================
 
+// Deterministic 32-bit hash from a string — used to derive a stable Gemini `seed` per
+// (image + service + salon-config). Same photo + same salon → same seed → same price on
+// repeat calls. Cheap and dependency-free (djb2-xor).
+function stableSeed(input: string): number {
+  let h = 5381;
+  for (let i = 0; i < input.length; i++) h = ((h << 5) + h) ^ input.charCodeAt(i);
+  // Gemini seed field is a positive int32; mask to 31 bits so we're always in-range.
+  return h & 0x7fffffff;
+}
+
+// Quantize a price to the nearest step, clamped inside [min, max]. Prevents "4732" answers
+// and lets the salon think in round numbers (default 500 сом buckets).
+function quantizePrice(p: number, step: number, min: number, max: number): number {
+  const q = Math.round(p / step) * step;
+  return Math.max(min, Math.min(max, q));
+}
+
 async function priceFromPhoto(opts: {
   apiKey: string;
   imageBase64: string;
@@ -1855,41 +1877,82 @@ async function priceFromPhoto(opts: {
   priceMax: number;
   pricingRules: string | null;
   language: "ru" | "ky" | "en";
+  // Quantization step in salon currency (default: 500). All returned prices are rounded to
+  // this bucket so two runs on the same photo cannot differ by a few сом.
+  priceStep?: number;
 }): Promise<
-  { price: number; explanation: string; confidence: "high" | "medium" | "low" } | { error: string }
+  {
+    // Narrow range the client sees ("3000–3500 сом"). low === high when confidence is high
+    // and the model committed to a single bucket.
+    price_low: number;
+    price_high: number;
+    // Backwards-compatible midpoint used by legacy call sites that still expect a single number.
+    price: number;
+    explanation: string;
+    confidence: "high" | "medium" | "low";
+  }
+  | { error: string }
 > {
   const langName =
     opts.language === "ky" ? "кыргызском" : opts.language === "en" ? "английском" : "русском";
+  const step = opts.priceStep ?? 500;
+  // Ceiling/floor to a valid multiple of `step` so the LLM is asked to pick within a
+  // quantized set from the start (fewer rounding surprises after the fact).
+  const stepMin = Math.ceil(opts.priceMin / step) * step;
+  const stepMax = Math.floor(opts.priceMax / step) * step;
   const sys = `Ты оцениваешь стоимость услуги «${opts.serviceName}» по фото клиента.
-Цена ОБЯЗАНА быть числом в диапазоне [${opts.priceMin}, ${opts.priceMax}] сом, не выходи за границы.
-${opts.pricingRules ? `Правила оценки от салона: ${opts.pricingRules}` : ""}
-Честно оцени свою уверенность в поле confidence: "low", если фото нечёткое, снято не с того
-ракурса, не показывает объём/сложность работы, или на фото вообще не то, о чём просит клиент —
-в этих случаях НЕ придумывай цену наугад, ставь low и объясни в explanation, что именно не видно.
-"medium" — видно достаточно для примерной оценки, но есть сомнения. "high" — фото ясно показывает
-всё нужное для оценки.
-Поле "explanation" ОБЯЗАТЕЛЬНО пиши на ${langName} языке — клиент пишет боту именно на нём, смешение
-языков в одном сообщении недопустимо.
-Верни строго JSON: {"price": число, "explanation": "1 короткое предложение на ${langName} языке", "confidence": "high"|"medium"|"low"}.`;
+
+ТВОЯ ЗАДАЧА — рассуждать как опытный мастер салона, а не выдавать среднее число. По шагам:
+1) Что видно на фото (длина/густота/состояние волос, длина/форма/дизайн ногтей, объём работы, признаки повреждений, сложность).
+2) Каков предполагаемый объём работы и расход материалов — короткая, длинная, простая, сложная.
+3) Какой узкий ценовой диапазон это даёт внутри вилки [${opts.priceMin}, ${opts.priceMax}] сом.
+
+ПРАВИЛА ОТВЕТА (жёстко):
+- Итоговые price_low и price_high ОБЯЗАНЫ быть кратны ${step} сомам и лежать в [${stepMin}, ${stepMax}].
+- Ширина диапазона (price_high − price_low) ≤ ${step} сомам. Если очень уверен — верни price_low = price_high (одно значение).
+- price_low ≤ price_high; оба ≥ 0.
+- Короткие/тонкие/простые случаи → нижняя часть вилки, длинные/густые/сложные → верхняя.
+${opts.pricingRules ? `- Правила оценки от салона (СОБЛЮДАЙ): ${opts.pricingRules}` : ""}
+
+ЧЕСТНОСТЬ ПО УВЕРЕННОСТИ (confidence):
+- "low" — фото нечёткое, не с того ракурса, не показывает нужное или это вообще не то, о чём просит клиент. НЕ гадай — верни широкий диапазон (может доходить до всей вилки) и в explanation честно скажи, чего не хватает.
+- "medium" — видно достаточно, но есть сомнения. Диапазон обычно шириной ${step} сомам.
+- "high" — фото ясно показывает всё нужное. price_low обычно = price_high.
+
+Поле "explanation" ОБЯЗАТЕЛЬНО пиши на ${langName} языке — клиент пишет боту именно на нём, смешение языков недопустимо. 1 короткое предложение по существу (что видишь + от чего зависит цена).
+
+Верни СТРОГО JSON:
+{"price_low": число, "price_high": число, "explanation": "1 предложение на ${langName}", "confidence": "high"|"medium"|"low"}`;
+
+  // Same photo + same service + same price band + same salon rules → same seed → same
+  // model output. This is the CORE fix for the "4500–5000 vs 4000–4500 on repeat" bug.
+  const seed = stableSeed(
+    `${opts.serviceName}|${opts.priceMin}|${opts.priceMax}|${step}|${opts.pricingRules ?? ""}|${opts.language}|${opts.imageBase64.length}|${opts.imageBase64.slice(0, 4096)}|${opts.imageBase64.slice(-4096)}`,
+  );
+
   const res = await callGemini({
     model: MODEL_VISION,
     apiKey: opts.apiKey,
     systemInstruction: sys,
     parts: [
       { inline_data: { mime_type: opts.mime, data: opts.imageBase64 } },
-      { text: "Оцени стоимость по фото." },
+      { text: "Оцени стоимость по фото по правилам выше." },
     ],
     responseMimeType: "application/json",
     responseSchema: {
       type: "object",
       properties: {
-        price: { type: "number" },
+        price_low: { type: "number" },
+        price_high: { type: "number" },
         explanation: { type: "string" },
         confidence: { type: "string", enum: ["high", "medium", "low"] },
       },
-      required: ["price", "explanation", "confidence"],
+      required: ["price_low", "price_high", "explanation", "confidence"],
     },
-    temperature: 0.2,
+    // temperature: 0 + integer seed → maximally deterministic sampling. Any residual jitter
+    // is bucketed away by quantizePrice() below.
+    temperature: 0,
+    seed,
     maxOutputTokens: 1024,
     // Vision call returns a tiny JSON — don't waste budget on hidden "thinking",
     // it leaves nothing for the actual output and we get finishReason=MAX_TOKENS.
@@ -1902,10 +1965,28 @@ ${opts.pricingRules ? `Правила оценки от салона: ${opts.pri
   if (!res.ok || !res.text) return { error: res.error ?? "vision failed" };
   try {
     const j = JSON.parse(res.text);
-    const p = Math.max(opts.priceMin, Math.min(opts.priceMax, Number(j.price)));
+    let lo = quantizePrice(Number(j.price_low), step, opts.priceMin, opts.priceMax);
+    let hi = quantizePrice(Number(j.price_high), step, opts.priceMin, opts.priceMax);
+    if (hi < lo) [lo, hi] = [hi, lo];
+    // Cap width at 1 step — anything wider means the model hedged; keep the model's midpoint
+    // but tighten to a single bucket for consistency with the prompt contract.
+    if (hi - lo > step) {
+      const mid = quantizePrice((lo + hi) / 2, step, opts.priceMin, opts.priceMax);
+      lo = mid;
+      hi = Math.min(opts.priceMax, mid + step);
+    }
     const confidence: "high" | "medium" | "low" =
       j.confidence === "low" || j.confidence === "medium" ? j.confidence : "high";
-    return { price: Math.round(p), explanation: String(j.explanation ?? ""), confidence };
+    // Legacy `price` = midpoint of the range, quantized to the bucket. Existing call sites
+    // that only look at a single number still work, they just get a stable rounded value.
+    const price = quantizePrice((lo + hi) / 2, step, opts.priceMin, opts.priceMax);
+    return {
+      price_low: lo,
+      price_high: hi,
+      price,
+      explanation: String(j.explanation ?? ""),
+      confidence,
+    };
   } catch (e: any) {
     return { error: e?.message ?? "parse failed" };
   }
@@ -2483,7 +2564,11 @@ export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
       } else {
         sd.priced_value = priced.price;
         state = "collecting"; // move past awaiting_photo so next turn goes to day selection
-        factual = `Скажи: по фото ориентировочная стоимость «${svcRow.name}» — около ${priced.price} сом (${priced.explanation}). Цена примерная, точную мастер уточнит на месте. Затем сразу спроси на какой день записать.`;
+        const range =
+          priced.price_low === priced.price_high
+            ? `${priced.price_low} сом`
+            : `${priced.price_low}–${priced.price_high} сом`;
+        factual = `Скажи: по фото ориентировочная стоимость «${svcRow.name}» — ${range} (${priced.explanation}). Цена примерная, точную мастер уточнит на месте. Затем сразу спроси на какой день записать.`;
         return finish();
       }
     } else if (state === "awaiting_photo") {
@@ -2942,7 +3027,11 @@ export async function callGeminiTools(opts: {
     contents: opts.contents,
     toolConfig: { functionCallingConfig: fcConfig },
     generationConfig: {
-      temperature: 0.4,
+      // 0.3 (down from 0.4) — tighter sampling for the V4 dialog. Still natural-sounding but
+      // materially reduces run-to-run drift on quantitative outputs the model authors as text
+      // (price_band strings, times, durations). Combined with the "price step" prompt rule in
+      // buildSystemPromptV4, two identical inputs converge on the same price bucket.
+      temperature: 0.3,
       maxOutputTokens: 2048,
       thinkingConfig: { thinkingBudget: 0 },
     },
@@ -4547,10 +4636,14 @@ export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> 
         });
       }
 
+      const range =
+        priced.price_low === priced.price_high
+          ? `${priced.price_low} сом`
+          : `${priced.price_low}–${priced.price_high} сом`;
       const msg =
         language === "ky"
-          ? `💰 *Болжолдуу баа: ${priced.price} сом*\n${priced.explanation}\n\nТак баасын мастер жерде тактайт.`
-          : `💰 *Ориентировочная стоимость: ${priced.price} сом*\n${priced.explanation}\n\nТочную сумму мастер уточнит на месте.`;
+          ? `💰 *Болжолдуу баа: ${range}*\n${priced.explanation}\n\nТак баасын мастер жерде тактайт.`
+          : `💰 *Ориентировочная стоимость: ${range}*\n${priced.explanation}\n\nТочную сумму мастер уточнит на месте.`;
       const dateQ = language === "ky" ? "\n\nКайсы күнгө жазыласыз?" : "\n\nНа какую дату?";
       return finish(
         msg + dateQ,

@@ -83,7 +83,7 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
     const branchRows = branchResult.data;
 
     // The simulator runs the same engine the live webhook would use for this salon.
-    const engine = (assistant as any)?.engine === "v4" ? "v4" : "v3";
+    const engine = (assistant as any)?.engine === "v3" ? "v3" : "v4";
     const runWaAgent =
       engine === "v4"
         ? (await import("@/lib/wa-agent-v4.server")).runWaAgentV4

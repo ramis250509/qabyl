@@ -21,6 +21,7 @@ import { Route as BookSlugRouteImport } from './routes/book.$slug'
 import { Route as AdminStatsRouteImport } from './routes/admin/stats'
 import { Route as AdminOpsRouteImport } from './routes/admin/ops'
 import { Route as AdminNotificationsRouteImport } from './routes/admin/notifications'
+import { Route as AdminErrorsRouteImport } from './routes/admin/errors'
 import { Route as AdminCalendarRouteImport } from './routes/admin/calendar'
 import { Route as AdminAccountRouteImport } from './routes/admin/account'
 import { Route as AdminSalonsIndexRouteImport } from './routes/admin/salons/index'
@@ -88,6 +89,11 @@ const AdminNotificationsRoute = AdminNotificationsRouteImport.update({
   path: '/notifications',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminErrorsRoute = AdminErrorsRouteImport.update({
+  id: '/errors',
+  path: '/errors',
+  getParentRoute: () => AdminRoute,
+} as any)
 const AdminCalendarRoute = AdminCalendarRouteImport.update({
   id: '/calendar',
   path: '/calendar',
@@ -128,6 +134,7 @@ export interface FileRoutesByFullPath {
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/admin/account': typeof AdminAccountRoute
   '/admin/calendar': typeof AdminCalendarRoute
+  '/admin/errors': typeof AdminErrorsRoute
   '/admin/notifications': typeof AdminNotificationsRoute
   '/admin/ops': typeof AdminOpsRoute
   '/admin/stats': typeof AdminStatsRoute
@@ -147,6 +154,7 @@ export interface FileRoutesByTo {
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/admin/account': typeof AdminAccountRoute
   '/admin/calendar': typeof AdminCalendarRoute
+  '/admin/errors': typeof AdminErrorsRoute
   '/admin/notifications': typeof AdminNotificationsRoute
   '/admin/ops': typeof AdminOpsRoute
   '/admin/stats': typeof AdminStatsRoute
@@ -168,6 +176,7 @@ export interface FileRoutesById {
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/admin/account': typeof AdminAccountRoute
   '/admin/calendar': typeof AdminCalendarRoute
+  '/admin/errors': typeof AdminErrorsRoute
   '/admin/notifications': typeof AdminNotificationsRoute
   '/admin/ops': typeof AdminOpsRoute
   '/admin/stats': typeof AdminStatsRoute
@@ -190,6 +199,7 @@ export interface FileRouteTypes {
     | '/sitemap.xml'
     | '/admin/account'
     | '/admin/calendar'
+    | '/admin/errors'
     | '/admin/notifications'
     | '/admin/ops'
     | '/admin/stats'
@@ -209,6 +219,7 @@ export interface FileRouteTypes {
     | '/sitemap.xml'
     | '/admin/account'
     | '/admin/calendar'
+    | '/admin/errors'
     | '/admin/notifications'
     | '/admin/ops'
     | '/admin/stats'
@@ -229,6 +240,7 @@ export interface FileRouteTypes {
     | '/sitemap.xml'
     | '/admin/account'
     | '/admin/calendar'
+    | '/admin/errors'
     | '/admin/notifications'
     | '/admin/ops'
     | '/admin/stats'
@@ -340,6 +352,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminNotificationsRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/errors': {
+      id: '/admin/errors'
+      path: '/errors'
+      fullPath: '/admin/errors'
+      preLoaderRoute: typeof AdminErrorsRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/calendar': {
       id: '/admin/calendar'
       path: '/calendar'
@@ -388,6 +407,7 @@ declare module '@tanstack/react-router' {
 interface AdminRouteChildren {
   AdminAccountRoute: typeof AdminAccountRoute
   AdminCalendarRoute: typeof AdminCalendarRoute
+  AdminErrorsRoute: typeof AdminErrorsRoute
   AdminNotificationsRoute: typeof AdminNotificationsRoute
   AdminOpsRoute: typeof AdminOpsRoute
   AdminStatsRoute: typeof AdminStatsRoute
@@ -399,6 +419,7 @@ interface AdminRouteChildren {
 const AdminRouteChildren: AdminRouteChildren = {
   AdminAccountRoute: AdminAccountRoute,
   AdminCalendarRoute: AdminCalendarRoute,
+  AdminErrorsRoute: AdminErrorsRoute,
   AdminNotificationsRoute: AdminNotificationsRoute,
   AdminOpsRoute: AdminOpsRoute,
   AdminStatsRoute: AdminStatsRoute,
