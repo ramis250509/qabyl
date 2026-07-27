@@ -47,7 +47,7 @@ export function BranchHoursEditor({ value, onChange }: { value: BranchHours | nu
       <div className="flex items-center justify-between gap-2">
         <Label>График работы филиала</Label>
         <Button type="button" size="sm" variant="outline" onClick={applyToAllDays}>
-          Выбрать все дни
+          Изменить все
         </Button>
       </div>
       <p className="text-xs text-muted-foreground">Если филиал закрыт — снимите галочку. Слоты записи учитывают эти часы.</p>

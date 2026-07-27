@@ -1366,7 +1366,7 @@ function MasterDialog({ master, salonId, branches, onClose, onSaved }: { master:
                   setSchedule(next);
                 }}
               >
-                Выбрать все дни
+                Изменить все
               </Button>
             </div>
             <div className="space-y-2 mt-2">
@@ -1527,20 +1527,86 @@ function ServicesTab({ salonId }: { salonId: string }) {
 
   async function deleteCategory(name: string) {
     const inCat = services.filter((s) => (s.category ?? "") === name);
-    if (inCat.length > 0) {
-      const ok = confirm(
-        `В категории "${name}" ${inCat.length} услуг(и). Удалить категорию ВМЕСТЕ со всеми услугами внутри? Восстановить не получится.`,
-      );
-      if (!ok) return;
-      const ids = inCat.map((s) => s.id);
-      // Detach master-services links first so the delete doesn't leave orphan rows.
-      await supabase.from("master_services").delete().in("service_id", ids);
-      const { error } = await supabase.from("services").delete().in("id", ids);
-      if (error) return toast.error(error.message);
+    if (inCat.length === 0) {
+      // Empty category: just drop it from category_order/extraCats.
+      setExtraCats(extraCats.filter((c) => c !== name));
+      await persistCategoryOrder(catOrder.filter((c) => c !== name));
+      load();
+      return;
     }
-    setExtraCats(extraCats.filter((c) => c !== name));
-    await persistCategoryOrder(catOrder.filter((c) => c !== name));
-    load();
+    // appointments.service_id is ON DELETE RESTRICT — hard-delete of a service with any
+    // booking (past or future) fails with FK error and breaks history/analytics. Split into
+    // two groups: services with bookings get soft-deleted (is_active=false + detached from
+    // category, so booking flow and admin lists hide them, but historical rows still resolve
+    // service_id → name). Truly unused services get hard-deleted with dependency cleanup.
+    const ids = inCat.map((s) => s.id);
+    const { data: usedRows, error: usedErr } = await supabase
+      .from("appointments")
+      .select("service_id")
+      .in("service_id", ids)
+      .limit(1000);
+    if (usedErr) return toast.error(usedErr.message);
+    const usedSet = new Set((usedRows ?? []).map((r: any) => r.service_id));
+    const softIds = ids.filter((id) => usedSet.has(id));
+    const hardIds = ids.filter((id) => !usedSet.has(id));
+    const softCount = softIds.length;
+    const hardCount = hardIds.length;
+    const parts: string[] = [];
+    parts.push(`В категории «${name}» ${inCat.length} услуг(и).`);
+    if (hardCount) parts.push(`${hardCount} без записей — будут удалены полностью.`);
+    if (softCount)
+      parts.push(
+        `${softCount} с историей записей — будут скрыты и деактивированы (записи в истории останутся корректно, но услуга исчезнет из каталога/бота/сайта).`,
+      );
+    parts.push("Продолжить?");
+    if (!confirm(parts.join("\n"))) return;
+
+    try {
+      // 1) Detach master_services links for BOTH groups (safe for soft too — they won't
+      // appear in booking selectors and can be re-linked if the owner reactivates later).
+      if (ids.length > 0) {
+        const { error } = await supabase.from("master_services").delete().in("service_id", ids);
+        if (error) throw new Error(`master_services: ${error.message}`);
+      }
+      // 2) Clean ai_service_overrides for BOTH groups (this table gates AI visibility per
+      // service — the service list Editor was already removed from the UI, but rows may
+      // still exist from earlier configuration).
+      if (ids.length > 0) {
+        const { error } = await supabase
+          .from("ai_service_overrides")
+          .delete()
+          .in("service_id", ids);
+        // Ignore "table does not exist" style errors — this table is optional.
+        if (error && !/does not exist/i.test(error.message)) {
+          console.warn(`ai_service_overrides cleanup: ${error.message}`);
+        }
+      }
+      // 3) Soft-delete services with historical bookings.
+      if (softIds.length > 0) {
+        const { error } = await supabase
+          .from("services")
+          .update({ is_active: false, category: null })
+          .in("id", softIds);
+        if (error) throw new Error(`soft-delete: ${error.message}`);
+      }
+      // 4) Hard-delete truly unused services.
+      if (hardIds.length > 0) {
+        const { error } = await supabase.from("services").delete().in("id", hardIds);
+        if (error) throw new Error(`hard-delete: ${error.message}`);
+      }
+      setExtraCats(extraCats.filter((c) => c !== name));
+      await persistCategoryOrder(catOrder.filter((c) => c !== name));
+      const msg =
+        softCount && hardCount
+          ? `Категория удалена: ${hardCount} услуг удалены, ${softCount} скрыты (в истории записей).`
+          : softCount
+            ? `Категория удалена. ${softCount} услуг скрыты, потому что у них есть записи в истории.`
+            : `Категория удалена вместе с ${hardCount} услугами.`;
+      toast.success(msg);
+      load();
+    } catch (e: any) {
+      toast.error(`Не удалось удалить: ${e?.message ?? e}`);
+    }
   }
 
   // Group services by category
@@ -1757,7 +1823,7 @@ function ServicesTab({ salonId }: { salonId: string }) {
                 const list = groups.get(cat) ?? [];
                 const open = openCats.has(cat);
                 return (
-                  <SortableCategory key={cat} cat={cat} count={list.length} open={open} onToggle={() => toggleCat(cat)}>
+                  <SortableCategory key={cat} cat={cat} count={list.length} open={open} onToggle={() => toggleCat(cat)} onDelete={() => deleteCategory(cat)}>
                     {open && (
                       <DroppableArea id={`drop:${cat}`}>
                         <SortableContext items={list.map((s) => `svc:${s.id}`)} strategy={verticalListSortingStrategy}>
@@ -1820,7 +1886,7 @@ function ServicesTab({ salonId }: { salonId: string }) {
   );
 }
 
-function SortableCategory({ cat, count, open, onToggle, children }: { cat: string; count: number; open: boolean; onToggle: () => void; children?: React.ReactNode }) {
+function SortableCategory({ cat, count, open, onToggle, onDelete, children }: { cat: string; count: number; open: boolean; onToggle: () => void; onDelete?: () => void; children?: React.ReactNode }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: `cat:${cat}` });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 };
   return (
@@ -1835,6 +1901,16 @@ function SortableCategory({ cat, count, open, onToggle, children }: { cat: strin
           </span>
           <ChevronDown className={`h-4 w-4 transition ${open ? "rotate-180" : ""}`} />
         </button>
+        {onDelete && (
+          <button
+            onClick={onDelete}
+            className="p-1 text-muted-foreground hover:text-destructive"
+            aria-label={`Удалить категорию ${cat}`}
+            title="Удалить категорию"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        )}
       </div>
       {children}
     </div>
