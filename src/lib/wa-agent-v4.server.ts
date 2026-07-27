@@ -15,6 +15,7 @@ import {
   createGeminiCache,
   confidentLanguage,
   detectLanguage,
+  downloadImageAsBase64,
   fetchMergedSlots,
   formatDateInTz,
   formatTimeInTz,
@@ -22,6 +23,7 @@ import {
   loadMastersForService,
   nowInTz,
   buildDateMap,
+  priceFromPhoto,
   type DbMaster,
   type GeminiV2Content,
   type WaAgentInput,
@@ -365,7 +367,8 @@ export function buildSystemPromptV4(
     `- ВЫХОДНЫЕ И ГРАФИК (КАТЕГОРИЧЕСКИ): НИКОГДА не выдумывай выходные, нерабочие дни, праздники и часы работы. Утверждать «в этот день выходной / мы не работаем» можно ТОЛЬКО в двух случаях: (1) инструмент вернул reason=closed_that_day, либо (2) эта дата прямо указана в блоке «ВЫХОДНЫЕ ДНИ» или в фактах салона выше. Во всех остальных случаях — включая reason=hours_not_configured, отсутствие данных или пустой календарь — говорить о выходном ЗАПРЕЩЕНО. Нет данных → скажи, что не видишь свободного времени на эту дату, предложи другие дни или передай администратору. Не предполагай график «по логике» (например, что понедельник или воскресенье обычно выходной) — у тебя нет такой информации.`,
     `- ГАРАНТИЯ/СРОКИ: точную гарантию салона называй ТОЛЬКО если она есть в фактах о салоне выше. Не придумывай срок гарантии. И следи за логикой: гарантия не может быть длиннее, чем держится результат (напр. если кератин держится 3–5 месяцев, гарантия в «10 месяцев» — бессмыслица). Если салон не задал гарантию — честно скажи, что условия уточнит ${sn.nomSg}, не выдумывай цифру.`,
     `- ЗДОРОВЬЕ И БЕЗОПАСНОСТЬ (АВТО-ЭСКАЛАЦИЯ, критично): если клиент сам сообщает о беременности, аллергии на препараты/материалы, хроническом заболевании, приёме лекарств, свежих травмах/операциях, кожных заболеваниях в зоне процедуры, онкологии, сердечно-сосудистых проблемах или другом потенциально опасном факторе — НЕ решай сам, безопасна ли услуга, и НЕ дожидайся, пока клиент спросит. Сразу вызови escalate_to_human (в reason кратко перечисли, что назвал клиент), а клиенту тепло скажи: «Спасибо, что предупредили — по такому случаю ${sn.datSg} нужно оценить лично, передаю ваш запрос ${sn.datSg}, он свяжется с вами». Общую информацию из базы знаний дать можно, но окончательное «можно/нельзя» — только специалист.`,
-    `- ЦЕНОВЫЕ ДИАПАЗОНЫ ПО ФОТО (СТРОГО, для стабильности): любой price_band, который ты называешь клиенту или сохраняешь в remember_photo, ВСЕГДА кратен 500 сомам (или единице валюты салона, если она в других единицах — тогда единице). Пример правильно: «3000–3500 сом», «3500 сом». Пример неправильно: «3200–3450 сом», «4732 сом». Ширина диапазона не больше 500 (в идеале — одно значение). Это железное правило: клиент, приславший одно и то же фото дважды, ДОЛЖЕН услышать один и тот же диапазон.`,
+    `- ЦЕНА ПО ФОТО ДЛЯ УСЛУГ С ДИАПАЗОНОМ (СТРОГО, детерминизм): НИКОГДА не выдумывай price_band сам. Как только у тебя есть фото И услуга price_type=range — ОБЯЗАТЕЛЬНО вызови estimate_price_from_photo (service_id). Инструмент вернёт {price_low, price_high, explanation, confidence}: используй его цифры дословно как узкий диапазон, скажи причину из explanation, и только потом сохрани в remember_photo. Одинаковое фото + одна услуга → всегда один диапазон. Если confidence=low — честно скажи, что точную назовёт мастер, и попроси доп. фото/данные. ЗАПРЕЩЕНО называть price_band, не вызвав estimate_price_from_photo.`,
+    `- «НЕТ СВОБОДНОГО ВРЕМЕНИ» — только по факту инструмента (СТРОГО): фразы «свободных окон нет», «занято», «жок экен», «bош убакыт жок», «no free time», «all booked» РАЗРЕШЕНЫ только если В ЭТОМ ЖЕ ХОДЕ инструмент get_available_slots вернул reason=fully_booked / part_unavailable / closed_that_day / master_off_that_day / hours_not_configured. Если ты НЕ вызывал get_available_slots в этом ходе — не имеешь права утверждать, что времени нет. Вызови инструмент, посмотри реальный ответ, потом уже говори.`,
     `- Не обещай «100%» результат и не преувеличивай сроки.`,
     `- create_appointment — только после явного «да» («да», «записывайте», «ооба», «макул»).`,
     `- reason=slot_not_free при записи → время только что заняли у выбранного ${sn.genSg}. Если ответ содержит masters_free_at_requested_time — предложи записаться на ТО ЖЕ время к этим ${sn.genPl} (назови их), иначе предложи времена из nearest у выбранного ${sn.genSg}. Извинись коротко и запиши только после согласия клиента.`,
@@ -512,6 +515,22 @@ const V4_TOOL_DECLARATIONS = [
         },
       },
       required: ["reason"],
+    },
+  },
+  {
+    name: "estimate_price_from_photo",
+    description:
+      "Детерминистичная оценка стоимости услуги с price_type=range по фото клиента. Инструмент сам берёт ПОСЛЕДНЕЕ фото из этого хода, вызывает vision-модель с фиксированным seed и правилами салона, и возвращает УЗКИЙ диапазон {price_low, price_high, explanation, confidence}, кратный 500 сомам. Одинаковое фото + одна услуга → всегда один и тот же диапазон. Используй ТОЛЬКО этот инструмент для цен по фото — сам price_band не выдумывай. Если фото в этом ходу нет — инструмент вернёт error, тогда попроси прислать фото.",
+    parameters: {
+      type: "object",
+      properties: {
+        service_id: {
+          type: "string",
+          description:
+            "ID услуги из get_services. Обязательно услуга с price_type=range (для fixed цена уже известна).",
+        },
+      },
+      required: ["service_id"],
     },
   },
   {
@@ -1579,6 +1598,69 @@ export async function executeV4Tool(
       };
     }
 
+    case "estimate_price_from_photo": {
+      // Deterministic photo pricer for V4 — delegates to the SAME priceFromPhoto used by V3
+      // (temperature:0, seed derived from image bytes + service + salon rules, output quantized
+      // to a 500-som step). Fixes "same photo, different price" observed on repeat calls: with
+      // this tool the model NEVER authors a price band directly.
+      const serviceId = String(args.service_id ?? "");
+      if (!serviceId) return { error: "service_id обязателен" };
+      // Find the most recent image in THIS turn (input.lastMessages) — bytes disappear after.
+      const lastImage = [...input.lastMessages]
+        .reverse()
+        .find((m) => m.kind === "image" && m.media_signed_url);
+      if (!lastImage?.media_signed_url) {
+        return {
+          error:
+            "В этом ходу фото нет. Попроси клиента прислать фото ещё раз — оценка возможна только по свежему фото в текущем сообщении.",
+        };
+      }
+      // Load service to get the price bounds + confirm it's a range service.
+      const { data: svcRow, error: svcErr } = await db
+        .from("services")
+        .select("id, name, price, price_max, price_type")
+        .eq("id", serviceId)
+        .maybeSingle();
+      if (svcErr || !svcRow) return { error: `Услуга не найдена: ${svcErr?.message ?? "не найдена"}` };
+      if ((svcRow as any).price_type !== "range") {
+        return {
+          error: `Услуга «${(svcRow as any).name}» — с фиксированной ценой (${(svcRow as any).price} сом). Для fixed цен инструмент не нужен, называй цену прямо.`,
+        };
+      }
+      const priceMin = Number((svcRow as any).price);
+      const priceMax = Number((svcRow as any).price_max ?? (svcRow as any).price);
+      // Fetch the image bytes. downloadImageAsBase64 handles data: URLs (simulator) and
+      // HTTP URLs (Green-API signed links) uniformly, with a 12s timeout.
+      const dl = await downloadImageAsBase64(lastImage.media_signed_url);
+      if ("error" in dl) return { error: `Не удалось получить фото: ${dl.error}` };
+      const apiKey = process.env.GEMINI_API_KEY ?? "";
+      if (!apiKey) return { error: "GEMINI_API_KEY not configured on server" };
+      const priced = await priceFromPhoto({
+        apiKey,
+        imageBase64: dl.base64,
+        mime: dl.mime,
+        serviceName: (svcRow as any).name,
+        priceMin,
+        priceMax,
+        pricingRules: input.config.pricing_rules ?? null,
+        language: (input.stateData.language as any) ?? "ru",
+        priceStep: 500,
+      });
+      if ("error" in priced) return { error: `Vision failed: ${priced.error}` };
+      return {
+        service_name: (svcRow as any).name,
+        price_low: priced.price_low,
+        price_high: priced.price_high,
+        price_label:
+          priced.price_low === priced.price_high
+            ? `${priced.price_low} сом`
+            : `${priced.price_low}–${priced.price_high} сом`,
+        explanation: priced.explanation,
+        confidence: priced.confidence,
+        note: "Используй эти цифры дословно как узкий диапазон. НЕ округляй и НЕ выдумывай другую цену. Если confidence=low — честно скажи, что точную назовёт мастер.",
+      };
+    }
+
     default:
       return { error: `Unknown tool: ${name}` };
   }
@@ -1916,6 +1998,34 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
           // apology to the client — sometimes twice in a row for back-to-back messages.
           try {
             const result = await executeV4Tool(name, args ?? {}, input, db, flags);
+            // Log SUSPICIOUS results to error_logs so /admin/errors surfaces exactly why the
+            // model saw "нет слотов" — the root cause is almost always a data-side issue
+            // (no masters linked to service, no schedule for that weekday, wrong branch) that
+            // used to be invisible. Only warn-log the paths that trigger unhappy replies.
+            if (result && typeof result === "object") {
+              const r = result as any;
+              const isBadSlots =
+                name === "get_available_slots" &&
+                r.reason &&
+                r.reason !== "ok" &&
+                r.reason !== "part_unavailable";
+              if (r.error || isBadSlots) {
+                try {
+                  const { logError } = await import("./error-log.server");
+                  await logError({
+                    source: "wa-agent-v4",
+                    level: "warn",
+                    message: r.error
+                      ? `tool ${name} returned error`
+                      : `tool ${name} returned reason=${r.reason} (no slots surfaced)`,
+                    salonId: input.salon.salonId,
+                    context: { tool: name, args, response_summary: r },
+                  });
+                } catch {
+                  // Never let the sink break the tool loop.
+                }
+              }
+            }
             return { functionResponse: { name, response: result } };
           } catch (e1: any) {
             debug.errors.push(`tool_${name}_1: ${e1?.message ?? String(e1)}`);
@@ -1925,6 +2035,20 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
               return { functionResponse: { name, response: result } };
             } catch (e2: any) {
               debug.errors.push(`tool_${name}_2: ${e2?.message ?? String(e2)}`);
+              // Hard tool failure — surface the exception to /admin/errors, not just Worker logs.
+              try {
+                const { logError } = await import("./error-log.server");
+                await logError({
+                  source: "wa-agent-v4",
+                  level: "error",
+                  message: `tool ${name} threw twice: ${e2?.message ?? String(e2)}`,
+                  salonId: input.salon.salonId,
+                  error: e2,
+                  context: { tool: name, args },
+                });
+              } catch {
+                // Sink must never break the tool loop.
+              }
               return {
                 functionResponse: { name, response: { error: e2?.message ?? "failed" } },
               };
@@ -1987,8 +2111,10 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   // verbatim across turns without ever escalating, making the bot look broken. Detect that
   // exact class of reply (ru/ky/en) and force an immediate escalate_to_human — the client
   // sees "передаю администратору", the admin sees a flagged conversation, and the loop dies.
+  // Extended to cover the Kyrgyz "жокмЫн" variant (dialectal, model uses both forms) and
+  // the "жок экен" ("turns out there's none") pattern seen when the model INVENTS busyness.
   const APOLOGY_LOOP_RE =
-    /(не\s+получилось|не\s+удалось|не\s+смог).*?(расписан|данные|график|информац|распис)|(тактай\s+ал(ган)?\s+жокмун|маалыматты\s+ала\s+алган\s+жокмун|расписаниени\s+тактай)|couldn['’]?t\s+(fetch|get|find).*(schedule|data|info)/i;
+    /(не\s+получилось|не\s+удалось|не\s+смог).*?(расписан|данные|график|информац|распис)|(тактай\s+ал(ган)?\s+(жокмун|жокмын)|маалыматты\s+ала\s+алган\s+(жокмун|жокмын)|расписаниени\s+тактай|түшүнгөн\s+(жокмун|жокмын))|couldn['’]?t\s+(fetch|get|find).*(schedule|data|info)/i;
   if (APOLOGY_LOOP_RE.test(reply)) {
     debug.errors.push("apology_loop_detected_forcing_escalation");
     flags.needsHuman = true;
@@ -2021,6 +2147,51 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
       });
     } catch {
       // Never throw from the sink.
+    }
+  }
+
+  // FAKE-BUSY GUARD (Screenshot 2026-07-28): the model told the client "тomorrow has no free time"
+  // without ever calling get_available_slots this turn — i.e. it hallucinated the busyness. Detect
+  // that class of reply (ru/ky/en) and, if no slot-tool actually ran, force a second pass that MUST
+  // call get_available_slots before the model can talk about free time.
+  const FAKE_BUSY_RE =
+    /(нет\s+свободн(ого|ых)|нет\s+свободн[ыо]|свободн(ое|ых)\s+время?\s+нет|нет\s+мест|всё\s+занято|все\s+занято|занято\s+полностью|полностью\s+занят|места\s+заняты)|(бош\s+убак[иы]т\s+жок|орун\s+жок|орду\s+жок|жок\s+экен)|(no\s+free\s+(time|slots?)|fully\s+booked|no\s+slots\s+available|all\s+booked)/i;
+  const slotToolCalledThisTurn = debug.actions
+    .slice()
+    .reverse()
+    .some(
+      (a) =>
+        a.startsWith("tool:get_available_slots") ||
+        a.startsWith("tool:check_time"),
+    );
+  if (FAKE_BUSY_RE.test(reply) && !slotToolCalledThisTurn) {
+    debug.errors.push("fake_busy_without_tool_call_forcing_retry");
+    contents.push({
+      role: "user",
+      parts: [
+        {
+          text: "СИСТЕМА: ты только что заявил, что времени нет, НО не вызвал get_available_slots в этом ходу. Это ЛОЖНАЯ занятость. Прямо сейчас молча вызови get_available_slots на нужную дату для этой услуги. Если день полностью занят или нет данных — сканируй следующие 7 дней и предложи клиенту КОНКРЕТНОЕ найденное окно. Не заявляй «нет времени» без факта из инструмента.",
+        },
+      ],
+    });
+    const retry = await runToolLoop();
+    if (retry) reply = retry;
+    // Log to /admin/errors so this class of hallucination is visible even after auto-correction.
+    try {
+      const { logError } = await import("./error-log.server");
+      await logError({
+        source: "wa-agent-v4",
+        level: "warn",
+        message: "fake-busy hallucination — model claimed no slots without calling the tool",
+        salonId: input.salon.salonId,
+        context: {
+          language,
+          reply_first_line: reply.split("\n")[0].slice(0, 200),
+          tools_this_turn: debug.actions.filter((a) => a.startsWith("tool:")),
+        },
+      });
+    } catch {
+      // Sink never throws.
     }
   }
 

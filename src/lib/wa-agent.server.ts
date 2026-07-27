@@ -1868,7 +1868,11 @@ function quantizePrice(p: number, step: number, min: number, max: number): numbe
   return Math.max(min, Math.min(max, q));
 }
 
-async function priceFromPhoto(opts: {
+// Exported (see wa-agent-v4.server.ts) so V4 can call the SAME deterministic photo pricer.
+// Previously V4 let the main model author the price band inline, which meant the same photo
+// yielded different bands on repeat calls. V4's `estimate_price_from_photo` tool now delegates
+// to this function so the seed+quantize+temperature:0 pipeline is one source of truth.
+export async function priceFromPhoto(opts: {
   apiKey: string;
   imageBase64: string;
   mime: string;
@@ -1992,7 +1996,7 @@ ${opts.pricingRules ? `- Правила оценки от салона (СОБЛ
   }
 }
 
-async function downloadImageAsBase64(
+export async function downloadImageAsBase64(
   url: string,
 ): Promise<{ base64: string; mime: string } | { error: string }> {
   // Simulator passes a data URL directly — extract base64 without any network request.
