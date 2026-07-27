@@ -44,10 +44,12 @@ const LOCK_POLL_INTERVAL_MS = 400;
 // likely still typing the rest of their thought, so we wait COALESCE_WAIT_MS once and reload the
 // pending list — answering the COMPLETE burst with a single message instead of two.
 const COALESCE_WINDOW_MS = 1500;
-// Trimmed from 900 → 500 ms after prod perf audit: combined with the 350 ms initial debounce,
-// end-to-end wait for message coalescing dropped from 1600 ms to 850 ms per typical turn while
-// still catching the "half-typed then corrected" burst that motivated the coalescer.
-const COALESCE_WAIT_MS = 500;
+// Bumped 500 → 3500 ms (2026-07-27) at the owner's request. Real WA clients type in 3–5 short
+// bubbles ("здравствуйте" / "хочу записаться" / "на маникюр" / "на завтра") with 1–2 s pauses.
+// The old 500 ms window caught fast bursts but split slower ones into 2–3 agent runs, each
+// replying → felt impatient. ~4 s waits for the thought to finish, then one merged agent turn
+// produces one coherent reply. Trade-off: adds ~3 s to the first reply, kills double-replies.
+const COALESCE_WAIT_MS = 3500;
 
 export function resolveAssistantRuntimeConfig(salon: any, assistant: any, secrets: any) {
   const assistantEnabled =
@@ -408,34 +410,31 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
           ? normalizeChatIdToPhone(secrets.owner_notify_phone)
           : "";
         const isRestartCmd = textBody?.trim().toLowerCase() === "/restart";
-        // Log rejected /restart so a misconfigured owner_notify_phone is diagnosable (it silently
-        // no-op'd before). /restart only ever clears the SENDER's own conversation, so a tolerant
-        // owner match is safe.
-        if (isRestartCmd && !ownerPhoneMatches(phone, ownerNotifyPhone)) {
-          console.warn(
-            `[wa] /restart ignored: sender ${phone} does not match owner_notify_phone ${ownerNotifyPhone || "(unset)"}`,
-          );
-        }
-        if (isRestartCmd && ownerPhoneMatches(phone, ownerNotifyPhone)) {
+        // /restart is available to ANY sender for their OWN chat: it just wipes conversation
+        // state/history-slice for the current phone, which is safe (a client can only reset
+        // themselves). The owner-notify-phone check ONLY gates the extra "cancel my future
+        // test appointments" step so a real client doesn't accidentally cancel their booking.
+        const isOwnerTester = isRestartCmd && ownerPhoneMatches(phone, ownerNotifyPhone);
+        if (isRestartCmd) {
           const resetIso = new Date().toISOString();
-          // Also cancel every FUTURE confirmed appointment for this test phone in this salon.
-          // Without this, repeated owner tests pile real appointments on the calendar and the
-          // next test cycle immediately hits "16:00 уже занято" from a previous cycle's booking
-          // — every subsequent booking attempt fails. Only touches the owner-tester's phone in
-          // THIS salon, so it can't damage a real client's data.
-          const { data: cancelled, error: cancelErr } = await supabaseAdmin
-            .from("appointments")
-            .update({ status: "cancelled" } as any)
-            .eq("salon_id", salonId)
-            .eq("client_phone", phone)
-            .eq("status", "confirmed")
-            .gte("starts_at", resetIso)
-            .select("id");
-          const cancelledCount = cancelled?.length ?? 0;
-          if (cancelErr) {
-            errLog(`/restart: appointments cancel failed`, cancelErr.message);
-          } else {
-            log(`/restart: cancelled ${cancelledCount} future appointments for tester ${phone}`);
+          let cancelledCount = 0;
+          if (isOwnerTester) {
+            // Owner tester: also cancel every FUTURE confirmed appointment on this phone in
+            // this salon, so repeated test cycles don't pile bookings on the real calendar.
+            const { data: cancelled, error: cancelErr } = await supabaseAdmin
+              .from("appointments")
+              .update({ status: "cancelled" } as any)
+              .eq("salon_id", salonId)
+              .eq("client_phone", phone)
+              .eq("status", "confirmed")
+              .gte("starts_at", resetIso)
+              .select("id");
+            cancelledCount = cancelled?.length ?? 0;
+            if (cancelErr) {
+              errLog(`/restart: appointments cancel failed`, cancelErr.message);
+            } else {
+              log(`/restart: cancelled ${cancelledCount} future appointments for tester ${phone}`);
+            }
           }
           // Drop any queued-but-unprocessed inbound so the fresh session starts truly clean.
           await supabaseAdmin
@@ -458,11 +457,17 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             })
             .eq("id", convId);
           if (secrets.greenapi_instance && secrets.greenapi_token) {
-            const cancelNote = cancelledCount > 0 ? ` Отменено записей: ${cancelledCount}.` : "";
+            const cancelNote =
+              isOwnerTester && cancelledCount > 0
+                ? ` Отменено тестовых записей: ${cancelledCount}.`
+                : "";
+            const body = isOwnerTester
+              ? `🔄 Сценарий перезапущен.${cancelNote} Можно тестировать заново.`
+              : `🔄 Диалог сброшен. Начинаем сначала — напишите, чем могу помочь.`;
             await greenApiSendMessage(
               { instance: secrets.greenapi_instance, token: secrets.greenapi_token },
               chatId,
-              `🔄 Сценарий перезапущен.${cancelNote} Можно тестировать заново.`,
+              body,
             );
           }
           return ack();

@@ -1155,6 +1155,7 @@ function MasterDialog({ master, salonId, branches, onClose, onSaved }: { master:
   const [services, setServices] = useState<any[]>([]);
   const [linked, setLinked] = useState<Set<string>>(new Set());
   const [schedule, setSchedule] = useState<Record<number, { start: string; end: string } | null>>({});
+  const [svcSearch, setSvcSearch] = useState("");
 
   useEffect(() => {
     supabase.from("services").select("*").eq("salon_id", salonId).then(({ data }) => setServices(data ?? []));
@@ -1277,21 +1278,97 @@ function MasterDialog({ master, salonId, branches, onClose, onSaved }: { master:
 
           <div>
             <Label>Услуги мастера</Label>
-            <div className="space-y-1 mt-2 max-h-40 overflow-y-auto border rounded p-2">
-              {services.map((s) => (
-                <label key={s.id} className="flex items-center gap-2 text-sm">
-                  <Checkbox checked={linked.has(s.id)} onCheckedChange={(v) => {
-                    const n = new Set(linked); if (v) n.add(s.id); else n.delete(s.id); setLinked(n);
-                  }} />
-                  {s.name} <span className="text-muted-foreground">({s.duration_min} мин · {formatPrice(s)})</span>
-                </label>
-              ))}
-              {services.length === 0 && <p className="text-xs text-muted-foreground">Сначала добавьте услуги во вкладке "Услуги"</p>}
+            {services.length > 0 && (
+              <div className="flex items-center gap-2 mt-2">
+                <Input
+                  placeholder="Поиск услуг…"
+                  value={svcSearch}
+                  onChange={(e) => setSvcSearch(e.target.value)}
+                  className="h-8 flex-1"
+                />
+                {(() => {
+                  const q = svcSearch.trim().toLowerCase();
+                  const visible = q
+                    ? services.filter((s) => s.name.toLowerCase().includes(q))
+                    : services;
+                  const visibleIds = visible.map((s) => s.id);
+                  const allSelected =
+                    visibleIds.length > 0 && visibleIds.every((id) => linked.has(id));
+                  return (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        const n = new Set(linked);
+                        if (allSelected) for (const id of visibleIds) n.delete(id);
+                        else for (const id of visibleIds) n.add(id);
+                        setLinked(n);
+                      }}
+                    >
+                      {allSelected ? "Снять все" : "Выбрать все"}
+                    </Button>
+                  );
+                })()}
+              </div>
+            )}
+            <div className="space-y-1 mt-2 max-h-56 overflow-y-auto border rounded p-2">
+              {(() => {
+                const q = svcSearch.trim().toLowerCase();
+                const list = q ? services.filter((s) => s.name.toLowerCase().includes(q)) : services;
+                if (services.length === 0) {
+                  return (
+                    <p className="text-xs text-muted-foreground">
+                      Сначала добавьте услуги во вкладке "Услуги"
+                    </p>
+                  );
+                }
+                if (list.length === 0) {
+                  return (
+                    <p className="text-xs text-muted-foreground">Ничего не найдено по «{svcSearch}»</p>
+                  );
+                }
+                return list.map((s) => (
+                  <label key={s.id} className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={linked.has(s.id)}
+                      onCheckedChange={(v) => {
+                        const n = new Set(linked);
+                        if (v) n.add(s.id);
+                        else n.delete(s.id);
+                        setLinked(n);
+                      }}
+                    />
+                    {s.name}{" "}
+                    <span className="text-muted-foreground">
+                      ({s.duration_min} мин · {formatPrice(s)})
+                    </span>
+                  </label>
+                ));
+              })()}
             </div>
           </div>
 
           <div>
-            <Label>График работы</Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label>График работы</Label>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  // Take the FIRST configured day (if any) as the template; otherwise a sensible
+                  // default. Apply it to all 7 days so the owner doesn't click day-by-day.
+                  const template =
+                    Object.values(schedule).find((d) => d) ?? { start: "10:00", end: "20:00" };
+                  const next: any = {};
+                  for (let i = 0; i < 7; i++) next[i] = { ...template };
+                  setSchedule(next);
+                }}
+              >
+                Выбрать все дни
+              </Button>
+            </div>
             <div className="space-y-2 mt-2">
               {WEEKDAYS.map((wd, i) => {
                 const day = schedule[i];
@@ -1451,8 +1528,14 @@ function ServicesTab({ salonId }: { salonId: string }) {
   async function deleteCategory(name: string) {
     const inCat = services.filter((s) => (s.category ?? "") === name);
     if (inCat.length > 0) {
-      if (!confirm(`В категории "${name}" ${inCat.length} услуг. Удалить категорию? Услуги останутся, но станут без категории.`)) return;
-      const { error } = await supabase.from("services").update({ category: null }).in("id", inCat.map((s) => s.id));
+      const ok = confirm(
+        `В категории "${name}" ${inCat.length} услуг(и). Удалить категорию ВМЕСТЕ со всеми услугами внутри? Восстановить не получится.`,
+      );
+      if (!ok) return;
+      const ids = inCat.map((s) => s.id);
+      // Detach master-services links first so the delete doesn't leave orphan rows.
+      await supabase.from("master_services").delete().in("service_id", ids);
+      const { error } = await supabase.from("services").delete().in("id", ids);
       if (error) return toast.error(error.message);
     }
     setExtraCats(extraCats.filter((c) => c !== name));
@@ -1620,15 +1703,15 @@ function ServicesTab({ salonId }: { salonId: string }) {
 
       {/* Services with DnD */}
       <div className="space-y-3 border-t pt-4">
-        <div className="flex justify-between items-start gap-2 flex-wrap">
-          <h2 className="font-semibold">Услуги</h2>
-          <div className="flex gap-2">
+        <div className="flex justify-between items-center gap-2 flex-wrap">
+          <h2 className="font-semibold shrink-0">Услуги</h2>
+          <div className="flex gap-2 flex-wrap justify-end min-w-0">
             {industry && (
-              <Button size="sm" variant="outline" onClick={() => setAutofillConfirm(true)}>
-                <Sparkles className="h-4 w-4 mr-1" />Заполнить каталог автоматически
+              <Button size="sm" variant="outline" className="shrink-0" onClick={() => setAutofillConfirm(true)}>
+                Заполнить каталог автоматически
               </Button>
             )}
-            <Button size="sm" onClick={() => setEditing({ salon_id: salonId, name: "", category: "", duration_min: 60, buffer_after_min: 0, price: 0, price_max: null, price_type: "fixed", color: "#0ea5e9", is_active: true })}>
+            <Button size="sm" className="shrink-0" onClick={() => setEditing({ salon_id: salonId, name: "", category: "", duration_min: 60, buffer_after_min: 0, price: 0, price_max: null, price_type: "fixed", color: "#0ea5e9", is_active: true })}>
               <Plus className="h-4 w-4 mr-1" />Добавить
             </Button>
           </div>

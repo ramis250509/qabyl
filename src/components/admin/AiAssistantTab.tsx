@@ -26,7 +26,6 @@ import {
   type IndustryKey,
 } from "@/lib/industries";
 import { WaSimulator } from "./WaSimulator";
-import { AiServiceListEditor } from "./AiServiceListEditor";
 
 type Assistant = {
   salon_id: string;
@@ -727,10 +726,6 @@ export function AiAssistantTab({
           </Button>
         </div>
       </Card>
-
-      <div className={!premiumEnabled ? "opacity-60 pointer-events-none select-none" : ""}>
-        <AiServiceListEditor salonId={salonId} />
-      </div>
 
       <WaSimulator salonId={salonId} />
     </div>
