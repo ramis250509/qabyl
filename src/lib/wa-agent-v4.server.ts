@@ -442,7 +442,7 @@ const V4_TOOL_DECLARATIONS = [
   {
     name: "create_appointment",
     description:
-      "Создать запись. Вызывать ТОЛЬКО после явного «да» клиента на озвученные детали. Время передавай как date + time (НЕ ISO/таймстемп) — сервер сам подберёт точный слот. Если вернётся reason=slot_not_free — предложи клиенту времена из nearest, не подставляй другое время сам.",
+      "Создать запись. Вызывать ТОЛЬКО после явного «да» клиента на озвученную сводку. Время передавай как date + time (НЕ ISO/таймстемп) — сервер сам подберёт точный слот. В client_confirmation ОБЯЗАТЕЛЬНО процитируй ДОСЛОВНО последнее подтверждение клиента (одно-два слова: «да», «ооба», «макул», «yes», «подтверждаю» и т.п.) — сервер проверит, что это реально yes-слово, а не вопрос/изменение. Если вернётся reason=slot_not_free — предложи клиенту времена из nearest, не подставляй другое время сам.",
     parameters: {
       type: "object",
       properties: {
@@ -451,6 +451,11 @@ const V4_TOOL_DECLARATIONS = [
         date: { type: "string", description: "Дата YYYY-MM-DD из таблицы дат" },
         time: { type: "string", description: "Время начала в формате HH:MM, напр. 11:00" },
         client_name: { type: "string" },
+        client_confirmation: {
+          type: "string",
+          description:
+            "ДОСЛОВНАЯ цитата последнего сообщения клиента, которое ты считаешь подтверждением сводки записи (например: «да», «Да, всё верно», «ооба», «макул», «yes», «подтверждаю»). Обязателен. Сервер проверит, что цитата — реальное yes-слово. Пустая строка / вопрос / новая дата = запись не создаётся.",
+        },
         branch_id: { type: "string" },
         price_override: { type: "number", description: "Согласованная цена для range-услуг" },
         duration_min: {
@@ -464,7 +469,7 @@ const V4_TOOL_DECLARATIONS = [
             "Передай true ТОЛЬКО если сервер уже вернул reason=already_booked и клиент ЯВНО подтвердил, что хочет вторую запись на ту же услугу (например на другого человека). В обычной записи не передавай.",
         },
       },
-      required: ["service_id", "master_id", "date", "time", "client_name"],
+      required: ["service_id", "master_id", "date", "time", "client_name", "client_confirmation"],
     },
   },
   {
@@ -1231,6 +1236,32 @@ export async function executeV4Tool(
     }
 
     case "create_appointment": {
+      // Server-side confirmation gate: the model MUST cite the client's actual "yes" text.
+      // Prompt-only discipline isn't enough — an over-eager model has been observed booking
+      // right after a client's clarifying question ("а сколько это займёт?"). This gate rejects
+      // the tool call unless the quoted text matches a language-aware yes-pattern in ru/ky/kz/en.
+      const rawConf =
+        typeof args.client_confirmation === "string" ? args.client_confirmation.trim() : "";
+      // Strict yes-words. Deliberately narrow — a fuzzy match risks accepting a "yes-shaped"
+      // clarification like "да, а сколько?" as a booking green-light.
+      //  ru: да, ага, конечно, подтверждаю, всё верно, верно, согласен, записывайте
+      //  ky: ооба, макул, туура, жазып, жаз
+      //  kz: иә, ия, жарайды, жазыңыз, ойе
+      //  en: yes, yeah, yep, ok, okay, confirm, book it, go ahead, sounds good
+      // Additionally we require the quote to be SHORT (≤ 80 chars) — long paraphrases hide
+      // qualifiers like "а если …" that flip the meaning.
+      const YES_RE =
+        /^(да|ага|конечно|подтвержда(ю|ем)|(всё\s+|все\s+)?верно|согласен|согласна|записывай(те)?|давай(те)?|ооба|макул|туура|жазып(\s+койсоңуз)?|жаз(\s+бер(ейин)?)?|иә|ия|жарайды|жазыңыз|ойе|yes|yeah|yep|yup|ok(ay)?|confirm(ed)?|book(\s+it)?|go\s+ahead|sounds\s+good|approve[d]?)([\s\.\!\?,]*.{0,60})?$/i;
+      const isRealYes = rawConf.length > 0 && rawConf.length <= 80 && YES_RE.test(rawConf);
+      if (!isRealYes) {
+        return {
+          success: false,
+          reason: "need_explicit_confirmation",
+          note:
+            "Клиент ещё НЕ подтвердил запись явно. Не создавай запись. Покажи ПОЛНУЮ сводку записи в требуемом формате (услуга/мастер/дата/время/длительность/цена/имя) на языке клиента и ЖДИ явного «да / ооба / макул / yes / подтверждаю». В следующем вызове create_appointment в поле client_confirmation процитируй именно это подтверждающее сообщение клиента дословно. Не считай подтверждением вопросы, изменения деталей и молчание.",
+        };
+      }
+
       // Server-side gate: never let the model book without a real name it heard from the client.
       // The prompt already tells it to ask, but if it slipped, the confirmation would end up
       // showing "Имя: Неизвестно" — surface as a hard tool failure so the model asks the client
@@ -1354,7 +1385,40 @@ export async function executeV4Tool(
       }
       const { data: newId, error } = await db.rpc("create_appointment", rpcArgs);
       if (error) {
-        // Log every failed booking: the client-facing symptom (assistant claimed a booking that
+        // Postgres unique_violation on the appointments_active_dedup_uidx index (migration
+        // 20260728120000) — same client, same service, same master, same starts_at, already
+        // confirmed. Fetch the existing booking and surface as already_booked so the model
+        // doesn't try again or claim a fresh success.
+        const isDupUniqueViolation =
+          error.code === "23505" ||
+          /appointments_active_dedup_uidx|duplicate key/i.test(error.message ?? "");
+        if (isDupUniqueViolation) {
+          const { data: dup } = await db
+            .from("appointments")
+            .select("id, starts_at, masters(name)")
+            .eq("salon_id", input.salon.salonId)
+            .eq("client_phone", input.client.phone)
+            .eq("service_id", args.service_id)
+            .eq("master_id", args.master_id)
+            .eq("starts_at", resolved.slotStart)
+            .eq("status", "confirmed")
+            .maybeSingle();
+          if (dup) {
+            flags.appointmentId = (dup as any).id as string;
+            console.log(
+              `[wa-v4] create_appointment idempotent-hit phone=${input.client.phone} at=${resolved.slotStart} → existing id=${(dup as any).id}`,
+            );
+            // Report as success so the model confirms to the client — the booking IS there,
+            // it just wasn't created THIS call. This is exactly what "at-least-once → exactly-once"
+            // idempotency means: repeated intent, single side effect.
+            return {
+              success: true,
+              appointment_id: (dup as any).id,
+              note: "Запись уже существует (создалась ранее в этом же диалоге). Подтверди клиенту факт записи, не создавай ещё раз.",
+            };
+          }
+        }
+        // Log every other failure: the client-facing symptom (assistant claimed a booking that
         // doesn't exist) is invisible without this, since the failure is just a tool result.
         console.error(
           `[wa-v4] create_appointment FAILED phone=${input.client.phone} service=${args.service_id} master=${args.master_id} at=${resolved.slotStart}: ${error.message}`,

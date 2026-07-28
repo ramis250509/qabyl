@@ -164,6 +164,30 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         const greenIdMessage: string | undefined = payload?.idMessage;
         const nowIso = new Date().toISOString();
 
+        // ---- Excluded contact — earliest possible bail. See excluded_contacts (migration
+        // 20260728120000). Salon owners add personal/staff phones here so the AI never spends
+        // Gemini on them, never sends a reply, never touches conversation state. Also skips
+        // storing the message (we'd only be creating noise in an "AI-off" chat).
+        const { data: excluded } = await supabaseAdmin
+          .from("excluded_contacts" as any)
+          .select("id")
+          .eq("salon_id", salonId)
+          .eq("phone", phone)
+          .maybeSingle();
+        if (excluded) {
+          return ack();
+        }
+
+        // ---- Reconciliation trigger from pg_cron (see wa_run_reconciliation in migration
+        // 20260728120000). This is a SYNTHETIC webhook whose only job is to wake the standard
+        // agent path so it drains messages that arrived during the pause. Detect it here,
+        // record it in server logs for observability, and skip the "insert new inbound row"
+        // step below — pending messages already exist in wa_messages and will be drained.
+        const isReconcileTrigger =
+          webhookType === "incomingMessageReceived" &&
+          typeof greenIdMessage === "string" &&
+          greenIdMessage.startsWith("reconcile-");
+
         // Rate-limit constants (used per-conversation once existingConv is loaded below).
         const RATE_LIMIT_MAX = 30;
         const RATE_LIMIT_WINDOW_MS = 60_000;
@@ -587,28 +611,34 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
           }
         }
 
-        // ---- Insert inbound message (NOT yet processed)
-        const { data: insertedMsg } = await supabaseAdmin
-          .from("wa_messages")
-          .insert({
-            conversation_id: convId,
-            salon_id: salonId,
-            direction: "in",
-            kind: mediaPath ? "image" : "text",
-            text_body: textBody,
-            media_path: mediaPath,
-            green_api_message_id: greenIdMessage ?? null,
-            ...(selectedId || mt === "audioMessage"
-              ? {
-                  meta: {
-                    ...(selectedId ? { selected_id: selectedId } : {}),
-                    ...(mt === "audioMessage" ? { voice: true } : {}),
-                  },
-                }
-              : {}),
-          })
-          .select("id")
-          .single();
+        // ---- Insert inbound message (NOT yet processed). Skipped for reconciliation triggers —
+        // those are synthetic events fired by pg_cron to wake the agent path so pre-existing
+        // unprocessed messages get drained; no real client message arrived.
+        const insertedMsg = isReconcileTrigger
+          ? null
+          : (
+              await supabaseAdmin
+                .from("wa_messages")
+                .insert({
+                  conversation_id: convId,
+                  salon_id: salonId,
+                  direction: "in",
+                  kind: mediaPath ? "image" : "text",
+                  text_body: textBody,
+                  media_path: mediaPath,
+                  green_api_message_id: greenIdMessage ?? null,
+                  ...(selectedId || mt === "audioMessage"
+                    ? {
+                        meta: {
+                          ...(selectedId ? { selected_id: selectedId } : {}),
+                          ...(mt === "audioMessage" ? { voice: true } : {}),
+                        },
+                      }
+                    : {}),
+                })
+                .select("id")
+                .single()
+            ).data;
 
         // ---- Human admin is actively handling this conversation: skip the AI. The
         // inbound message above is already stored (processed_at IS NULL) so whenever the
