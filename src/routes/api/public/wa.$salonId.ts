@@ -613,7 +613,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         // ---- Human admin is actively handling this conversation: skip the AI. The
         // inbound message above is already stored (processed_at IS NULL) so whenever the
         // AI resumes it picks the message up normally (subject to the 12h staleness filter).
-        const AI_PAUSE_MS = 60 * 60 * 1000;
+        const AI_PAUSE_MS = 5 * 60 * 1000;
         const pausedAtMs = existingConv?.ai_paused_at
           ? new Date(existingConv.ai_paused_at as string).getTime()
           : 0;
