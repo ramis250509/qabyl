@@ -727,7 +727,134 @@ export function AiAssistantTab({
         </div>
       </Card>
 
+      <ExcludedContactsCard salonId={salonId} />
+
       <WaSimulator salonId={salonId} />
     </div>
+  );
+}
+
+// Per-salon list of phones the AI must ignore entirely (personal chats, staff, delivery guys).
+// Checked in the WA webhook (src/routes/api/public/wa.$salonId.ts) at the earliest possible point
+// so no Gemini / Green-API spend / conversation state is touched.
+type ExcludedContact = { id: string; phone: string; label: string | null; created_at?: string };
+
+function normalizePhone(input: string): string {
+  // digits only, no leading '+'. Matches normalizeChatIdToPhone in wa-agent.server.ts.
+  return input.replace(/\D+/g, "");
+}
+
+function ExcludedContactsCard({ salonId }: { salonId: string }) {
+  const [list, setList] = useState<ExcludedContact[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [phone, setPhone] = useState("");
+  const [label, setLabel] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    const { data, error } = await (supabase as any)
+      .from("excluded_contacts")
+      .select("id, phone, label, created_at")
+      .eq("salon_id", salonId)
+      .order("created_at", { ascending: false });
+    if (!error) setList(((data as ExcludedContact[]) ?? []));
+    setLoading(false);
+  }
+  useEffect(() => {
+    void load();
+  }, [salonId]);
+
+  async function add() {
+    const p = normalizePhone(phone);
+    if (p.length < 8) {
+      toast.error("Введите корректный номер (минимум 8 цифр)");
+      return;
+    }
+    setBusy(true);
+    const { error } = await (supabase as any).from("excluded_contacts").insert({
+      salon_id: salonId,
+      phone: p,
+      label: label.trim() || null,
+    });
+    setBusy(false);
+    if (error) {
+      if ((error.message || "").includes("duplicate")) toast.error("Этот номер уже в списке");
+      else toast.error("Не удалось добавить: " + error.message);
+      return;
+    }
+    setPhone("");
+    setLabel("");
+    toast.success("Контакт добавлен — ИИ его игнорирует");
+    void load();
+  }
+
+  async function remove(id: string) {
+    if (!confirm("Убрать контакт из списка исключений? ИИ снова начнёт отвечать на его сообщения.")) return;
+    const { error } = await (supabase as any).from("excluded_contacts").delete().eq("id", id);
+    if (error) return toast.error("Не удалось удалить: " + error.message);
+    toast.success("Контакт убран из списка");
+    void load();
+  }
+
+  return (
+    <Card className="p-4 sm:p-6 space-y-4">
+      <div>
+        <h2 className="font-semibold flex items-center gap-2">
+          <MessageCircle className="h-4 w-4" /> Контакты без Админа
+        </h2>
+        <p className="text-xs text-muted-foreground mt-1">
+          Для этих номеров ИИ-Администратор не отвечает совсем — сообщения не читаются,
+          Gemini не запускается, состояние диалога не сохраняется. Удобно для личных чатов,
+          сотрудников, курьеров и так далее. Исключение снимается только вручную.
+        </p>
+      </div>
+
+      <div className="flex flex-wrap gap-2 items-end">
+        <div className="flex-1 min-w-[180px]">
+          <Label className="text-xs">Номер (WhatsApp)</Label>
+          <Input
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder="996700123456"
+            className="mt-1"
+          />
+        </div>
+        <div className="flex-1 min-w-[180px]">
+          <Label className="text-xs">Кто это (для памяти)</Label>
+          <Input
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="Курьер, партнёр, личный чат…"
+            className="mt-1"
+          />
+        </div>
+        <Button onClick={add} disabled={busy || !phone.trim()}>
+          Добавить
+        </Button>
+      </div>
+
+      {loading ? (
+        <p className="text-sm text-muted-foreground">Загрузка…</p>
+      ) : list.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Пока нет исключённых контактов.</p>
+      ) : (
+        <div className="border rounded-lg divide-y">
+          {list.map((c) => (
+            <div key={c.id} className="flex items-center gap-3 p-3">
+              <div className="flex-1 min-w-0">
+                <div className="font-mono text-sm">+{c.phone}</div>
+                {c.label ? (
+                  <div className="text-xs text-muted-foreground truncate">{c.label}</div>
+                ) : null}
+              </div>
+              <Button size="sm" variant="outline" onClick={() => remove(c.id)}>
+                Убрать
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
   );
 }
