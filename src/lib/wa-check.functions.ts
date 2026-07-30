@@ -18,6 +18,28 @@ const cache = new Map<string, { status: WaCheckStatus; exp: number }>();
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const CACHE_MAX = 1000;
 
+// Abuse guard: this endpoint is public (no auth — the booking widget is anonymous), and
+// every non-cached call spends one Green-API `checkWhatsapp` request against the salon's
+// paid quota. Cap DISTINCT phones per salon in a short window so a scripted attacker can't
+// drain the salon's Green-API budget by hammering the endpoint with random numbers.
+// `checkPhoneWhatsapp` for a real booking runs once per client per booking session, so 40
+// distinct phones per salon per 5 min is well above any legitimate use.
+const RL_MAX_PER_SALON = 40;
+const RL_WINDOW_MS = 5 * 60 * 1000;
+const rlSeen = new Map<string, { phones: Set<string>; resetAt: number }>();
+function rlAllow(salonId: string, digits: string): boolean {
+  const now = Date.now();
+  let e = rlSeen.get(salonId);
+  if (!e || e.resetAt <= now) {
+    e = { phones: new Set(), resetAt: now + RL_WINDOW_MS };
+    rlSeen.set(salonId, e);
+  }
+  if (e.phones.has(digits)) return true; // repeat check of same phone — allowed, hits cache anyway
+  if (e.phones.size >= RL_MAX_PER_SALON) return false;
+  e.phones.add(digits);
+  return true;
+}
+
 export const checkPhoneWhatsapp = createServerFn({ method: "POST" })
   .inputValidator((input) =>
     z.object({ salonId: z.string().uuid(), phone: z.string().max(32) }).parse(input),
@@ -29,6 +51,11 @@ export const checkPhoneWhatsapp = createServerFn({ method: "POST" })
     const key = `${data.salonId}:${digits}`;
     const hit = cache.get(key);
     if (hit && hit.exp > Date.now()) return { status: hit.status };
+
+    // Rate-limit distinct phones per salon. On over-limit, fail-open (unavailable) so the
+    // booking flow doesn't hard-block real clients — same policy as any other transient
+    // Green-API failure. The salon's paid quota is protected either way.
+    if (!rlAllow(data.salonId, digits)) return { status: "unavailable" };
 
     let secrets: { greenapi_instance: string | null; greenapi_token: string | null } | null = null;
     try {

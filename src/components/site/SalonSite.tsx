@@ -146,7 +146,13 @@ export function SalonSite({ salon }: { salon: any }) {
       {jsonLd && (
         <script
           type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+          // Escape </ so a salon admin who puts "</script>" into their name/description/review
+          // text (all user-editable via the admin panel and interpolated into jsonLd below)
+          // cannot break out of the JSON-LD <script> block and execute arbitrary JS on their
+          // own site's public page. Same trick used by React's own script serializer.
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify(jsonLd).replace(/<\/(script)/gi, "<\\/$1"),
+          }}
         />
       )}
       <Template data={data} onBook={openBooking} />
