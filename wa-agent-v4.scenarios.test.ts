@@ -268,6 +268,7 @@ test("create_appointment после «да»: запись создаётся, n
         master_id: "m1",
         slot_start: FREE_SLOT,
         client_name: "Рамис",
+        client_confirmation: "Да, записывайте",
       }),
     ],
     [{ text: "Готово! Записала вас на маникюр. Ждём вас!" }],
@@ -289,6 +290,7 @@ test("без имени: create_appointment с плейсхолдером «Не
         master_id: "m1",
         slot_start: FREE_SLOT,
         client_name: "Неизвестно",
+        client_confirmation: "Да",
       }),
     ],
     [{ text: "Извините, забыла спросить — как вас зовут?" }],
@@ -314,6 +316,7 @@ test("без имени: пустая строка → need_client_name (пле�
         master_id: "m1",
         slot_start: FREE_SLOT,
         client_name: "  ",
+        client_confirmation: "да",
       }),
     ],
     [{ text: "Как вас зовут?" }],
@@ -337,6 +340,7 @@ test("manage-link: после успешной записи в ответе ес
         master_id: "m1",
         slot_start: FREE_SLOT,
         client_name: "Анна",
+        client_confirmation: "Да, записывайте",
       }),
     ],
     [{ text: "Готово! Записала вас на маникюр к Айгуль. Ждём вас!" }],
@@ -373,6 +377,7 @@ test("без дублей: вторая запись на ту же услугу
         master_id: "m1",
         slot_start: FREE_SLOT,
         client_name: "Рамис",
+        client_confirmation: "Да, записывайте",
       }),
     ],
     [{ text: "У вас уже есть запись на маникюр. Оформить ещё одну или изменить эту?" }],
@@ -411,6 +416,7 @@ test("без дублей: confirm_duplicate=true разрешает втору�
         slot_start: FREE_SLOT,
         client_name: "Гостья",
         confirm_duplicate: true,
+        client_confirmation: "да",
       }),
     ],
     [{ text: "Готово, записала вторую запись!" }],
@@ -430,6 +436,7 @@ test("занятый слот: create_appointment на несуществующ�
         master_id: "m1",
         slot_start: "2099-01-01T09:00:00.000Z", // not the slot the RPC offers
         client_name: "Рамис",
+        client_confirmation: "Да",
       }),
     ],
     [{ text: "Ой, это время только что заняли. Есть 10:00 — подойдёт?" }],
@@ -481,6 +488,7 @@ test("занятый мастер, свободный другой: create_appoi
         date: "2099-01-01",
         time: "17:00",
         client_name: "Анна",
+        client_confirmation: "Да",
       }),
     ],
     [{ text: "На 17:00 к Айгуль занято, но свободна Айжан — записать к ней?" }],
@@ -982,7 +990,11 @@ test("зависание после «подождите»: агент дожи�
   expect(res.debug.errors).toContain("stall_detected_forcing_completion");
 });
 
-test("стойкое зависание: если модель зависла дважды — вежливый детерминированный ответ", async () => {
+test("стойкое зависание: если модель зависла дважды — эскалация к человеку", async () => {
+  // When the model has stalled on «подождите» twice in a row, the current behavior forces
+  // escalate_to_human — a live admin picks up rather than a dead-end apology reply.
+  // Older behavior (deterministic fallback text) was replaced 2026-07-27; this test now
+  // guards the safer escalation path.
   (globalThis as any).__WA_DB__ = makeDb();
   geminiQueue = [
     [{ text: "Секундочку, сейчас проверю расписание." }],
@@ -990,8 +1002,10 @@ test("стойкое зависание: если модель зависла д
   ];
   const res = await runWaAgentV4(makeInput("на завтра есть время?"));
   expect(res.reply).not.toMatch(/подожд|сейчас проверю|секундоч|минуточ/i);
-  expect(res.reply).toContain("не удалось получить данные");
-  expect(res.debug.errors).toContain("stall_persisted_using_fallback");
+  // Handed off to a human — reply mentions the admin + no fake booking / no fake data.
+  expect(res.reply.toLowerCase()).toMatch(/администратор|свяж|скор|passing|human/);
+  // The apology-loop escalation is fired.
+  expect(res.debug.errors).toContain("apology_loop_detected_forcing_escalation");
 });
 
 // ============================================================
