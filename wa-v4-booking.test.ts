@@ -53,6 +53,26 @@ function makeDb(date: string, freeTimes: string[]) {
     },
   } as any;
 }
+// Variant used by check_time tests: adds a minimal from() that returns "no other masters
+// free at this time" so the "other masters" probe (added when master_id is passed) resolves
+// as empty instead of throwing "db.from is not a function". Never mocks the day-verdict
+// queries — check_time doesn't hit them once slots.length > 0, which is the case in every
+// test that uses this variant.
+function makeDbWithMastersProbe(date: string, freeTimes: string[]) {
+  const base = makeDb(date, freeTimes);
+  const empty: any = {
+    select: () => empty,
+    eq: () => empty,
+    in: () => empty,
+    or: () => empty,
+    is: () => empty,
+    order: () => empty,
+    limit: () => Promise.resolve({ data: [] }),
+    maybeSingle: () => Promise.resolve({ data: null }),
+    then: (resolve: any) => resolve({ data: [] }),
+  };
+  return { ...base, from: () => empty } as any;
+}
 const input = {
   salon: { salonId: "s1", salonName: "Тест", timezone: TZ },
   selectedBranchId: null,
@@ -482,7 +502,7 @@ describe("check_time — outside_hours vs time_taken", () => {
   const flags = { appointmentId: null, selectedBranchId: null, needsHuman: false, escalateReason: null, photoNotes: [] };
   const cfgInput = { ...input, config: { manage_cutoff_hours: 0 } } as any;
   test("17:00 asked, only morning free (9:30–11:15) → outside_hours, not time_taken", async () => {
-    const db = makeDb(DATE, ["09:30", "10:00", "10:30", "11:00", "11:15"]);
+    const db = makeDbWithMastersProbe(DATE, ["09:30", "10:00", "10:30", "11:00", "11:15"]);
     const r = await executeV4Tool(
       "check_time",
       { service_id: "svc", date: DATE, master_id: "m1", time: "17:00" },
@@ -492,7 +512,7 @@ describe("check_time — outside_hours vs time_taken", () => {
     expect(r.reason).toBe("outside_hours");
   });
   test("11:00 asked and it is a gap between free slots (10:00 & 12:00) → time_taken", async () => {
-    const db = makeDb(DATE, ["10:00", "12:00"]);
+    const db = makeDbWithMastersProbe(DATE, ["10:00", "12:00"]);
     const r = await executeV4Tool(
       "check_time",
       { service_id: "svc", date: DATE, master_id: "m1", time: "11:00" },

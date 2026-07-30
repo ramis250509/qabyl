@@ -132,7 +132,7 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             .maybeSingle(),
         ]);
 
-        if (!secrets?.greenapi_webhook_token || secrets.greenapi_webhook_token !== token) {
+        if (!secrets?.greenapi_webhook_token || !safeStringEquals(secrets.greenapi_webhook_token, token)) {
           return new Response("Forbidden", { status: 403 });
         }
         if (!salon) return ack();
@@ -581,6 +581,13 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
               const r = await fetch(u);
               if (!r.ok) return false;
               const ab = await r.arrayBuffer();
+              // Hard cap: real client photos are well under 10MB. A 100MB+ upload can only be
+              // abuse (bandwidth burn, storage burn, downstream Gemini vision failure). Silently
+              // drop and let the agent ask for a smaller photo.
+              if (ab.byteLength > 20 * 1024 * 1024) {
+                errLog(`[wa] image too large (${ab.byteLength} bytes) — rejected`);
+                return false;
+              }
               const ext = (imageMime?.split("/")[1] || "jpg").replace(/[^a-z0-9]/gi, "") || "jpg";
               const path = `${salonId}/${convId}/${Date.now()}.${ext}`;
               const { error: upErr } = await supabaseAdmin.storage
@@ -1233,6 +1240,25 @@ async function stillHoldingLock(db: any, convId: string, lockId: string): Promis
   if (!data) return false;
   const untilMs = data.processing_lock_until ? new Date(data.processing_lock_until).getTime() : 0;
   return data.processing_lock_id === lockId && untilMs > Date.now();
+}
+
+// Constant-time string equality — used for the per-salon webhook token check so an attacker
+// can't extract the token via response-time analysis (Cloudflare Workers don't expose
+// timingSafeEqual). Iterates a fixed length (the longer of the two), folds the length
+// difference into the XOR accumulator, and avoids any early exit — so neither the position
+// of the first mismatched byte nor the input lengths leak through response timing.
+export function safeStringEquals(a: string, b: string): boolean {
+  if (typeof a !== "string" || typeof b !== "string") return false;
+  const aLen = a.length;
+  const bLen = b.length;
+  const n = Math.max(aLen, bLen);
+  let diff = aLen ^ bLen;
+  for (let i = 0; i < n; i++) {
+    const ca = i < aLen ? a.charCodeAt(i) : 0;
+    const cb = i < bLen ? b.charCodeAt(i) : 0;
+    diff |= ca ^ cb;
+  }
+  return diff === 0;
 }
 
 async function tryAcquireLockWithWait(db: any, convId: string, lockId: string): Promise<boolean> {
