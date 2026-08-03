@@ -1046,21 +1046,96 @@ function BranchDialog({ editing, onClose, onSaved }: { editing: any; onClose: ()
 
 function MastersTab({ salonId }: { salonId: string }) {
   const [deleting, setDeleting] = useState<any | null>(null);
-  async function confirmDelete() {
+  // Live count of the master's appointments (past + upcoming) fetched when the dialog opens.
+  // Drives the choice between "archive" (safe, keeps history) and "hard delete" (loses everything).
+  const [delMeta, setDelMeta] = useState<{ total: number; upcoming: number } | null>(null);
+  const [delBusy, setDelBusy] = useState(false);
+
+  useEffect(() => {
+    if (!deleting) { setDelMeta(null); return; }
+    (async () => {
+      const nowIso = new Date().toISOString();
+      const [{ count: total }, { count: upcoming }] = await Promise.all([
+        supabase
+          .from("appointments")
+          .select("id", { count: "exact", head: true })
+          .eq("master_id", deleting.id),
+        supabase
+          .from("appointments")
+          .select("id", { count: "exact", head: true })
+          .eq("master_id", deleting.id)
+          .eq("status", "confirmed")
+          .gte("starts_at", nowIso),
+      ]);
+      setDelMeta({ total: total ?? 0, upcoming: upcoming ?? 0 });
+    })();
+  }, [deleting]);
+
+  // Two clean paths, no more FK-RESTRICT silent failures:
+  //   archive:  is_active=false + unlink from master_services (won't surface in booking or the
+  //             AI agent). Everything else (appointments, schedules, overrides) stays put so
+  //             historical stats survive.
+  //   hard:     mirror the services delete flow — wipe every dependency in order and then the
+  //             master row itself. Irreversible; only offered when the admin sees the warning.
+  async function performDelete(mode: "archive" | "hard") {
     if (!deleting) return;
-    const { error } = await supabase.from("masters").delete().eq("id", deleting.id);
-    if (error) { toast.error(error.message); return; }
-    toast.success("Мастер удалён");
-    setDeleting(null);
-    load();
+    setDelBusy(true);
+    try {
+      if (mode === "archive") {
+        const { error: e1 } = await supabase
+          .from("masters")
+          .update({ is_active: false })
+          .eq("id", deleting.id);
+        if (e1) throw new Error(e1.message);
+        // Detach from services so the AI agent and booking widget stop offering this master.
+        // Schedules stay — they mean nothing without the master being active, and keeping them
+        // makes un-archiving trivial (just flip is_active back on).
+        await supabase.from("master_services").delete().eq("master_id", deleting.id);
+        toast.success(`«${deleting.name}» архивирован — история записей сохранена`);
+      } else {
+        // Hard delete: wipe deps first so appointments.master_id ON DELETE RESTRICT can't bite.
+        // Order matters only for readability — CASCADE would handle master_services /
+        // master_schedules / master_day_overrides / master_time_off automatically, but doing
+        // it explicitly makes the intent obvious in the audit trail (and works even if a
+        // future migration weakens a CASCADE).
+        const steps: Array<[string, () => Promise<{ error: any }>]> = [
+          ["appointments", () => supabase.from("appointments").delete().eq("master_id", deleting.id)],
+          ["master_services", () => supabase.from("master_services").delete().eq("master_id", deleting.id)],
+          ["master_schedules", () => supabase.from("master_schedules").delete().eq("master_id", deleting.id)],
+          ["master_day_overrides", () => supabase.from("master_day_overrides").delete().eq("master_id", deleting.id)],
+          ["master_time_off", () => supabase.from("master_time_off").delete().eq("master_id", deleting.id)],
+          ["masters", () => supabase.from("masters").delete().eq("id", deleting.id)],
+        ];
+        for (const [tbl, run] of steps) {
+          const { error } = await run();
+          if (error) throw new Error(`${tbl}: ${error.message}`);
+        }
+        toast.success(`«${deleting.name}» удалён вместе со всеми записями`);
+      }
+      setDeleting(null);
+      load();
+    } catch (e: any) {
+      toast.error(`Не удалось: ${e?.message ?? e}`);
+    } finally {
+      setDelBusy(false);
+    }
   }
+
   const [masters, setMasters] = useState<any[]>([]);
   const [branches, setBranches] = useState<any[]>([]);
   const [editing, setEditing] = useState<any | null>(null);
 
   async function load() {
+    // Only active masters — archived ones (is_active=false) should be invisible in the admin
+    // UI too, otherwise they'd re-appear here after "архивировать" with no meaningful action.
+    // If we ever add an "Archive" view, gate that behind a toggle instead of unfiltering here.
     const [{ data: m }, { data: b }] = await Promise.all([
-      supabase.from("masters").select("*").eq("salon_id", salonId).order("sort_order"),
+      supabase
+        .from("masters")
+        .select("*")
+        .eq("salon_id", salonId)
+        .eq("is_active", true)
+        .order("sort_order"),
       supabase.from("branches").select("id, name").eq("salon_id", salonId).order("sort_order"),
     ]);
     setMasters(m ?? []);
@@ -1136,15 +1211,54 @@ function MastersTab({ salonId }: { salonId: string }) {
       <AlertDialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Удалить мастера {deleting?.name}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Все записи мастера (включая будущие), расписания и привязки к услугам будут удалены безвозвратно. Клиенты не получат уведомления об отмене.
+            <AlertDialogTitle>Что сделать с мастером «{deleting?.name}»?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                {delMeta == null ? (
+                  <p>Считаем записи мастера…</p>
+                ) : delMeta.total === 0 ? (
+                  <p>У мастера нет записей — можно спокойно удалить.</p>
+                ) : (
+                  <>
+                    <p>
+                      У мастера <strong>{delMeta.total}</strong> запис
+                      {delMeta.total === 1 ? "ь" : delMeta.total < 5 ? "и" : "ей"}
+                      {delMeta.upcoming > 0
+                        ? `, из них ${delMeta.upcoming} — будущих (не отменены).`
+                        : " (все прошлые/завершённые)."}
+                    </p>
+                    <p>
+                      <strong>Архивировать</strong> — мастер станет невидим клиентам и
+                      ИИ-администратору, но история записей и календарь сохранятся. Безопасный
+                      вариант.
+                    </p>
+                    <p>
+                      <strong>Удалить полностью</strong> — уберём мастера, его услуги, расписание
+                      и <strong>{delMeta.total} запис{delMeta.total === 1 ? "ь" : "ей"}</strong>{" "}
+                      навсегда. Клиенты уведомления об отмене не получат.
+                    </p>
+                  </>
+                )}
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Отмена</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              Удалить мастера и записи
+          <AlertDialogFooter className="gap-2 sm:gap-2">
+            <AlertDialogCancel disabled={delBusy}>Отмена</AlertDialogCancel>
+            {delMeta && delMeta.total > 0 && (
+              <Button
+                variant="outline"
+                disabled={delBusy}
+                onClick={() => performDelete("archive")}
+              >
+                Архивировать
+              </Button>
+            )}
+            <AlertDialogAction
+              onClick={() => performDelete("hard")}
+              disabled={delBusy || delMeta == null}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {delMeta && delMeta.total > 0 ? "Удалить полностью" : "Удалить"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
