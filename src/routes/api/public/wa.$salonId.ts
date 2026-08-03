@@ -651,7 +651,12 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         // ---- Human admin is actively handling this conversation: skip the AI. The
         // inbound message above is already stored (processed_at IS NULL) so whenever the
         // AI resumes it picks the message up normally (subject to the 12h staleness filter).
-        const AI_PAUSE_MS = 5 * 60 * 1000;
+        // 2026-08-04: down from 5 min to 90 s after prod reports of the bot silently ignoring
+        // legitimate client questions minutes after a booking. Green-API sometimes flags a
+        // tap/focus/typing on the salon phone as `outgoingMessageReceived` and re-arms the
+        // pause every time the owner glances at the chat. 90 s is enough for a human to
+        // finish typing a real reply while the client barely notices any delay.
+        const AI_PAUSE_MS = 90 * 1000;
         const pausedAtMs = existingConv?.ai_paused_at
           ? new Date(existingConv.ai_paused_at as string).getTime()
           : 0;
