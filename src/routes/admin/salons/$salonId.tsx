@@ -1724,7 +1724,37 @@ function ServicesTab({ salonId }: { salonId: string }) {
 
   const renderServiceRow = (s: any, dragHandle = true) => (
     <ServiceRow key={s.id} s={s} onEdit={() => setEditing(s)} onDelete={async () => {
-      if (confirm(`Удалить ${s.name}?`)) { await supabase.from("services").delete().eq("id", s.id); load(); }
+      if (!confirm(`Удалить ${s.name}?`)) return;
+      try {
+        // Check if this service has any appointments (ON DELETE RESTRICT)
+        const { data: used } = await supabase
+          .from("appointments")
+          .select("service_id")
+          .eq("service_id", s.id)
+          .limit(1);
+
+        // Clean up dependencies first
+        await supabase.from("master_services").delete().eq("service_id", s.id);
+        await supabase.from("ai_service_overrides").delete().eq("service_id", s.id);
+
+        if (used && used.length > 0) {
+          // Soft-delete: has history — just hide it
+          const { error } = await supabase
+            .from("services")
+            .update({ is_active: false, category: null })
+            .eq("id", s.id);
+          if (error) throw new Error(error.message);
+          toast.success(`«${s.name}» скрыта (есть история записей)`);
+        } else {
+          // Hard-delete: no appointments
+          const { error } = await supabase.from("services").delete().eq("id", s.id);
+          if (error) throw new Error(error.message);
+          toast.success(`«${s.name}» удалена`);
+        }
+        load();
+      } catch (e: any) {
+        toast.error(`Не удалось удалить: ${e?.message ?? e}`);
+      }
     }} dragHandle={dragHandle} />
   );
 
