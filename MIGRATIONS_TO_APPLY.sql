@@ -1,0 +1,90 @@
+-- =============================================================================
+-- Миграции для ручного применения через Supabase SQL Editor
+-- Обновлено 2026-08-01 — добавлены RBAC + предоплата (этапы 1-3 нового плана)
+-- =============================================================================
+--
+-- ВНИМАНИЕ: этот файл — «пачка что применить сейчас», а не replay истории.
+-- Ниже перечислены ФАЙЛЫ миграций в правильном порядке. Открой каждый
+-- файл, скопируй его содержимое в SQL Editor и выполни, ЛИБО скачай папку
+-- supabase/migrations и запусти `supabase db push` через CLI.
+--
+-- ПОРЯДОК ПРИМЕНЕНИЯ (важно):
+--   1) 20260728120000_excluded_contacts_and_reconciliation.sql   (не был применён)
+--   2) 20260730120000_ops_agents_foundation.sql                   (не был применён)
+--   3) 20260801120000_rbac_manager_role_and_staff_isolation.sql   (НОВОЕ — RBAC)
+--   4) 20260801130000_prepayment_schema.sql                       (НОВОЕ — предоплата)
+--   5) 20260801140000_prepayment_receipts_storage.sql             (НОВОЕ — бакет чеков)
+--   6) 20260801150000_ai_assistant_rules.sql                      (НОВОЕ — ai_rules)
+--
+-- Все пять — идемпотентны (IF NOT EXISTS / OR REPLACE / DROP POLICY IF EXISTS
+-- везде). Повторный прогон не ломает данные.
+--
+-- ROLLBACK новых миграций (порядок обратный):
+--   -- Storage:
+--   DELETE FROM storage.buckets WHERE id = 'prepayment-receipts';
+--   DROP POLICY IF EXISTS "Salon admin reads own prepayment receipts" ON storage.objects;
+--   DROP POLICY IF EXISTS "Manager reads own prepayment receipts"      ON storage.objects;
+--
+--   -- Prepayment schema:
+--   DROP TABLE public.prepayment_audit, public.prepayment_receipt_hashes,
+--              public.appointment_prepayments, public.prepayment_settings CASCADE;
+--   DROP FUNCTION IF EXISTS public.create_appointment_with_prepayment CASCADE;
+--   DROP FUNCTION IF EXISTS public.get_prepayment_by_token CASCADE;
+--   DROP FUNCTION IF EXISTS public.prepayment_expire_holds CASCADE;
+--   DROP FUNCTION IF EXISTS public.confirm_prepayment CASCADE;
+--   SELECT cron.unschedule('prepayment_expire_holds');
+--   -- ENUM значения pending_payment / payment_expired остаются (Postgres не
+--   -- умеет удалять enum-значения без пересоздания типа); безопасно.
+--   ALTER TABLE public.appointments DROP COLUMN IF EXISTS hold_expires_at;
+--
+--   -- RBAC v2:
+--   DROP TABLE public.rbac_audit CASCADE;
+--   DROP FUNCTION IF EXISTS public.has_salon_ops_access(uuid, uuid) CASCADE;
+--   DROP FUNCTION IF EXISTS public.user_master_ids(uuid) CASCADE;
+--   DROP FUNCTION IF EXISTS public.user_manager_salon_id(uuid) CASCADE;
+--   DROP POLICY IF EXISTS "Manager reads salon appointments"    ON public.appointments;
+--   DROP POLICY IF EXISTS "Manager updates salon appointments"  ON public.appointments;
+--   DROP POLICY IF EXISTS "Master reads own appointments"       ON public.appointments;
+--   DROP POLICY IF EXISTS "Master updates own appointments"     ON public.appointments;
+--   ALTER TABLE public.salons DROP COLUMN IF EXISTS staff_isolation;
+--   ALTER TABLE public.masters DROP COLUMN IF EXISTS user_id;
+--   -- manager enum-значение остаётся (см. выше). Безопасно.
+--
+-- ПРОВЕРКА ПОСЛЕ ПРИМЕНЕНИЯ:
+--   SELECT to_regclass('public.excluded_contacts')          AS excluded_contacts_ok,
+--          to_regclass('public.ops_config')                 AS ops_config_ok,
+--          to_regclass('public.prepayment_settings')        AS prepayment_settings_ok,
+--          to_regclass('public.appointment_prepayments')    AS prepayment_appt_ok,
+--          to_regclass('public.prepayment_receipt_hashes')  AS receipt_hashes_ok,
+--          to_regclass('public.rbac_audit')                 AS rbac_audit_ok,
+--          to_regproc('public.create_appointment_with_prepayment(uuid,uuid,uuid,timestamptz,text,text,text,uuid)')
+--                                                           AS prepay_rpc_ok,
+--          to_regproc('public.prepayment_expire_holds()')   AS expire_fn_ok,
+--          EXISTS (SELECT 1 FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
+--                   WHERE t.typname = 'app_role' AND e.enumlabel = 'manager')
+--                                                           AS manager_role_ok,
+--          EXISTS (SELECT 1 FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
+--                   WHERE t.typname = 'appointment_status' AND e.enumlabel = 'pending_payment')
+--                                                           AS pending_payment_ok,
+--          EXISTS (SELECT 1 FROM information_schema.columns
+--                   WHERE table_name = 'salons' AND column_name = 'staff_isolation')
+--                                                           AS staff_isolation_col_ok,
+--          EXISTS (SELECT 1 FROM information_schema.columns
+--                   WHERE table_name = 'masters' AND column_name = 'user_id')
+--                                                           AS masters_user_id_ok,
+--          (SELECT count(*)::int FROM cron.job
+--            WHERE jobname IN ('wa_reconcile_paused_every_minute',
+--                              'ops_daily_digest', 'ops_sre_scan_15min',
+--                              'prepayment_expire_holds')) AS cron_jobs_scheduled;
+--
+-- РУЧНАЯ ПРОВЕРКА ПРЕДОПЛАТЫ ПОСЛЕ ПРИМЕНЕНИЯ:
+--   1) В админке салона включи предоплату: sum=200 KGS, hold=30 мин, реквизиты MBANK.
+--   2) Через публичную страницу /book/<slug> создай запись — статус должен стать
+--      pending_payment, слот заблокирован (второй клиент не сможет забронировать).
+--   3) Пришли реальный чек MBANK — должно сработать автоподтверждение (verified),
+--      статус записи → confirmed.
+--   4) Присланный чек повторно должен отклоняться (duplicate_file / duplicate_txn).
+--   5) Через 30 минут без оплаты — статус должен уйти в payment_expired,
+--      слот освобождается (cron джоба prepayment_expire_holds).
+--
+-- =============================================================================

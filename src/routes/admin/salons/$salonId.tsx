@@ -32,8 +32,11 @@ import { BranchHoursEditor, defaultBranchHours, type BranchHours } from "@/compo
 import { MasterDayOverrides } from "@/components/admin/MasterDayOverrides";
 import { SalonDayOverridesCard } from "@/components/admin/SalonDayOverridesCard";
 import { AiAssistantTab } from "@/components/admin/AiAssistantTab";
+import { ServiceExportDialog } from "@/components/admin/ServiceExportDialog";
 import { INDUSTRIES_META, INDUSTRY_ORDER, normalizeIndustry, type IndustryKey } from "@/lib/industries";
 import { SERVICE_CATALOG_TEMPLATES, colorForCategoryIndex } from "@/lib/service-catalog-templates";
+import { Share2 } from "lucide-react";
+import type { CatalogSalon } from "@/lib/catalog-share";
 // WaChatsTab tab hidden from UI by request; component kept for future use.
 
 // Business industry — the single source of truth chosen here in the "Салон" tab and read by the
@@ -1418,17 +1421,39 @@ function ServicesTab({ salonId }: { salonId: string }) {
   const [industry, setIndustry] = useState<IndustryKey | null>(null);
   const [autofillBusy, setAutofillBusy] = useState(false);
   const [autofillConfirm, setAutofillConfirm] = useState(false);
+  // Shareable-catalog dialog + salon-brand snapshot for it. Salon fields (slug, brand colours,
+  // logo, address, phone) are cheap to include in the same load() query — no extra round-trip.
+  const [shareOpen, setShareOpen] = useState(false);
+  const [salonForShare, setSalonForShare] = useState<CatalogSalon | null>(null);
 
   async function load() {
     const [{ data: svc }, { data: salon }, { data: assistant }] = await Promise.all([
       supabase.from("services").select("*").eq("salon_id", salonId).order("sort_order"),
-      supabase.from("salons").select("category_order, collapsed_categories").eq("id", salonId).maybeSingle(),
+      supabase
+        .from("salons")
+        .select(
+          "slug, name, custom_domain, address, phone, logo_url, brand_primary, brand_accent, category_order, collapsed_categories",
+        )
+        .eq("id", salonId)
+        .maybeSingle(),
       supabase.from("salon_ai_assistant").select("industry").eq("salon_id", salonId).maybeSingle(),
     ]);
     setServices(svc ?? []);
     setCatOrder((salon?.category_order as string[]) ?? []);
     setCollapsedCats(((salon as any)?.collapsed_categories as string[]) ?? []);
     setIndustry(normalizeIndustry((assistant as any)?.industry));
+    if (salon) {
+      setSalonForShare({
+        slug: (salon as any).slug,
+        name: (salon as any).name,
+        custom_domain: (salon as any).custom_domain ?? null,
+        address: (salon as any).address ?? null,
+        phone: (salon as any).phone ?? null,
+        logo_url: (salon as any).logo_url ?? null,
+        brand_primary: (salon as any).brand_primary ?? null,
+        brand_accent: (salon as any).brand_accent ?? null,
+      });
+    }
   }
 
   // One-click starter catalog for the salon's industry (see service-catalog-templates.ts).
@@ -1772,6 +1797,11 @@ function ServicesTab({ salonId }: { salonId: string }) {
         <div className="flex justify-between items-center gap-2 flex-wrap">
           <h2 className="font-semibold shrink-0">Услуги</h2>
           <div className="flex gap-2 flex-wrap justify-end min-w-0">
+            {salonForShare && services.length > 0 && (
+              <Button size="sm" variant="outline" className="shrink-0" onClick={() => setShareOpen(true)}>
+                <Share2 className="h-4 w-4 mr-1" />Поделиться прайсом
+              </Button>
+            )}
             {industry && (
               <Button size="sm" variant="outline" className="shrink-0" onClick={() => setAutofillConfirm(true)}>
                 Заполнить каталог автоматически
@@ -1782,6 +1812,23 @@ function ServicesTab({ salonId }: { salonId: string }) {
             </Button>
           </div>
         </div>
+
+        {salonForShare && (
+          <ServiceExportDialog
+            open={shareOpen}
+            onOpenChange={setShareOpen}
+            salon={salonForShare}
+            services={services.filter((s) => s.is_active).map((s) => ({
+              id: s.id,
+              name: s.name,
+              category: s.category ?? null,
+              duration_min: s.duration_min,
+              price: s.price ?? null,
+              price_max: s.price_max ?? null,
+              price_type: (s.price_type === "range" ? "range" : "fixed") as "fixed" | "range",
+            }))}
+          />
+        )}
         <p className="text-xs text-muted-foreground">Перетаскивайте услуги между категориями и категории между собой. Изменения сохраняются автоматически.</p>
 
         <AlertDialog open={autofillConfirm} onOpenChange={setAutofillConfirm}>

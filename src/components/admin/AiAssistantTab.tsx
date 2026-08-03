@@ -39,6 +39,7 @@ type Assistant = {
   reminder_lead_hours: number;
   engine: "v3" | "v4";
   knowledge_base: string | null;
+  ai_rules: string | null;
   client_addressing: string | null;
   industry: IndustryKey;
   knowledge_answers: Record<string, string>;
@@ -80,6 +81,7 @@ export function AiAssistantTab({
     reminder_lead_hours: 2,
     engine: "v4",
     knowledge_base: "",
+    ai_rules: "",
     client_addressing: "",
     industry: DEFAULT_INDUSTRY,
     knowledge_answers: {},
@@ -119,6 +121,7 @@ export function AiAssistantTab({
           reminder_lead_hours: (row as any).reminder_lead_hours ?? 2,
           engine: (row as any).engine === "v3" ? "v3" : "v4",
           knowledge_base: (row as any).knowledge_base ?? "",
+          ai_rules: (row as any).ai_rules ?? "",
           client_addressing: (row as any).client_addressing ?? "",
           industry: normalizeIndustry((row as any).industry),
           knowledge_answers: ((row as any).knowledge_answers as Record<string, string>) ?? {},
@@ -197,6 +200,7 @@ export function AiAssistantTab({
         reminder_lead_hours: data.reminder_lead_hours,
         engine: data.engine,
         knowledge_base: data.knowledge_base || null,
+        ai_rules: data.ai_rules || null,
         client_addressing: data.client_addressing || null,
         industry: data.industry,
         knowledge_answers: data.knowledge_answers ?? {},
@@ -601,7 +605,28 @@ export function AiAssistantTab({
                 )}
 
                 <div className="space-y-1.5">
-                  <Label className="text-sm">Дополнительно (прочие факты)</Label>
+                  <Label className="text-sm">Правила для Ассистента</Label>
+                  <Textarea
+                    rows={4}
+                    placeholder={
+                      "Например:\n" +
+                      "— Всегда сразу называй цену перед вопросом о дате.\n" +
+                      "— Никогда не предлагай другой день, если клиент назвал конкретный.\n" +
+                      "— Сначала спрашивай уровень мастера, потом день."
+                    }
+                    value={data.ai_rules ?? ""}
+                    onChange={(e) => setData({ ...data, ai_rules: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Жёсткие инструкции, как Ассистент должен себя вести. Их приоритет
+                    выше любых общих правил системы — то, что написано здесь,
+                    Ассистент обязан выполнять всегда. Пишите короткими
+                    повелительными фразами, по одной на строку.
+                  </p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-sm">Факты о бизнесе</Label>
                   <Textarea
                     rows={3}
                     placeholder="Например: парковка бесплатная во дворе, оплата картой и QR, работаем без выходных."
@@ -609,7 +634,9 @@ export function AiAssistantTab({
                     onChange={(e) => setData({ ...data, knowledge_base: e.target.value })}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Любые факты о бизнесе, не вошедшие в вопросы выше.
+                    Справочная информация о салоне, которую Ассистент использует
+                    в ответах: парковка, оплата, акции, гарантия, материалы и т.п.
+                    Это факты, а не правила поведения — их пишите выше.
                   </p>
                 </div>
               </div>

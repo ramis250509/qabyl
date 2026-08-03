@@ -73,8 +73,14 @@ export type WaAssistantConfig = {
   pricing_rules: string | null;
   languages: string[];
   // V4: free-text salon facts (parking, payment, promos…) injected into the agent's
-  // system prompt so it can answer arbitrary questions about the salon.
+  // system prompt so it can answer arbitrary questions about the salon. Reference
+  // material only — the model treats these as "context to quote", not as behaviour rules.
   knowledge_base?: string | null;
+  // V4: imperative behaviour rules the salon owner wants the assistant to follow
+  // ("always list prices before asking for a day", "never suggest another day
+  // if the client asked for tomorrow", etc.). Injected in the OVERRIDES block at
+  // the end of the system prompt and marked [ПРАВИЛО] — outranks generic rules.
+  ai_rules?: string | null;
   // V4: how clients typically address the admin (Айка, Эже, Админ…) — context only, so the
   // agent recognises such a message is directed at it and doesn't ask "к кому вы обращаетесь?".
   client_addressing?: string | null;

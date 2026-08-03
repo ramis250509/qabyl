@@ -17,6 +17,7 @@ import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminIndexRouteImport } from './routes/admin/index'
 import { Route as ManageTokenRouteImport } from './routes/manage.$token'
+import { Route as CatalogSlugRouteImport } from './routes/catalog.$slug'
 import { Route as BookSlugRouteImport } from './routes/book.$slug'
 import { Route as AdminStatsRouteImport } from './routes/admin/stats'
 import { Route as AdminOpsRouteImport } from './routes/admin/ops'
@@ -69,6 +70,11 @@ const AdminIndexRoute = AdminIndexRouteImport.update({
 const ManageTokenRoute = ManageTokenRouteImport.update({
   id: '/manage/$token',
   path: '/manage/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CatalogSlugRoute = CatalogSlugRouteImport.update({
+  id: '/catalog/$slug',
+  path: '/catalog/$slug',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BookSlugRoute = BookSlugRouteImport.update({
@@ -151,6 +157,7 @@ export interface FileRoutesByFullPath {
   '/admin/ops': typeof AdminOpsRoute
   '/admin/stats': typeof AdminStatsRoute
   '/book/$slug': typeof BookSlugRoute
+  '/catalog/$slug': typeof CatalogSlugRoute
   '/manage/$token': typeof ManageTokenRoute
   '/admin/': typeof AdminIndexRoute
   '/admin/salons/$salonId': typeof AdminSalonsSalonIdRoute
@@ -173,6 +180,7 @@ export interface FileRoutesByTo {
   '/admin/ops': typeof AdminOpsRoute
   '/admin/stats': typeof AdminStatsRoute
   '/book/$slug': typeof BookSlugRoute
+  '/catalog/$slug': typeof CatalogSlugRoute
   '/manage/$token': typeof ManageTokenRoute
   '/admin': typeof AdminIndexRoute
   '/admin/salons/$salonId': typeof AdminSalonsSalonIdRoute
@@ -197,6 +205,7 @@ export interface FileRoutesById {
   '/admin/ops': typeof AdminOpsRoute
   '/admin/stats': typeof AdminStatsRoute
   '/book/$slug': typeof BookSlugRoute
+  '/catalog/$slug': typeof CatalogSlugRoute
   '/manage/$token': typeof ManageTokenRoute
   '/admin/': typeof AdminIndexRoute
   '/admin/salons/$salonId': typeof AdminSalonsSalonIdRoute
@@ -222,6 +231,7 @@ export interface FileRouteTypes {
     | '/admin/ops'
     | '/admin/stats'
     | '/book/$slug'
+    | '/catalog/$slug'
     | '/manage/$token'
     | '/admin/'
     | '/admin/salons/$salonId'
@@ -244,6 +254,7 @@ export interface FileRouteTypes {
     | '/admin/ops'
     | '/admin/stats'
     | '/book/$slug'
+    | '/catalog/$slug'
     | '/manage/$token'
     | '/admin'
     | '/admin/salons/$salonId'
@@ -267,6 +278,7 @@ export interface FileRouteTypes {
     | '/admin/ops'
     | '/admin/stats'
     | '/book/$slug'
+    | '/catalog/$slug'
     | '/manage/$token'
     | '/admin/'
     | '/admin/salons/$salonId'
@@ -285,6 +297,7 @@ export interface RootRouteChildren {
   RobotsDottxtRoute: typeof RobotsDottxtRoute
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   BookSlugRoute: typeof BookSlugRoute
+  CatalogSlugRoute: typeof CatalogSlugRoute
   ManageTokenRoute: typeof ManageTokenRoute
   ApiInternalTelegramRoute: typeof ApiInternalTelegramRoute
   PreviewSalonSalonIdRoute: typeof PreviewSalonSalonIdRoute
@@ -348,6 +361,13 @@ declare module '@tanstack/react-router' {
       path: '/manage/$token'
       fullPath: '/manage/$token'
       preLoaderRoute: typeof ManageTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/catalog/$slug': {
+      id: '/catalog/$slug'
+      path: '/catalog/$slug'
+      fullPath: '/catalog/$slug'
+      preLoaderRoute: typeof CatalogSlugRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/book/$slug': {
@@ -478,6 +498,7 @@ const rootRouteChildren: RootRouteChildren = {
   RobotsDottxtRoute: RobotsDottxtRoute,
   SitemapDotxmlRoute: SitemapDotxmlRoute,
   BookSlugRoute: BookSlugRoute,
+  CatalogSlugRoute: CatalogSlugRoute,
   ManageTokenRoute: ManageTokenRoute,
   ApiInternalTelegramRoute: ApiInternalTelegramRoute,
   PreviewSalonSalonIdRoute: PreviewSalonSalonIdRoute,
