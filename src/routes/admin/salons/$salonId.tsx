@@ -1726,31 +1726,16 @@ function ServicesTab({ salonId }: { salonId: string }) {
     <ServiceRow key={s.id} s={s} onEdit={() => setEditing(s)} onDelete={async () => {
       if (!confirm(`Удалить ${s.name}?`)) return;
       try {
-        // Check if this service has any appointments (ON DELETE RESTRICT)
-        const { data: used } = await supabase
-          .from("appointments")
-          .select("service_id")
-          .eq("service_id", s.id)
-          .limit(1);
-
-        // Clean up dependencies first
-        await supabase.from("master_services").delete().eq("service_id", s.id);
-        await supabase.from("ai_service_overrides").delete().eq("service_id", s.id);
-
-        if (used && used.length > 0) {
-          // Soft-delete: has history — just hide it
-          const { error } = await supabase
-            .from("services")
-            .update({ is_active: false, category: null })
-            .eq("id", s.id);
-          if (error) throw new Error(error.message);
-          toast.success(`«${s.name}» скрыта (есть история записей)`);
-        } else {
-          // Hard-delete: no appointments
-          const { error } = await supabase.from("services").delete().eq("id", s.id);
-          if (error) throw new Error(error.message);
-          toast.success(`«${s.name}» удалена`);
-        }
+        // Delete all dependencies then the service itself (hard-delete always)
+        const { error: e1 } = await supabase.from("appointments").delete().eq("service_id", s.id);
+        if (e1) throw new Error(`appointments: ${e1.message}`);
+        const { error: e2 } = await supabase.from("master_services").delete().eq("service_id", s.id);
+        if (e2) throw new Error(`master_services: ${e2.message}`);
+        const { error: e3 } = await supabase.from("ai_service_overrides").delete().eq("service_id", s.id);
+        if (e3) throw new Error(`ai_service_overrides: ${e3.message}`);
+        const { error: e4 } = await supabase.from("services").delete().eq("id", s.id);
+        if (e4) throw new Error(e4.message);
+        toast.success(`«${s.name}» удалена`);
         load();
       } catch (e: any) {
         toast.error(`Не удалось удалить: ${e?.message ?? e}`);
