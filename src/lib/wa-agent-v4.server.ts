@@ -445,6 +445,20 @@ ${servicesRoster}
           : `Напоминание перед ответом: факты владельца из блока «ПРАВИЛА И ФАКТЫ ЭТОГО САЛОНА» — единственный источник фактов об этом конкретном бизнесе, всегда сверяйся с ними.`,
       ];
     })(),
+    // FINAL closed-list anchor. The roster is already rendered near the top (right after the
+    // masters roster), but recency is the strongest signal in autoregressive attention. Repeating
+    // it as the very last thing the model reads makes hallucinated service names substantially
+    // harder to generate. Kept short — just the list + a one-line command.
+    ...(servicesRoster
+      ? [
+          ``,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          `⚠️ ПОСЛЕДНЕЕ НАПОМИНАНИЕ ПЕРЕД ОТВЕТОМ — реальный прайс этого салона (единственно допустимый список услуг):`,
+          servicesRoster,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          `Если ты сейчас собираешься назвать клиенту какие-то услуги или цены — они ОБЯЗАНЫ быть строго из списка выше. Дословно. Названия «Классика», «1D», «2D», «3D», «объём», «Мокрый эффект», «Лучики», «Снятие ресниц» и любые другие, которых нет в списке выше — ЗАПРЕЩЕНЫ, даже как примеры. Если клиент спросил про то, чего в списке нет — так и скажи «У нас такого нет, вот что мы делаем: ...» с реальным списком. НЕ ПРИДУМЫВАЙ.`,
+        ]
+      : []),
   ];
   return lines.filter(Boolean).join("\n");
 }
@@ -2065,6 +2079,12 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     mastersRosterP,
     servicesRosterP,
   ]);
+  // Observability: prove in prod logs whether the closed-list block actually rendered this turn.
+  // If servicesRoster is empty here despite the salon having services in the admin, the fault is
+  // upstream (loadAiVisibleServicesForSalon), not in the prompt — that changes the debugging path.
+  debug.actions.push(
+    `services_roster:${servicesRoster ? `len=${servicesRoster.length}:lines=${servicesRoster.split("\n").length}` : "EMPTY"}`,
+  );
   const systemPrompt = buildSystemPromptV4(
     input,
     closedDates,
