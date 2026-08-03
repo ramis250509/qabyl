@@ -153,6 +153,7 @@ export function buildSystemPromptV4(
   closedDates: string[] = [],
   mastersRoster = "",
   language: "ru" | "ky" | "en" = "ru",
+  servicesRoster = "",
 ): string {
   const { salon, config, branches, salonInfo } = input;
   const { isoLocalDate, humanDate, hour, minute } = nowInTz(salon.timezone);
@@ -217,6 +218,20 @@ export function buildSystemPromptV4(
       : "",
     mastersRoster
       ? `${sn.nomPl.toUpperCase()} САЛОНА (ЕДИНСТВЕННО ВЕРНЫЙ список — называй ТОЛЬКО эти имена, НИКОГДА не выдумывай других ${sn.genPl}): ${mastersRoster}. Если клиент называет ${sn.accSg} НЕ из этого списка — скажи, что такого ${sn.genSg} нет, и назови реальных отсюда. Точный master_id для записи всё равно бери из get_masters (он отфильтрует по услуге и филиалу), но имена — только из этого списка.`
+      : "",
+    // CLOSED-LIST grounding: the actual, complete price list for THIS salon. Same idea as the
+    // masters roster right above — a text-based hard constraint the model reads before it starts
+    // generating. Root cause it fixes: even when get_services was correctly called, the model
+    // was appending its own trained-in "typical industry price list" (Классика/2D/3D/…) after
+    // the real one, because the salon's naming ("К ученицам", "К премиум мастеру") looks like
+    // tiers rather than procedures. Making the list explicitly CLOSED here shuts that down at
+    // grounding time — no rule anywhere else in the prompt can reopen it.
+    servicesRoster
+      ? `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ПОЛНЫЙ И ЕДИНСТВЕННЫЙ ПРАЙС ЭТОГО САЛОНА (ЗАКРЫТЫЙ СПИСОК):
+${servicesRoster}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Это ВСЁ, что делает этот салон. У салона НЕТ никаких других услуг, категорий, подвидов, тарифов или процедур. Даже если тебе кажется, что «обычно у ${sn.genPl} этой сферы бывают такие услуги» (Классика/2D/3D/объём/эффекты/пакеты/классические варианты и т.п.) — у ЭТОГО салона их НЕТ. Никогда не упоминай названий услуг вне этого списка, даже как «примеры» или «также у нас есть». Если структура имен выглядит как уровни исполнителя («К ученицам», «К мастеру», «К премиум мастеру») — значит владелец именно так организовал прайс: это и есть услуги, других категорий поверх выдумывать НЕЛЬЗЯ. Клиент спрашивает про услугу, которой в списке нет — так и скажи: «Мы делаем только эти услуги: [перечень]». Отвечая про цену/услугу — цитируй строки прайса выше ДОСЛОВНО (имя услуги, цена, длительность), ничего не сокращая и не переименовывая. Если инструмент get_services вернёт что-то отличающееся от этого списка — доверяй get_services (он свежее), но границы всё равно ЗАКРЫТЫЙ: только то, что вернул инструмент.`
       : "",
     // knowledgeBook / knowledge_base moved to the final "ПРАВИЛА ЭТОГО САЛОНА" block below.
     config.client_addressing?.trim()
@@ -2011,10 +2026,52 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
       })
       .join("; ");
   })();
-  // Both prompt-context queries are independent — run them concurrently to cut a round-trip
+  // Real active services + prices, injected into the prompt as the SINGLE SOURCE OF TRUTH so
+  // the model can't hallucinate a "typical industry price list" alongside the real one. Root
+  // cause fix: in prod we saw the model call get_services correctly, then still amend the reply
+  // with its own trained-in "Классика/2D/3D/Мокрый эффект/…" catalogue because the salon's
+  // structure looks unusual to it (services named after tiers like "К ученицам" / "К премиум
+  // мастеру"). Pre-injecting the closed list + telling the model the list IS closed shuts that
+  // down at grounding time, not by "asking nicer" in a rule.
+  const servicesRosterP = (async (): Promise<string> => {
+    try {
+      const services = await loadAiVisibleServicesForSalon(db, input.salon.salonId);
+      if (!services.length) return "";
+      return services
+        .map((s: any) => {
+          const isRange = s.price_type === "range";
+          const priceLabel = isRange
+            ? s.price_max && s.price_max > s.price
+              ? `${s.price}–${s.price_max} сом`
+              : `от ${s.price} сом`
+            : `${s.price} сом`;
+          const cat = (s.category ?? "").trim();
+          const catBit = cat ? ` [${cat}]` : "";
+          const durBit = s.duration_min ? ` · ${s.duration_min} мин` : "";
+          return `«${s.name.trim()}» — ${priceLabel}${durBit}${catBit}`;
+        })
+        .join("\n");
+    } catch (err) {
+      // Never let a preload hiccup block the turn — the agent still has get_services as its
+      // authoritative fallback. Log for observability; skip the closed-list block this turn.
+      console.warn(`[wa-v4] services roster preload failed: ${(err as any)?.message ?? err}`);
+      return "";
+    }
+  })();
+  // All three prompt-context queries are independent — run them concurrently to cut round-trips
   // off the latency before the first Gemini call.
-  const [closedDates, mastersRoster] = await Promise.all([closedDatesP, mastersRosterP]);
-  const systemPrompt = buildSystemPromptV4(input, closedDates, mastersRoster, language);
+  const [closedDates, mastersRoster, servicesRoster] = await Promise.all([
+    closedDatesP,
+    mastersRosterP,
+    servicesRosterP,
+  ]);
+  const systemPrompt = buildSystemPromptV4(
+    input,
+    closedDates,
+    mastersRoster,
+    language,
+    servicesRoster,
+  );
   const contents: GeminiV2Content[] = [...v4History, { role: "user", parts: clientParts }];
 
   // Gemini prompt caching: the systemInstruction + V4_TOOL_DECLARATIONS (~5k tokens combined)
