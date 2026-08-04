@@ -1098,3 +1098,60 @@ test("режим продаж выключен (по умолчанию): бло
   const prompt = buildSystemPromptV4(makeInput("сколько стоит?"));
   expect(prompt).not.toContain("РЕЖИМ АКТИВНЫХ ПРОДАЖ");
 });
+
+// ============================================================
+// INVENTED-SLOTS GUARD — prod 2026-08-04 (Lashes Nurzhan).
+// Verified against production data: branch 13:00–20:00 ∩ master 09:00–18:00 = 13:00–18:00,
+// one booking 13:00–16:00, service 180 min → RPC correctly returns ZERO free slots. The model
+// still told the client «есть свободные окошки: 13:00, 15:00 и 17:00» (numbers lifted from the
+// "Часы работы: 13:00–20:00" prompt line), the client picked 13:00 and got «уже занято».
+// The guard must catch that and force a corrected reply grounded in the tool output.
+// ============================================================
+
+test("выдуманные слоты: инструмент вернул 0 времён, а модель назвала времена → форс-ретрай", async () => {
+  (globalThis as any).__WA_DB__ = makeDb({ daySlots: [] }); // календарь: свободного нет
+  geminiQueue = [
+    [fc("get_available_slots", { service_id: "11111111-1111-4111-8111-111111111111", date: "2099-01-01" })],
+    // Модель выдумывает времена из справочных часов работы
+    [{ text: "На завтра есть свободные окошки: 13:00, 15:00 и 17:00. Какое удобно?" }],
+    // После наджа — честный ответ без выдуманных времён
+    [{ text: "К сожалению, на эту дату всё занято. Посмотреть другой день?" }],
+  ];
+  const res = await runWaAgentV4(makeInput("акция"));
+  expect(res.debug.errors).toContain("invented_slots_forcing_retry");
+  expect(res.reply).not.toContain("13:00");
+  expect(res.reply).not.toContain("15:00");
+  expect(res.reply).not.toContain("17:00");
+});
+
+test("НЕ ложное срабатывание: модель назвала время, которое инструмент реально вернул", async () => {
+  (globalThis as any).__WA_DB__ = makeDb(); // FREE_SLOT = 10:00 Bishkek
+  geminiQueue = [
+    [fc("get_available_slots", { service_id: "11111111-1111-4111-8111-111111111111", date: "2099-01-01" })],
+    [{ text: "Есть свободное окошко в 10:00 — записать вас?" }],
+  ];
+  const res = await runWaAgentV4(makeInput("какое время свободно?"));
+  expect(res.debug.errors).not.toContain("invented_slots_forcing_retry");
+  expect(res.reply).toContain("10:00");
+});
+
+test("НЕ ложное срабатывание: справочные часы работы — не предложение слота", async () => {
+  (globalThis as any).__WA_DB__ = makeDb({ daySlots: [] });
+  geminiQueue = [
+    [fc("get_available_slots", { service_id: "11111111-1111-4111-8111-111111111111", date: "2099-01-01" })],
+    [{ text: "Мы работаем каждый день с 13:00 до 20:00." }],
+  ];
+  const res = await runWaAgentV4(makeInput("во сколько работаете?"));
+  expect(res.debug.errors).not.toContain("invented_slots_forcing_retry");
+  expect(res.reply).toContain("13:00");
+});
+
+test("смешанный ответ: одно время из инструмента + справочные часы → не трогаем", async () => {
+  (globalThis as any).__WA_DB__ = makeDb(); // 10:00 свободно
+  geminiQueue = [
+    [fc("get_available_slots", { service_id: "11111111-1111-4111-8111-111111111111", date: "2099-01-01" })],
+    [{ text: "Свободно 10:00. Вообще работаем до 20:00, так что подберём удобное." }],
+  ];
+  const res = await runWaAgentV4(makeInput("когда можно?"));
+  expect(res.debug.errors).not.toContain("invented_slots_forcing_retry");
+});

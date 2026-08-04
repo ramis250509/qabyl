@@ -2302,6 +2302,13 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     });
   }
 
+  // GROUND TRUTH for the reply guard below: every clock time the CALENDAR actually reported as
+  // free this turn. Populated inside the tool loop from the real tool payloads, so the guard
+  // compares the model's prose against data instead of trusting it. Survives across the retry
+  // passes because those append to the same conversation.
+  const verifiedFreeTimes = new Set<string>();
+  let slotToolRanThisTurn = false;
+
   // One agentic pass: loop tool-calls until the model returns a plain-text reply. Mutates
   // `contents`, `debug` and `flags`. Returned separately so we can run a second pass if the
   // model stalls (see below).
@@ -2380,6 +2387,24 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
             // used to be invisible. Only warn-log the paths that trigger unhappy replies.
             if (result && typeof result === "object") {
               const r = result as any;
+              // Record what the calendar REALLY offered, for the invented-times guard after the
+              // loop. Only slot-bearing tools count; get_services/get_masters carry no times.
+              if (name === "get_available_slots" || name === "check_time") {
+                slotToolRanThisTurn = true;
+                for (const t of (r.free_times ?? []) as string[]) verifiedFreeTimes.add(t);
+                for (const t of (r.nearby_free_times ?? []) as string[]) verifiedFreeTimes.add(t);
+                // check_time's own hit: the asked time is confirmed free.
+                if (r.available && typeof r.requested === "string") verifiedFreeTimes.add(r.requested);
+              }
+              // A booking/reschedule that the server ACCEPTED legitimises that clock time in the
+              // confirmation message — resolveRequestedSlot already matched it to a real free slot.
+              if (
+                (name === "create_appointment" || name === "reschedule_appointment") &&
+                r.success
+              ) {
+                const booked = normHHMM(String(args?.time ?? ""));
+                if (booked) verifiedFreeTimes.add(booked);
+              }
               const isBadSlots =
                 name === "get_available_slots" &&
                 r.reason &&
@@ -2562,6 +2587,67 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
         salonId: input.salon.salonId,
         context: {
           language,
+          reply_first_line: reply.split("\n")[0].slice(0, 200),
+          tools_this_turn: debug.actions.filter((a) => a.startsWith("tool:")),
+        },
+      });
+    } catch {
+      // Sink never throws.
+    }
+  }
+
+  // INVENTED-SLOTS GUARD (prod 2026-08-04, Lashes Nurzhan). Mirror image of FAKE_BUSY above:
+  // that one catches a fabricated NEGATIVE ("времени нет" without calling the tool); this one
+  // catches a fabricated POSITIVE — the model announcing specific free times that the calendar
+  // never returned.
+  //
+  // The reported case, verified against production data: branch open 13:00–20:00 ∩ master
+  // 09:00–18:00 = 13:00–18:00, one booking 13:00–16:00, service 180 min → the RPC correctly
+  // returns ZERO free slots. get_available_slots answered reason=fully_booked with free_times:[],
+  // and the model still wrote «есть свободные окошки: 13:00, 15:00 и 17:00» — numbers lifted from
+  // the human-readable "Часы работы: 13:00–20:00" line in the prompt (17:00 + 180 min = 20:00,
+  // past the master's 18:00, which is how we know it was never computed). The client then picked
+  // 13:00 and got «уже занято» — the assistant contradicting itself in two consecutive messages.
+  //
+  // Trigger is deliberately narrow to avoid burning a retry on legitimate replies:
+  //   1. a slot tool actually ran this turn (so we have ground truth to compare against), AND
+  //   2. the reply reads as an OFFER of free time (not "во сколько работаете" → "с 13:00 до 20:00"), AND
+  //   3. the reply names at least one clock time, AND
+  //   4. NOT ONE of the named times is in the verified set.
+  // Requiring *zero* overlap keeps mixed sentences ("свободно 15:00, работаем до 20:00") clean
+  // while still catching wholesale fabrication.
+  const OFFER_RE =
+    /(свободн|есть\s+окош|окошк|могу\s+предложить|предлож|подойд[её]т|удобно\s+будет|запишу\s+вас\s+на)|(бош\s+убак|орун\s+бар|жаз(ып)?\s+кой)|(available|free\s+slots?|i\s+can\s+offer|would\s+\w+\s+work)/i;
+  const mentionedTimes = [...reply.matchAll(/\b([01]?\d|2[0-3]):([0-5]\d)\b/g)].map(
+    (m) => `${m[1].padStart(2, "0")}:${m[2]}`,
+  );
+  const noneVerified =
+    mentionedTimes.length > 0 && !mentionedTimes.some((t) => verifiedFreeTimes.has(t));
+  if (slotToolRanThisTurn && OFFER_RE.test(reply) && noneVerified) {
+    debug.errors.push("invented_slots_forcing_retry");
+    const truth = verifiedFreeTimes.size
+      ? `Календарь на этот ход вернул ТОЛЬКО эти свободные времена: ${[...verifiedFreeTimes].sort().join(", ")}.`
+      : `Календарь на этот ход НЕ вернул НИ ОДНОГО свободного времени.`;
+    contents.push({
+      role: "user",
+      parts: [
+        {
+          text: `СИСТЕМА: ты назвал клиенту время (${mentionedTimes.join(", ")}), которого НЕТ в ответе инструмента. ${truth} Называть время, которого нет в инструменте, КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО — клиент выберет его и получит «занято». Перепиши ответ: используй ТОЛЬКО времена из инструмента. Если свободных времён нет вообще — молча вызови get_available_slots на следующие дни и предложи КОНКРЕТНОЕ реально найденное окно с указанием даты; если и там пусто — вызови escalate_to_human. Не выдумывай времена из справочных часов работы салона.`,
+        },
+      ],
+    });
+    const retry = await runToolLoop();
+    if (retry) reply = retry;
+    try {
+      const { logError } = await import("./error-log.server");
+      await logError({
+        source: "wa-agent-v4",
+        level: "warn",
+        message: "invented slots — model offered times the calendar never returned",
+        salonId: input.salon.salonId,
+        context: {
+          mentioned_times: mentionedTimes,
+          verified_free_times: [...verifiedFreeTimes],
           reply_first_line: reply.split("\n")[0].slice(0, 200),
           tools_this_turn: debug.actions.filter((a) => a.startsWith("tool:")),
         },
