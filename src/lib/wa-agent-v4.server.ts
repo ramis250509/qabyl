@@ -717,6 +717,29 @@ export function isUuid(x: unknown): x is string {
   return typeof x === "string" && UUID_RE.test(x);
 }
 
+// A YYYY-MM-DD string — the shape our tools take from the model. No parse cost, no timezone
+// gymnastics: string compare against isoLocalDate is the same order as calendar order.
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+export function isIsoDate(x: unknown): x is string {
+  return typeof x === "string" && ISO_DATE_RE.test(x);
+}
+
+// Compare a YYYY-MM-DD from the model to today (in salon TZ). Returns "past" | "today" | "future"
+// so the tool boundary can tell three ACTUALLY different empty-slots situations apart:
+//   past    → the model made an off-by-one mistake AND WE MUST NOT tell the client "занято"
+//   today   → real day, but SQL rightly filtered every remaining slot as past — say "уже поздно на
+//             сегодня" NOT "занято"
+//   future  → the honest "fully_booked" case (all remaining working windows are booked out)
+// Historically all three collapsed into `fully_booked` inside emptyDayReason, so an evening "на
+// завтра, 5 августа" question that Gemini re-encoded as `date=today` produced the exact
+// prod-reported lie: "все окошки заняты" even though the calendar had wide open morning windows.
+export type DateVerdict = "past" | "today" | "future";
+export function classifyDateVsToday(argsDate: string, todayIso: string): DateVerdict {
+  if (argsDate < todayIso) return "past";
+  if (argsDate === todayIso) return "today";
+  return "future";
+}
+
 // AUTHORITATIVE "is this date a working day for this service?" — mirrors the schedule logic of
 // the get_available_slots SQL (per-date master_day_overrides off/workday, weekly master_schedules,
 // branch working_hours) so we can tell «выходной» apart from «всё занято». This is the FIX for
@@ -897,6 +920,19 @@ function emptyDayReason(verdict: DayVerdict): string {
       : "fully_booked";
 }
 
+// Reason for empty slots when we ALSO know the date-vs-today verdict. Distinguishes the three
+// cases the raw emptyDayReason collapsed into "fully_booked":
+//   past     → date_in_past       (model bug: don't tell the client "занято" for a past date)
+//   today    → no_more_time_today (day is fine, remaining working time just doesn't fit the service)
+//   future   → fall back to emptyDayReason (real closed/hours_not_configured/fully_booked)
+// Only invoked when the day is "workable" per classifyDayForService — the closed/unknown paths
+// still need their own reasons, which is why we route future dates through emptyDayReason.
+function emptyDayReasonWithDate(verdict: DayVerdict, dateVerdict: DateVerdict): string {
+  if (dateVerdict === "past") return "date_in_past";
+  if (dateVerdict === "today" && verdict === "workable") return "no_more_time_today";
+  return emptyDayReason(verdict);
+}
+
 // Same as emptyDayReason, but disambiguates "THIS master is off" from "the whole salon is closed".
 // Bug it fixes: a client picks Айгуль and asks about her day off. classifyDayForService scoped to
 // Айгуль returns "closed", which the model read as «салон не работает / выходной» — even though
@@ -923,7 +959,12 @@ async function emptyDayReasonScoped(commonArgs: {
   if (verdict === "closed" && commonArgs.masterId && salonWide === "workable") {
     return "master_off_that_day";
   }
-  return emptyDayReason(verdict);
+  // Route empty-workable-day through emptyDayReasonWithDate so `past` / `today` don't get
+  // mislabeled as `fully_booked`. `closed` / `unknown` verdicts are unaffected — they still
+  // mean what they mean regardless of when the date falls.
+  const { isoLocalDate } = nowInTz(commonArgs.input.salon.timezone);
+  const dateVerdict = classifyDateVsToday(commonArgs.date, isoLocalDate);
+  return emptyDayReasonWithDate(verdict, dateVerdict);
 }
 
 // Kept for tests / legacy: weekly-map based day-off guess. Superseded by classifyDayForService
@@ -1195,6 +1236,25 @@ export async function executeV4Tool(
           note: "master_id некорректный (не UUID из get_masters). Вызови get_masters и передай настоящий id, либо не указывай master_id.",
         };
       }
+      // Reject a past date UP FRONT — same class as the UUID guard above. Gemini has been
+      // observed passing today when it meant tomorrow (or yesterday when it meant today), and the
+      // SQL then correctly filters every already-past slot as unavailable → merged view returns
+      // 0 → emptyDayReasonScoped used to answer "fully_booked" → the model told the client
+      // "все занято" for a date that actually has plenty of open windows. Short-circuit here so
+      // the model gets a distinct signal to correct the date, and we don't burn RPC round-trips
+      // on data we already know is meaningless.
+      if (isIsoDate(args.date)) {
+        const { isoLocalDate } = nowInTz(tz);
+        if (classifyDateVsToday(args.date as string, isoLocalDate) === "past") {
+          return {
+            date: args.date,
+            reason: "date_in_past",
+            free_times: [],
+            slots: [],
+            note: `Эта дата уже прошла (сегодня ${isoLocalDate} в TZ салона). На прошедшие даты записывать нельзя. НЕ говори клиенту «занято». Уточни дату у клиента и предложи будущие дни из ТАБЛИЦЫ ДАТ.`,
+          };
+        }
+      }
       const part = args.part_of_day as "morning" | "afternoon" | "evening" | undefined;
       const commonArgs = {
         db,
@@ -1242,13 +1302,15 @@ export async function executeV4Tool(
             ? "В этот день салон не работает (выходной) — это подтверждено графиком. Предложи другой день, не говори «занято»."
             : reason === "master_off_that_day"
               ? "У ВЫБРАННОГО мастера в этот день выходной, НО салон работает и услугу в этот день делают другие мастера. НЕ говори «салон не работает / выходной». Предложи записаться в этот день к другому мастеру ИЛИ к выбранному мастеру в другой день."
-              : reason === "fully_booked"
-                ? "На эту дату всё занято. Предложи ближайший другой день."
-                : reason === "hours_not_configured"
-                  ? "НЕТ ДАННЫХ о работе в этот день (график не заполнен) — это НЕ выходной. КАТЕГОРИЧЕСКИ НЕЛЬЗЯ говорить клиенту, что это выходной или что салон не работает. Скажи, что на эту дату свободного времени не видишь, и предложи дни, где окошки есть; если клиенту важна именно эта дата — вызови escalate_to_human и передай администратору."
-                  : reason === "part_unavailable"
-                    ? `${partRu.charAt(0).toUpperCase() + partRu.slice(1)} на эту дату свободных окошек нет, но в этот же день есть другое время (см. free_times). Предложи их — НЕ говори «всё занято» и не перескакивай на другой день.`
-                    : "Это ПОЛНЫЙ список свободных времён начала на эту дату. Клиенту покажи 2–4 удобно расставленных варианта, а не все подряд.",
+              : reason === "no_more_time_today"
+                ? "СЕГОДНЯ салон работает, НО оставшегося времени на эту услугу уже не хватает (то, что было утром/днём — уже прошло, поздние окна не помещаются целиком до закрытия). НЕ говори «занято». Скажи, что на сегодня уже поздно, и предложи ближайший день — обычно завтра — из ТАБЛИЦЫ ДАТ."
+                : reason === "fully_booked"
+                  ? "На эту дату всё занято. Предложи ближайший другой день."
+                  : reason === "hours_not_configured"
+                    ? "НЕТ ДАННЫХ о работе в этот день (график не заполнен) — это НЕ выходной. КАТЕГОРИЧЕСКИ НЕЛЬЗЯ говорить клиенту, что это выходной или что салон не работает. Скажи, что на эту дату свободного времени не видишь, и предложи дни, где окошки есть; если клиенту важна именно эта дата — вызови escalate_to_human и передай администратору."
+                    : reason === "part_unavailable"
+                      ? `${partRu.charAt(0).toUpperCase() + partRu.slice(1)} на эту дату свободных окошек нет, но в этот же день есть другое время (см. free_times). Предложи их — НЕ говори «всё занято» и не перескакивай на другой день.`
+                      : "Это ПОЛНЫЙ список свободных времён начала на эту дату. Клиенту покажи 2–4 удобно расставленных варианта, а не все подряд.",
       };
     }
 
@@ -1277,6 +1339,20 @@ export async function executeV4Tool(
           reason: "unknown_master",
           note: "master_id некорректный (не UUID из get_masters). Вызови get_masters и передай настоящий id, либо не указывай master_id.",
         };
+      }
+      // Past-date guard mirrors get_available_slots: a "check_time" on yesterday must not lie
+      // to the client with "занято" — say the date is past and ask them to pick a real day.
+      if (isIsoDate(args.date)) {
+        const { isoLocalDate: _todayIso } = nowInTz(tz);
+        if (classifyDateVsToday(args.date as string, _todayIso) === "past") {
+          return {
+            date: args.date,
+            requested: hhmm,
+            available: false,
+            reason: "date_in_past",
+            note: `Эта дата уже прошла (сегодня ${_todayIso} в TZ салона). НЕ говори клиенту «занято». Уточни дату и проверь будущий день.`,
+          };
+        }
       }
       const slots = await loadFreeSlotsForDay({
         db,
@@ -1364,11 +1440,15 @@ export async function executeV4Tool(
           ? {
               note: "НЕТ ДАННЫХ о работе в этот день — это НЕ выходной. Не говори клиенту, что салон не работает; предложи дни со свободным временем или передай администратору (escalate_to_human).",
             }
-          : reason === "master_off_that_day"
+          : reason === "no_more_time_today"
             ? {
-                note: "У ВЫБРАННОГО мастера в этот день выходной, НО салон работает и услугу делают другие мастера. НЕ говори «салон не работает / выходной». Предложи другого мастера в этот день ИЛИ выбранного мастера в другой день.",
+                note: "СЕГОДНЯ салон работает, НО оставшегося времени на эту услугу уже не хватает. НЕ говори «занято». Предложи ближайший день из ТАБЛИЦЫ ДАТ.",
               }
-            : {}),
+            : reason === "master_off_that_day"
+              ? {
+                  note: "У ВЫБРАННОГО мастера в этот день выходной, НО салон работает и услугу делают другие мастера. НЕ говори «салон не работает / выходной». Предложи другого мастера в этот день ИЛИ выбранного мастера в другой день.",
+                }
+              : {}),
         ...(hit ? { slot_start: hit.start, master_ids: hit.master_ids } : {}),
         ...(otherMastersFree.length
           ? {

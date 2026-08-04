@@ -202,6 +202,89 @@ describe("get_available_slots — part-of-day empty but day is open", () => {
   });
 });
 
+// Regression for the 2026-08-04 "5 августа all booked" report. Root cause was that when Gemini
+// re-encodes "завтра" as today (or an already-past date), the SQL correctly filters every past
+// slot, the merged view returns 0, and emptyDayReason lumped that into "fully_booked" — so the
+// model told the client "все занято" for a date that in fact had wide-open morning windows.
+// These tests pin the new distinct reasons (date_in_past / no_more_time_today) so the model
+// can self-correct and never repeats the lie.
+describe("get_available_slots — past-date and today-with-no-time guards", () => {
+  const flags = { appointmentId: null, selectedBranchId: null, needsHuman: false, escalateReason: null };
+  const openInput = {
+    ...input,
+    config: { manage_cutoff_hours: 0 },
+    salonInfo: {
+      working_hours: {
+        mon: "09:00–20:00", tue: "09:00–20:00", wed: "09:00–20:00", thu: "09:00–20:00",
+        fri: "09:00–20:00", sat: "09:00–20:00", sun: "09:00–20:00",
+      },
+    },
+  } as any;
+
+  function pastDate(): string {
+    const today = new Intl.DateTimeFormat("en-CA", {
+      timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date());
+    const [y, m, d] = today.split("-").map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    dt.setUTCDate(dt.getUTCDate() - 3);
+    return dt.toISOString().slice(0, 10);
+  }
+  function todayIso(): string {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date());
+  }
+
+  test("past date → date_in_past (NEVER fully_booked)", async () => {
+    const db = makeDb(pastDate(), []);
+    const r = await executeV4Tool(
+      "get_available_slots",
+      { service_id: "11111111-1111-4111-8111-111111111111", date: pastDate(), master_id: "22222222-2222-4222-8222-222222222222" },
+      openInput, db, flags,
+    );
+    expect(r.reason).toBe("date_in_past");
+    // The critical assertion: the misleading "fully_booked" phrasing MUST NOT be the note.
+    // The note may contain the word "занято" only as part of the "НЕ говори клиенту «занято»"
+    // instruction — the diagnostic must be about the date being past, not the slot being taken.
+    expect(String(r.note ?? "")).toContain("уже прошла");
+    expect(String(r.note ?? "")).not.toContain("всё занято");
+  });
+
+  test("check_time on past date → date_in_past", async () => {
+    const db = makeDbWithMastersProbe(pastDate(), []);
+    const r = await executeV4Tool(
+      "check_time",
+      { service_id: "11111111-1111-4111-8111-111111111111", date: pastDate(), master_id: "22222222-2222-4222-8222-222222222222", time: "11:00" },
+      openInput, db, flags,
+    );
+    expect(r.reason).toBe("date_in_past");
+    expect(r.available).toBe(false);
+  });
+
+  test("today + zero slots + workable day → no_more_time_today (NEVER fully_booked)", async () => {
+    const db = makeDb(todayIso(), []);
+    const r = await executeV4Tool(
+      "get_available_slots",
+      { service_id: "11111111-1111-4111-8111-111111111111", date: todayIso(), master_id: "22222222-2222-4222-8222-222222222222" },
+      openInput, db, flags,
+    );
+    expect(r.reason).toBe("no_more_time_today");
+    expect(String(r.note ?? "")).not.toContain("всё занято");
+    expect(String(r.note ?? "")).toContain("сегодня");
+  });
+
+  test("future date + zero slots + workable → still fully_booked (unchanged for real busy days)", async () => {
+    const db = makeDb(futureDate(3), []);
+    const r = await executeV4Tool(
+      "get_available_slots",
+      { service_id: "11111111-1111-4111-8111-111111111111", date: futureDate(3), master_id: "22222222-2222-4222-8222-222222222222" },
+      openInput, db, flags,
+    );
+    expect(r.reason).toBe("fully_booked");
+  });
+});
+
 // Phase B: price stays inside the service's configured range.
 function makeServiceDb(row: any) {
   const chain: any = {
@@ -373,6 +456,10 @@ describe("get_available_slots — unconfigured schedule is not a day off", () =>
   const flags = { appointmentId: null, selectedBranchId: null, needsHuman: false, escalateReason: null, photoNotes: [] };
   const cfgInput = { ...input, config: { manage_cutoff_hours: 0 } } as any;
 
+  // Use a future date — the past-date guard added 2026-08-04 short-circuits before the schedule
+  // classifier ever runs, so a hardcoded past ISO would now hit `date_in_past` instead of the
+  // reason under test.
+  const FUTURE = futureDate(5);
   test("no slots + no schedule data → reason=hours_not_configured", async () => {
     const db = makeTableDb(
       { masters: [masterRow("22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111")], master_day_overrides: [], master_schedules: [] },
@@ -380,7 +467,7 @@ describe("get_available_slots — unconfigured schedule is not a day off", () =>
     );
     const r = await executeV4Tool(
       "get_available_slots",
-      { service_id: "11111111-1111-4111-8111-111111111111", date: "2026-07-17" },
+      { service_id: "11111111-1111-4111-8111-111111111111", date: FUTURE },
       cfgInput, db, flags as any,
     );
     expect(r.reason).toBe("hours_not_configured");
@@ -392,13 +479,13 @@ describe("get_available_slots — unconfigured schedule is not a day off", () =>
       {
         masters: [masterRow("22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111")],
         master_day_overrides: [],
-        master_schedules: [{ master_id: "22222222-2222-4222-8222-222222222222", weekday: dowOfTest("2026-07-17") }],
+        master_schedules: [{ master_id: "22222222-2222-4222-8222-222222222222", weekday: dowOfTest(FUTURE) }],
       },
       async () => ({ data: [] }),
     );
     const r = await executeV4Tool(
       "get_available_slots",
-      { service_id: "11111111-1111-4111-8111-111111111111", date: "2026-07-17" },
+      { service_id: "11111111-1111-4111-8111-111111111111", date: FUTURE },
       cfgInput, db, flags as any,
     );
     expect(r.reason).toBe("fully_booked");
