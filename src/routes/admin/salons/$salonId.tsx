@@ -1150,7 +1150,9 @@ function MastersTab({ salonId }: { salonId: string }) {
         .eq("salon_id", salonId)
         .eq("is_active", true)
         .order("sort_order"),
-      supabase.from("branches").select("id, name").eq("salon_id", salonId).order("sort_order"),
+      // working_hours is needed so MasterDialog can warn when a master's shift falls outside
+      // the branch's opening hours — that intersection silently decides what is bookable.
+      supabase.from("branches").select("id, name, working_hours").eq("salon_id", salonId).order("sort_order"),
     ]);
     setMasters(m ?? []);
     setBranches(b ?? []);
@@ -1332,6 +1334,46 @@ function MasterDialog({ master, salonId, branches, onClose, onSaved }: { master:
     onSaved();
   }
 
+  // What is ACTUALLY bookable = master's shift ∩ the branch's opening hours. get_available_slots
+  // computes exactly that (GREATEST of starts, LEAST of ends) and drops the day when the result
+  // is empty. Nothing used to show it here, so a master could be scheduled 09:00–18:00 in a
+  // branch open 13:00–20:00 and the owner had no way to see that mornings were unbookable — the
+  // 2026-08-04 incident, where the assistant kept saying «занято» and it looked like an AI bug.
+  const branchHours: Record<string, { start: string; end: string }[]> | null = (() => {
+    if (!form.branch_id) return null; // no branch pinned → the SQL applies no branch clipping
+    const wh = branches.find((b: any) => b.id === form.branch_id)?.working_hours;
+    return wh && typeof wh === "object" ? wh : null;
+  })();
+  const branchName = branches.find((b: any) => b.id === form.branch_id)?.name;
+  const branchHoursNote = branchHours
+    ? `Запись возможна только в часы работы филиала${branchName ? ` «${branchName}»` : ""} — часы вне этого окна будут недоступны клиентам.`
+    : null;
+
+  // Returns a hint for one weekday, or null when the master's shift fits the branch entirely.
+  function clipAgainstBranch(
+    dow: number,
+    day: { start: string; end: string } | null,
+  ): { text: string; blocking: boolean } | null {
+    if (!day || !branchHours) return null;
+    const intervals = branchHours[String(dow)];
+    if (!Array.isArray(intervals)) return null; // day not configured on the branch = no constraint
+    if (intervals.length === 0) {
+      return { text: "филиал закрыт в этот день — записи недоступны", blocking: true };
+    }
+    const b = intervals[0];
+    if (!b?.start || !b?.end) return null;
+    // HH:MM is zero-padded, so string compare is chronological.
+    const start = day.start > b.start ? day.start : b.start;
+    const end = day.end < b.end ? day.end : b.end;
+    if (start >= end) {
+      return { text: `вне часов филиала (${b.start}–${b.end}) — записи недоступны`, blocking: true };
+    }
+    if (start !== day.start || end !== day.end) {
+      return { text: `клиентам доступно только ${start}–${end} (филиал ${b.start}–${b.end})`, blocking: false };
+    }
+    return null;
+  }
+
   return (
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -1500,9 +1542,13 @@ function MasterDialog({ master, salonId, branches, onClose, onSaved }: { master:
                 Изменить все
               </Button>
             </div>
+            {branchHoursNote && (
+              <p className="text-xs text-muted-foreground mt-1">{branchHoursNote}</p>
+            )}
             <div className="space-y-2 mt-2">
               {WEEKDAYS.map((wd, i) => {
                 const day = schedule[i];
+                const clip = clipAgainstBranch(i, day);
                 return (
                   <div key={i} className="flex flex-wrap items-center gap-2 text-sm">
                     <div className="w-12 font-medium">{wd}</div>
@@ -1513,6 +1559,11 @@ function MasterDialog({ master, salonId, branches, onClose, onSaved }: { master:
                         <span>—</span>
                         <Input type="time" value={day.end} onChange={(e) => setSchedule({ ...schedule, [i]: { ...day, end: e.target.value } })} className="w-28" />
                       </>
+                    )}
+                    {clip && (
+                      <span className={`text-xs ${clip.blocking ? "text-destructive" : "text-amber-600"}`}>
+                        {clip.text}
+                      </span>
                     )}
                   </div>
                 );
