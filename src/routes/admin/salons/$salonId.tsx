@@ -28,7 +28,7 @@ import { SiteTab } from "@/components/admin/SiteTab";
 import { SalonShareCard } from "@/components/admin/SalonShareCard";
 import { ReviewsTab } from "@/components/admin/ReviewsTab";
 import { formatPrice } from "@/lib/price";
-import { BranchHoursEditor, defaultBranchHours, type BranchHours } from "@/components/admin/BranchHoursEditor";
+import { BranchHoursEditor, defaultBranchHours, invalidHourDays, type BranchHours } from "@/components/admin/BranchHoursEditor";
 import { MasterDayOverrides } from "@/components/admin/MasterDayOverrides";
 import { SalonDayOverridesCard } from "@/components/admin/SalonDayOverridesCard";
 import { AiAssistantTab } from "@/components/admin/AiAssistantTab";
@@ -656,6 +656,14 @@ function SalonScheduleCard({
   }
 
   async function onSaveClick() {
+    // Hard stop on an impossible window (opens at/after it closes). Saving one silently zeroes
+    // out every bookable slot for the whole salon — see invalidHourDays() for the prod incident.
+    const bad = invalidHourDays(hours);
+    if (bad.length > 0) {
+      return toast.error(
+        `Время открытия должно быть раньше закрытия: ${bad.join(", ")}. Иначе запись в эти дни станет невозможной.`,
+      );
+    }
     setSaving(true);
     const found = await findConflicts(hours);
     setSaving(false);
@@ -997,6 +1005,12 @@ function BranchDialog({ editing, onClose, onSaved }: { editing: any; onClose: ()
   const [form, setForm] = useState<any>({ working_hours: defaultBranchHours(), ...editing });
   async function save() {
     if (!form.name?.trim()) return toast.error("Введите название филиала");
+    const badHours = invalidHourDays(form.working_hours);
+    if (badHours.length > 0) {
+      return toast.error(
+        `Время открытия должно быть раньше закрытия: ${badHours.join(", ")}. Иначе запись в эти дни станет невозможной.`,
+      );
+    }
     const payload = {
       name: form.name.trim(),
       address: form.address || null,
