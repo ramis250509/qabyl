@@ -1828,11 +1828,22 @@ export async function fetchMergedSlots(opts: {
   // = 16 s BURNT on serialization alone. Promise.all reduces it to ~1 round-trip regardless of N.
   const perMaster = await Promise.all(
     opts.masters.map(async (m) => {
-      const { data } = await opts.db.rpc("get_available_slots", {
+      const { data, error } = await opts.db.rpc("get_available_slots", {
         _master_id: m.id,
         _service_id: opts.serviceId,
         _date: opts.day,
       });
+      // Historically this line was `const { data } = ...` — errors were silently discarded, so a
+      // malformed UUID (Postgres "invalid input syntax for type uuid") turned into 0 slots for the
+      // rest of the pipeline, and the tool reported "hours_not_configured" as if the schedule was
+      // simply missing. Log so future occurrences are visible in Cloudflare Observability.
+      if (error) {
+        console.warn(
+          `[wa] get_available_slots RPC error master=${m.id} service=${opts.serviceId} day=${opts.day}: ${
+            (error as any)?.message ?? String(error)
+          }`,
+        );
+      }
       return {
         masterId: m.id,
         rows: (data ?? []) as Array<{ slot_start: string; slot_end: string }>,

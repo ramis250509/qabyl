@@ -705,6 +705,18 @@ function dowOf(date: string): number {
   return new Date(`${date}T12:00:00Z`).getUTCDay();
 }
 
+// Strict RFC 4122-ish UUID check: 8-4-4-4-12 hex with dashes, any version. Every id in this DB
+// is a `uuid` column (gen_random_uuid()), so anything else the model passes is a hallucination —
+// most commonly a 24-char ObjectId-shaped string ("6679549c60a950254006a236") that Gemini emits
+// when it never actually called get_services and is guessing what an id "should look like".
+// Catching it at the tool boundary lets us return a specific reason ("unknown_service") instead
+// of the misleading "hours_not_configured" the merged-slots pipeline used to produce.
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export function isUuid(x: unknown): x is string {
+  return typeof x === "string" && UUID_RE.test(x);
+}
+
 // AUTHORITATIVE "is this date a working day for this service?" — mirrors the schedule logic of
 // the get_available_slots SQL (per-date master_day_overrides off/workday, weekly master_schedules,
 // branch working_hours) so we can tell «выходной» apart from «всё занято». This is the FIX for
@@ -1132,6 +1144,13 @@ export async function executeV4Tool(
     }
 
     case "get_masters": {
+      if (!isUuid(args.service_id)) {
+        return {
+          masters: [],
+          reason: "unknown_service",
+          note: "service_id некорректный (не UUID из get_services). Вызови get_services и передай настоящий id.",
+        };
+      }
       const masters = await loadMastersForService(
         db,
         input.salon.salonId,
@@ -1151,6 +1170,31 @@ export async function executeV4Tool(
     }
 
     case "get_available_slots": {
+      // Guard against hallucinated ids: Gemini periodically invents 24-char ObjectId-shaped
+      // strings for service_id/master_id when it skipped get_services/get_masters and is
+      // guessing. Downstream, loadMastersForService JS-filters by service_ids.includes(id) and
+      // matches nothing, emptyDayReasonScoped calls it "unknown" → we used to answer
+      // "hours_not_configured" and Gemini repeated to the client: «нет данных о расписании»
+      // (the exact prod complaint 2026-08-04). Return a distinct reason so the model self-corrects
+      // by calling get_services and passing the real UUID.
+      if (!isUuid(args.service_id)) {
+        return {
+          date: args.date,
+          reason: "unknown_service",
+          free_times: [],
+          slots: [],
+          note: "service_id некорректный (не UUID из get_services). Вызови get_services и передай настоящий id. НЕ говори клиенту «нет расписания» — это не так.",
+        };
+      }
+      if (args.master_id && !isUuid(args.master_id)) {
+        return {
+          date: args.date,
+          reason: "unknown_master",
+          free_times: [],
+          slots: [],
+          note: "master_id некорректный (не UUID из get_masters). Вызови get_masters и передай настоящий id, либо не указывай master_id.",
+        };
+      }
       const part = args.part_of_day as "morning" | "afternoon" | "evening" | undefined;
       const commonArgs = {
         db,
@@ -1213,6 +1257,27 @@ export async function executeV4Tool(
       // this returns the truth from the calendar, plus nearby free times if it's taken.
       const hhmm = normHHMM(String(args.time ?? ""));
       if (!hhmm) return { available: false, error: "не понял время" };
+      // Same hallucination guard as get_available_slots — a bad service_id here used to bubble
+      // up as "hours_not_configured" via the empty-slots path and read to the client as
+      // «нет расписания» when the real problem was the id.
+      if (!isUuid(args.service_id)) {
+        return {
+          date: args.date,
+          requested: hhmm,
+          available: false,
+          reason: "unknown_service",
+          note: "service_id некорректный (не UUID из get_services). Вызови get_services и передай настоящий id. НЕ говори клиенту «нет расписания» — это не так.",
+        };
+      }
+      if (args.master_id && !isUuid(args.master_id)) {
+        return {
+          date: args.date,
+          requested: hhmm,
+          available: false,
+          reason: "unknown_master",
+          note: "master_id некорректный (не UUID из get_masters). Вызови get_masters и передай настоящий id, либо не указывай master_id.",
+        };
+      }
       const slots = await loadFreeSlotsForDay({
         db,
         input,
@@ -1362,6 +1427,23 @@ export async function executeV4Tool(
           success: false,
           reason: "need_client_name",
           note: "Клиент ещё не назвал своё имя. НЕ создавай запись. Спроси естественно: «Подскажите, пожалуйста, как вас зовут?» или «Как вас зовут?». Плейсхолдеры («Клиент», «Неизвестно», имя из WhatsApp-профиля) в client_name недопустимы — нужно услышать имя от самого клиента в этом диалоге. После того как клиент назовёт имя, покажи полную сводку записи и только после «да» вызови create_appointment снова.",
+        };
+      }
+      // Reject hallucinated ids BEFORE we hit the RPC — otherwise Postgres throws "invalid input
+      // syntax for type uuid" which the tool loop catches and surfaces to the client as a generic
+      // "не получилось создать запись". A specific reason lets the model self-recover.
+      if (!isUuid(args.service_id)) {
+        return {
+          success: false,
+          reason: "unknown_service",
+          note: "service_id некорректный (не UUID из get_services). Вызови get_services и передай настоящий id.",
+        };
+      }
+      if (!isUuid(args.master_id)) {
+        return {
+          success: false,
+          reason: "unknown_master",
+          note: "master_id некорректный (не UUID из get_masters). Вызови get_masters и передай настоящий id.",
         };
       }
       // Server owns the clock→instant conversion. The model passes date + HH:MM; we find the
@@ -2062,7 +2144,11 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
           const cat = (s.category ?? "").trim();
           const catBit = cat ? ` [${cat}]` : "";
           const durBit = s.duration_min ? ` · ${s.duration_min} мин` : "";
-          return `«${s.name.trim()}» — ${priceLabel}${durBit}${catBit}`;
+          // Include the REAL DB UUID so the model can pass it straight to get_available_slots /
+          // check_time / create_appointment without an extra get_services round-trip. Without this,
+          // Gemini periodically invents a 24-char ObjectId-shaped id, and the tools reject the
+          // call with "unknown_service" — this shrinks that surface.
+          return `«${s.name.trim()}» — ${priceLabel}${durBit}${catBit} (id: ${s.id})`;
         })
         .join("\n");
     } catch (err) {

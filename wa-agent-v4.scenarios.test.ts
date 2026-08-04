@@ -30,7 +30,7 @@ function makeDb(
 ) {
   const services = opts.services ?? [
     {
-      id: "svc1",
+      id: "11111111-1111-4111-8111-111111111111",
       name: "Маникюр",
       category: null,
       price: 1000,
@@ -41,7 +41,7 @@ function makeDb(
     },
   ];
   const masters = opts.masters ?? [
-    { id: "m1", name: "Айгуль", branch_id: null, sort_order: 0, service_ids: ["svc1"] },
+    { id: "22222222-2222-4222-8222-222222222222", name: "Айгуль", branch_id: null, sort_order: 0, service_ids: ["11111111-1111-4111-8111-111111111111"] },
   ];
   const appointments = opts.appointments ?? [];
 
@@ -243,7 +243,7 @@ test("полный цикл: tools get_services → get_available_slots → те
   (globalThis as any).__WA_DB__ = makeDb();
   geminiQueue = [
     [fc("get_services")],
-    [fc("get_available_slots", { service_id: "svc1", date: "2099-01-01" })],
+    [fc("get_available_slots", { service_id: "11111111-1111-4111-8111-111111111111", date: "2099-01-01" })],
     [{ text: "Есть свободное время в 10:00 — записать вас?" }],
   ];
   const res = await runWaAgentV4(makeInput("Хочу маникюр завтра"));
@@ -264,8 +264,8 @@ test("create_appointment после «да»: запись создаётся, n
   geminiQueue = [
     [
       fc("create_appointment", {
-        service_id: "svc1",
-        master_id: "m1",
+        service_id: "11111111-1111-4111-8111-111111111111",
+        master_id: "22222222-2222-4222-8222-222222222222",
         slot_start: FREE_SLOT,
         client_name: "Рамис",
         client_confirmation: "Да, записывайте",
@@ -286,8 +286,8 @@ test("без имени: create_appointment с плейсхолдером «Не
   geminiQueue = [
     [
       fc("create_appointment", {
-        service_id: "svc1",
-        master_id: "m1",
+        service_id: "11111111-1111-4111-8111-111111111111",
+        master_id: "22222222-2222-4222-8222-222222222222",
         slot_start: FREE_SLOT,
         client_name: "Неизвестно",
         client_confirmation: "Да",
@@ -312,8 +312,8 @@ test("без имени: пустая строка → need_client_name (пле�
   geminiQueue = [
     [
       fc("create_appointment", {
-        service_id: "svc1",
-        master_id: "m1",
+        service_id: "11111111-1111-4111-8111-111111111111",
+        master_id: "22222222-2222-4222-8222-222222222222",
         slot_start: FREE_SLOT,
         client_name: "  ",
         client_confirmation: "да",
@@ -336,8 +336,8 @@ test("manage-link: после успешной записи в ответе ес
   geminiQueue = [
     [
       fc("create_appointment", {
-        service_id: "svc1",
-        master_id: "m1",
+        service_id: "11111111-1111-4111-8111-111111111111",
+        master_id: "22222222-2222-4222-8222-222222222222",
         slot_start: FREE_SLOT,
         client_name: "Анна",
         client_confirmation: "Да, записывайте",
@@ -362,7 +362,7 @@ test("без дублей: вторая запись на ту же услугу
         id: "a0",
         salon_id: "salon1",
         starts_at: FREE_SLOT,
-        service_id: "svc1",
+        service_id: "11111111-1111-4111-8111-111111111111",
         status: "confirmed",
         client_phone: "996700000001",
         masterName: "Айгуль",
@@ -373,8 +373,8 @@ test("без дублей: вторая запись на ту же услугу
   geminiQueue = [
     [
       fc("create_appointment", {
-        service_id: "svc1",
-        master_id: "m1",
+        service_id: "11111111-1111-4111-8111-111111111111",
+        master_id: "22222222-2222-4222-8222-222222222222",
         slot_start: FREE_SLOT,
         client_name: "Рамис",
         client_confirmation: "Да, записывайте",
@@ -400,7 +400,7 @@ test("без дублей: confirm_duplicate=true разрешает втору�
         id: "a0",
         salon_id: "salon1",
         starts_at: FREE_SLOT,
-        service_id: "svc1",
+        service_id: "11111111-1111-4111-8111-111111111111",
         status: "confirmed",
         client_phone: "996700000001",
         masterName: "Айгуль",
@@ -411,8 +411,8 @@ test("без дублей: confirm_duplicate=true разрешает втору�
   geminiQueue = [
     [
       fc("create_appointment", {
-        service_id: "svc1",
-        master_id: "m1",
+        service_id: "11111111-1111-4111-8111-111111111111",
+        master_id: "22222222-2222-4222-8222-222222222222",
         slot_start: FREE_SLOT,
         client_name: "Гостья",
         confirm_duplicate: true,
@@ -432,8 +432,8 @@ test("занятый слот: create_appointment на несуществующ�
   geminiQueue = [
     [
       fc("create_appointment", {
-        service_id: "svc1",
-        master_id: "m1",
+        service_id: "11111111-1111-4111-8111-111111111111",
+        master_id: "22222222-2222-4222-8222-222222222222",
         slot_start: "2099-01-01T09:00:00.000Z", // not the slot the RPC offers
         client_name: "Рамис",
         client_confirmation: "Да",
@@ -459,8 +459,8 @@ test("занятый мастер, свободный другой: create_appoi
   // picked Айгуль, but Айгуль is actually booked at 17:00 while Айжан is free. The failure must
   // name Айжан so the assistant can offer the same time with the other master.
   const masters = [
-    { id: "m1", name: "Айгуль", branch_id: null, sort_order: 0, service_ids: ["svc1"] },
-    { id: "m2", name: "Айжан", branch_id: null, sort_order: 1, service_ids: ["svc1"] },
+    { id: "22222222-2222-4222-8222-222222222222", name: "Айгуль", branch_id: null, sort_order: 0, service_ids: ["11111111-1111-4111-8111-111111111111"] },
+    { id: "33333333-3333-4333-8333-333333333333", name: "Айжан", branch_id: null, sort_order: 1, service_ids: ["11111111-1111-4111-8111-111111111111"] },
   ];
   const db = makeDb({ masters });
   // 17:00 Bishkek (UTC+6) == 11:00 UTC. Айгуль (m1) only has 10:00; Айжан (m2) has 17:00.
@@ -468,7 +468,7 @@ test("занятый мастер, свободный другой: create_appoi
   const TEN = "2099-01-01T04:00:00.000Z";
   db.rpc = (async (name: string, args: any) => {
     if (name === "get_available_slots") {
-      const starts = args._master_id === "m2" ? [SEVENTEEN] : [TEN];
+      const starts = args._master_id === "33333333-3333-4333-8333-333333333333" ? [SEVENTEEN] : [TEN];
       return {
         data: starts.map((s) => ({
           slot_start: s,
@@ -483,8 +483,8 @@ test("занятый мастер, свободный другой: create_appoi
   geminiQueue = [
     [
       fc("create_appointment", {
-        service_id: "svc1",
-        master_id: "m1", // Айгуль — busy at 17:00
+        service_id: "11111111-1111-4111-8111-111111111111",
+        master_id: "22222222-2222-4222-8222-222222222222", // Айгуль — busy at 17:00
         date: "2099-01-01",
         time: "17:00",
         client_name: "Анна",
@@ -511,12 +511,12 @@ test("выходной у выбранного мастера ≠ выходно
   const DATE = "2099-01-05";
   const dow = new Date(`${DATE}T12:00:00Z`).getUTCDay();
   const masters = [
-    { id: "m1", name: "Айгуль", branch_id: null, sort_order: 0, service_ids: ["svc1"] },
-    { id: "m2", name: "Айжан", branch_id: null, sort_order: 1, service_ids: ["svc1"] },
+    { id: "22222222-2222-4222-8222-222222222222", name: "Айгуль", branch_id: null, sort_order: 0, service_ids: ["11111111-1111-4111-8111-111111111111"] },
+    { id: "33333333-3333-4333-8333-333333333333", name: "Айжан", branch_id: null, sort_order: 1, service_ids: ["11111111-1111-4111-8111-111111111111"] },
   ];
   // Айгуль (m1) has an explicit day-off override on DATE; Айжан (m2) is scheduled that weekday.
-  const overrides = [{ master_id: "m1", date: DATE, is_off: true, kind: "off", intervals: null }];
-  const schedules = [{ master_id: "m2", weekday: dow }];
+  const overrides = [{ master_id: "22222222-2222-4222-8222-222222222222", date: DATE, is_off: true, kind: "off", intervals: null }];
+  const schedules = [{ master_id: "33333333-3333-4333-8333-333333333333", weekday: dow }];
 
   // A tiny query builder that honours .in()/.eq() filters and resolves an array.
   const tableQuery = (rows: any[]) => {
@@ -557,7 +557,7 @@ test("выходной у выбранного мастера ≠ выходно
   };
   (globalThis as any).__WA_DB__ = db;
   geminiQueue = [
-    [fc("get_available_slots", { service_id: "svc1", date: DATE, master_id: "m1" })],
+    [fc("get_available_slots", { service_id: "11111111-1111-4111-8111-111111111111", date: DATE, master_id: "22222222-2222-4222-8222-222222222222" })],
     [{ text: "У Айгуль в этот день выходной, но работает Айжан — записать к ней?" }],
   ];
   const res = await runWaAgentV4(makeInput("Хочу к Айгуль в этот день"));
@@ -639,7 +639,7 @@ test("tool retry: первый вызов падает, второй прохо�
   }) as any;
   (globalThis as any).__WA_DB__ = db;
   geminiQueue = [
-    [fc("get_available_slots", { service_id: "svc1", date: "2099-01-01" })],
+    [fc("get_available_slots", { service_id: "11111111-1111-4111-8111-111111111111", date: "2099-01-01" })],
     [{ text: "На эту дату есть 10:00. Записать вас?" }],
   ];
   const res = await runWaAgentV4(makeInput("завтра свободно?"));
@@ -723,8 +723,8 @@ test("отмена записи: get_my_appointments → cancel_appointment", as
         starts_at: "2099-02-01T05:00:00.000Z",
         salon_id: SALON.salonId,
         client_phone: "996700000001",
-        master_id: "m1",
-        service_id: "svc1",
+        master_id: "22222222-2222-4222-8222-222222222222",
+        service_id: "11111111-1111-4111-8111-111111111111",
         status: "confirmed",
         serviceName: "Маникюр",
         masterName: "Айгуль",
@@ -751,8 +751,8 @@ test("cutoff: отмена ближе дедлайна запрещена, ст�
         starts_at: soon,
         salon_id: SALON.salonId,
         client_phone: "996700000001",
-        master_id: "m1",
-        service_id: "svc1",
+        master_id: "22222222-2222-4222-8222-222222222222",
+        service_id: "11111111-1111-4111-8111-111111111111",
         status: "confirmed",
         serviceName: "Маникюр",
         masterName: "Айгуль",
@@ -793,8 +793,8 @@ test("перенос записи: reschedule_appointment двигает starts_
         starts_at: "2099-02-01T05:00:00.000Z",
         salon_id: SALON.salonId,
         client_phone: "996700000001",
-        master_id: "m1",
-        service_id: "svc1",
+        master_id: "22222222-2222-4222-8222-222222222222",
+        service_id: "11111111-1111-4111-8111-111111111111",
         status: "confirmed",
         serviceName: "Маникюр",
         masterName: "Айгуль",
@@ -940,7 +940,7 @@ test("get_available_slots возвращает ВЕСЬ день (не обре�
   );
   (globalThis as any).__WA_DB__ = makeDb({ daySlots });
   geminiQueue = [
-    [fc("get_available_slots", { service_id: "svc1", date: "2099-01-01" })],
+    [fc("get_available_slots", { service_id: "11111111-1111-4111-8111-111111111111", date: "2099-01-01" })],
     [{ text: "Есть свободное время, что удобнее?" }],
   ];
   await runWaAgentV4(makeInput("какое время свободно завтра?"));
@@ -951,7 +951,7 @@ test("get_available_slots возвращает ВЕСЬ день (не обре�
 test("check_time: запрошенное время свободно → available true", async () => {
   (globalThis as any).__WA_DB__ = makeDb(); // FREE_SLOT = 10:00 Bishkek
   geminiQueue = [
-    [fc("check_time", { service_id: "svc1", date: "2099-01-01", time: "10:00" })],
+    [fc("check_time", { service_id: "11111111-1111-4111-8111-111111111111", date: "2099-01-01", time: "10:00" })],
     [{ text: "Да, 10:00 свободно, записать?" }],
   ];
   await runWaAgentV4(makeInput("10:00 барбы?"));
@@ -963,7 +963,7 @@ test("check_time: запрошенное время свободно → availab
 test("check_time: время НЕ в списке → available false, но с ближайшими", async () => {
   (globalThis as any).__WA_DB__ = makeDb(); // только 10:00 свободно
   geminiQueue = [
-    [fc("check_time", { service_id: "svc1", date: "2099-01-01", time: "17:00" })],
+    [fc("check_time", { service_id: "11111111-1111-4111-8111-111111111111", date: "2099-01-01", time: "17:00" })],
     [{ text: "17:00 занято, но есть 10:00 — подойдёт?" }],
   ];
   await runWaAgentV4(makeInput("17:00 барбы?"));
@@ -980,7 +980,7 @@ test("зависание после «подождите»: агент дожи�
     // 1-й проход: модель «залипла» без вызова инструментов
     [{ text: "Секундочку, сейчас проверю расписание, подождите немного." }],
     // после наджа: вызывает инструмент…
-    [fc("get_available_slots", { service_id: "svc1", date: "2099-01-01" })],
+    [fc("get_available_slots", { service_id: "11111111-1111-4111-8111-111111111111", date: "2099-01-01" })],
     // …и даёт готовый ответ
     [{ text: "Есть 10:00 — удобно?" }],
   ];

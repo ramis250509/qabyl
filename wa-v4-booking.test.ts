@@ -84,14 +84,14 @@ const DATE = futureDate();
 describe("resolveRequestedSlot — books the exact requested time", () => {
   test("11:00 free → books 11:00, NOT 17:00", async () => {
     const db = makeDb(DATE, ["11:00", "13:00", "17:00"]);
-    const r = await resolveRequestedSlot({ db, input, serviceId: "svc", masterId: "m1", date: DATE, time: "11:00" });
+    const r = await resolveRequestedSlot({ db, input, serviceId: "11111111-1111-4111-8111-111111111111", masterId: "22222222-2222-4222-8222-222222222222", date: DATE, time: "11:00" });
     expect(r.ok).toBe(true);
     expect(localHHMM(r.slotStart!)).toBe("11:00");
   });
 
   test("11:00 taken (only 17:00 free) → slot_not_free, never books 17:00", async () => {
     const db = makeDb(DATE, ["17:00"]);
-    const r = await resolveRequestedSlot({ db, input, serviceId: "svc", masterId: "m1", date: DATE, time: "11:00" });
+    const r = await resolveRequestedSlot({ db, input, serviceId: "11111111-1111-4111-8111-111111111111", masterId: "22222222-2222-4222-8222-222222222222", date: DATE, time: "11:00" });
     expect(r.ok).toBe(false);
     expect(r.reason).toBe("slot_not_free");
     expect(r.slotStart).toBeUndefined();
@@ -100,21 +100,21 @@ describe("resolveRequestedSlot — books the exact requested time", () => {
 
   test("legacy fabricated ISO for 11:00 when 11:00 not free → rejected", async () => {
     const db = makeDb(DATE, ["17:00"]);
-    const r = await resolveRequestedSlot({ db, input, serviceId: "svc", masterId: "m1", date: DATE, slotStartIso: slotISO(DATE, "11:00") });
+    const r = await resolveRequestedSlot({ db, input, serviceId: "11111111-1111-4111-8111-111111111111", masterId: "22222222-2222-4222-8222-222222222222", date: DATE, slotStartIso: slotISO(DATE, "11:00") });
     expect(r.ok).toBe(false);
     expect(r.reason).toBe("slot_not_free");
   });
 
   test("legacy ISO matching a real free slot → accepted at that exact instant", async () => {
     const db = makeDb(DATE, ["11:00", "17:00"]);
-    const r = await resolveRequestedSlot({ db, input, serviceId: "svc", masterId: "m1", date: DATE, slotStartIso: slotISO(DATE, "17:00") });
+    const r = await resolveRequestedSlot({ db, input, serviceId: "11111111-1111-4111-8111-111111111111", masterId: "22222222-2222-4222-8222-222222222222", date: DATE, slotStartIso: slotISO(DATE, "17:00") });
     expect(r.ok).toBe(true);
     expect(localHHMM(r.slotStart!)).toBe("17:00");
   });
 
   test("garbage time → bad_time", async () => {
     const db = makeDb(DATE, ["11:00"]);
-    const r = await resolveRequestedSlot({ db, input, serviceId: "svc", masterId: "m1", date: DATE, time: "notatime" });
+    const r = await resolveRequestedSlot({ db, input, serviceId: "11111111-1111-4111-8111-111111111111", masterId: "22222222-2222-4222-8222-222222222222", date: DATE, time: "notatime" });
     expect(r.ok).toBe(false);
     expect(r.reason).toBe("bad_time");
   });
@@ -172,7 +172,7 @@ describe("get_available_slots — part-of-day empty but day is open", () => {
     const db = makeDb(DATE, ["10:00", "12:00", "14:00", "16:00"]); // all before 17:00
     const r = await executeV4Tool(
       "get_available_slots",
-      { service_id: "svc", date: DATE, master_id: "m1", part_of_day: "evening" },
+      { service_id: "11111111-1111-4111-8111-111111111111", date: DATE, master_id: "22222222-2222-4222-8222-222222222222", part_of_day: "evening" },
       openInput, db, flags,
     );
     expect(r.reason).toBe("part_unavailable");
@@ -184,7 +184,7 @@ describe("get_available_slots — part-of-day empty but day is open", () => {
     const db = makeDb(DATE, ["16:00", "18:00", "19:00"]);
     const r = await executeV4Tool(
       "get_available_slots",
-      { service_id: "svc", date: DATE, master_id: "m1", part_of_day: "evening" },
+      { service_id: "11111111-1111-4111-8111-111111111111", date: DATE, master_id: "22222222-2222-4222-8222-222222222222", part_of_day: "evening" },
       openInput, db, flags,
     );
     expect(r.reason).toBe("ok");
@@ -195,7 +195,7 @@ describe("get_available_slots — part-of-day empty but day is open", () => {
     const db = makeDb(DATE, []);
     const r = await executeV4Tool(
       "get_available_slots",
-      { service_id: "svc", date: DATE, master_id: "m1" },
+      { service_id: "11111111-1111-4111-8111-111111111111", date: DATE, master_id: "22222222-2222-4222-8222-222222222222" },
       openInput, db, flags,
     );
     expect(r.reason).toBe("fully_booked");
@@ -214,23 +214,23 @@ function makeServiceDb(row: any) {
 describe("clampPriceOverride — never outside the service range", () => {
   test("range service: below min → clamped up to min", async () => {
     const db = makeServiceDb({ price: 2500, price_max: 7000, price_type: "range" });
-    expect(await clampPriceOverride(db, "s1", "svc", 1000)).toBe(2500);
+    expect(await clampPriceOverride(db, "s1", "11111111-1111-4111-8111-111111111111", 1000)).toBe(2500);
   });
   test("range service: above max → clamped down to max", async () => {
     const db = makeServiceDb({ price: 2500, price_max: 7000, price_type: "range" });
-    expect(await clampPriceOverride(db, "s1", "svc", 9999)).toBe(7000);
+    expect(await clampPriceOverride(db, "s1", "11111111-1111-4111-8111-111111111111", 9999)).toBe(7000);
   });
   test("range service: inside → kept as agreed", async () => {
     const db = makeServiceDb({ price: 2500, price_max: 7000, price_type: "range" });
-    expect(await clampPriceOverride(db, "s1", "svc", 4200)).toBe(4200);
+    expect(await clampPriceOverride(db, "s1", "11111111-1111-4111-8111-111111111111", 4200)).toBe(4200);
   });
   test("fixed service: any override → pinned to the fixed price", async () => {
     const db = makeServiceDb({ price: 1500, price_max: null, price_type: "fixed" });
-    expect(await clampPriceOverride(db, "s1", "svc", 999)).toBe(1500);
+    expect(await clampPriceOverride(db, "s1", "11111111-1111-4111-8111-111111111111", 999)).toBe(1500);
   });
   test("unknown service → returns input unchanged", async () => {
     const db = makeServiceDb(null);
-    expect(await clampPriceOverride(db, "s1", "svc", 3333)).toBe(3333);
+    expect(await clampPriceOverride(db, "s1", "11111111-1111-4111-8111-111111111111", 3333)).toBe(3333);
   });
 });
 
@@ -294,75 +294,75 @@ describe("classifyDayForService — workable / closed / unknown", () => {
 
   test("per-date override kind=off → closed (proven day off)", async () => {
     const db = makeTableDb({
-      masters: [masterRow("m1", "svc")],
-      master_day_overrides: [{ master_id: "m1", is_off: true, kind: "off", intervals: null }],
-      master_schedules: [{ master_id: "m1", weekday: WED }], // works Wed, but the override wins
+      masters: [masterRow("22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111")],
+      master_day_overrides: [{ master_id: "22222222-2222-4222-8222-222222222222", is_off: true, kind: "off", intervals: null }],
+      master_schedules: [{ master_id: "22222222-2222-4222-8222-222222222222", weekday: WED }], // works Wed, but the override wins
     });
-    expect(await classifyDayForService({ db, input, serviceId: "svc", date: D })).toBe("closed");
+    expect(await classifyDayForService({ db, input, serviceId: "11111111-1111-4111-8111-111111111111", date: D })).toBe("closed");
   });
 
   test("has weekly schedule for this weekday → workable (empty slots = fully_booked)", async () => {
     const db = makeTableDb({
-      masters: [masterRow("m1", "svc")],
+      masters: [masterRow("22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111")],
       master_day_overrides: [],
-      master_schedules: [{ master_id: "m1", weekday: WED }],
+      master_schedules: [{ master_id: "22222222-2222-4222-8222-222222222222", weekday: WED }],
     });
-    expect(await classifyDayForService({ db, input, serviceId: "svc", date: D })).toBe("workable");
+    expect(await classifyDayForService({ db, input, serviceId: "11111111-1111-4111-8111-111111111111", date: D })).toBe("workable");
   });
 
   // THE reported bug: schedule simply not filled in must NOT read as a day off.
   test("no schedule rows at all → unknown (never claim выходной)", async () => {
     const db = makeTableDb({
-      masters: [masterRow("m1", "svc")],
+      masters: [masterRow("22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111")],
       master_day_overrides: [],
       master_schedules: [],
     });
-    expect(await classifyDayForService({ db, input, serviceId: "svc", date: D })).toBe("unknown");
+    expect(await classifyDayForService({ db, input, serviceId: "11111111-1111-4111-8111-111111111111", date: D })).toBe("unknown");
   });
 
   test("schedule configured for OTHER weekdays but not this one → closed (deliberate day off)", async () => {
     const db = makeTableDb({
-      masters: [masterRow("m1", "svc")],
+      masters: [masterRow("22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111")],
       master_day_overrides: [],
-      master_schedules: [{ master_id: "m1", weekday: 1 }, { master_id: "m1", weekday: 2 }], // Mon/Tue only
+      master_schedules: [{ master_id: "22222222-2222-4222-8222-222222222222", weekday: 1 }, { master_id: "22222222-2222-4222-8222-222222222222", weekday: 2 }], // Mon/Tue only
     });
-    expect(await classifyDayForService({ db, input, serviceId: "svc", date: D })).toBe("closed");
+    expect(await classifyDayForService({ db, input, serviceId: "11111111-1111-4111-8111-111111111111", date: D })).toBe("closed");
   });
 
   test("nobody performs the service → unknown, NOT a day off", async () => {
     const db = makeTableDb({ masters: [], master_day_overrides: [], master_schedules: [] });
-    expect(await classifyDayForService({ db, input, serviceId: "svc", date: D })).toBe("unknown");
+    expect(await classifyDayForService({ db, input, serviceId: "11111111-1111-4111-8111-111111111111", date: D })).toBe("unknown");
   });
 
   test("branch closed that weekday beats the master's schedule → closed", async () => {
     const db = makeTableDb({
-      masters: [masterRow("m1", "svc")],
+      masters: [masterRow("22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111")],
       master_day_overrides: [],
-      master_schedules: [{ master_id: "m1", weekday: WED }], // master works, but branch is shut
+      master_schedules: [{ master_id: "22222222-2222-4222-8222-222222222222", weekday: WED }], // master works, but branch is shut
       branches: [{ working_hours: { [String(WED)]: [] } }], // empty array = closed that dow
     });
     expect(
-      await classifyDayForService({ db, input, serviceId: "svc", date: D, branchId: "b1" }),
+      await classifyDayForService({ db, input, serviceId: "11111111-1111-4111-8111-111111111111", date: D, branchId: "44444444-4444-4444-8444-444444444444" }),
     ).toBe("closed");
   });
 
   test("one master off but another works → workable", async () => {
     const db = makeTableDb({
-      masters: [masterRow("m1", "svc"), masterRow("m2", "svc")],
-      master_day_overrides: [{ master_id: "m1", is_off: true, kind: "off", intervals: null }],
-      master_schedules: [{ master_id: "m2", weekday: WED }],
+      masters: [masterRow("22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111"), masterRow("33333333-3333-4333-8333-333333333333", "11111111-1111-4111-8111-111111111111")],
+      master_day_overrides: [{ master_id: "22222222-2222-4222-8222-222222222222", is_off: true, kind: "off", intervals: null }],
+      master_schedules: [{ master_id: "33333333-3333-4333-8333-333333333333", weekday: WED }],
     });
-    expect(await classifyDayForService({ db, input, serviceId: "svc", date: D })).toBe("workable");
+    expect(await classifyDayForService({ db, input, serviceId: "11111111-1111-4111-8111-111111111111", date: D })).toBe("workable");
   });
 
   test("named master is off (another works) → closed for that master", async () => {
     const db = makeTableDb({
-      masters: [masterRow("m1", "svc"), masterRow("m2", "svc")],
-      master_day_overrides: [{ master_id: "m1", is_off: true, kind: "off", intervals: null }],
-      master_schedules: [{ master_id: "m2", weekday: WED }],
+      masters: [masterRow("22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111"), masterRow("33333333-3333-4333-8333-333333333333", "11111111-1111-4111-8111-111111111111")],
+      master_day_overrides: [{ master_id: "22222222-2222-4222-8222-222222222222", is_off: true, kind: "off", intervals: null }],
+      master_schedules: [{ master_id: "33333333-3333-4333-8333-333333333333", weekday: WED }],
     });
     expect(
-      await classifyDayForService({ db, input, serviceId: "svc", date: D, masterId: "m1" }),
+      await classifyDayForService({ db, input, serviceId: "11111111-1111-4111-8111-111111111111", date: D, masterId: "22222222-2222-4222-8222-222222222222" }),
     ).toBe("closed");
   });
 });
@@ -375,12 +375,12 @@ describe("get_available_slots — unconfigured schedule is not a day off", () =>
 
   test("no slots + no schedule data → reason=hours_not_configured", async () => {
     const db = makeTableDb(
-      { masters: [masterRow("m1", "svc")], master_day_overrides: [], master_schedules: [] },
+      { masters: [masterRow("22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111")], master_day_overrides: [], master_schedules: [] },
       async () => ({ data: [] }), // rpc: no free slots
     );
     const r = await executeV4Tool(
       "get_available_slots",
-      { service_id: "svc", date: "2026-07-17" },
+      { service_id: "11111111-1111-4111-8111-111111111111", date: "2026-07-17" },
       cfgInput, db, flags as any,
     );
     expect(r.reason).toBe("hours_not_configured");
@@ -390,15 +390,15 @@ describe("get_available_slots — unconfigured schedule is not a day off", () =>
   test("no slots but schedule says they work → reason=fully_booked", async () => {
     const db = makeTableDb(
       {
-        masters: [masterRow("m1", "svc")],
+        masters: [masterRow("22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111")],
         master_day_overrides: [],
-        master_schedules: [{ master_id: "m1", weekday: dowOfTest("2026-07-17") }],
+        master_schedules: [{ master_id: "22222222-2222-4222-8222-222222222222", weekday: dowOfTest("2026-07-17") }],
       },
       async () => ({ data: [] }),
     );
     const r = await executeV4Tool(
       "get_available_slots",
-      { service_id: "svc", date: "2026-07-17" },
+      { service_id: "11111111-1111-4111-8111-111111111111", date: "2026-07-17" },
       cfgInput, db, flags as any,
     );
     expect(r.reason).toBe("fully_booked");
@@ -411,11 +411,11 @@ function dowOfTest(d: string) {
 describe("loadSalonClosedDates — whole-salon days off for the prompt", () => {
   test("date off for ALL active masters → listed; date off for only one → not listed", async () => {
     const db = makeTableDb({
-      masters: [{ id: "m1" }, { id: "m2" }],
+      masters: [{ id: "22222222-2222-4222-8222-222222222222" }, { id: "33333333-3333-4333-8333-333333333333" }],
       master_day_overrides: [
-        { date: "2026-07-15", master_id: "m1" },
-        { date: "2026-07-15", master_id: "m2" }, // both off → closed
-        { date: "2026-07-16", master_id: "m1" }, // only one off → open
+        { date: "2026-07-15", master_id: "22222222-2222-4222-8222-222222222222" },
+        { date: "2026-07-15", master_id: "33333333-3333-4333-8333-333333333333" }, // both off → closed
+        { date: "2026-07-16", master_id: "22222222-2222-4222-8222-222222222222" }, // only one off → open
       ],
     });
     const closed = await loadSalonClosedDates(db, "s1", "2026-07-14", 14);
@@ -483,15 +483,15 @@ describe("get_client_context — returning client from past visits", () => {
     const db = makeTableDb({
       appointments: [
         // ordered desc by starts_at (newest first), as the query returns them
-        { starts_at: "2026-07-10T05:00:00Z", status: "completed", services: { name: "Кератин" }, masters: { id: "m1", name: "Айгерим" } },
-        { starts_at: "2026-06-01T05:00:00Z", status: "completed", services: { name: "Стрижка" }, masters: { id: "m1", name: "Айгерим" } },
-        { starts_at: "2026-05-01T05:00:00Z", status: "confirmed", services: { name: "Маникюр" }, masters: { id: "m2", name: "Нургуль" } },
+        { starts_at: "2026-07-10T05:00:00Z", status: "completed", services: { name: "Кератин" }, masters: { id: "22222222-2222-4222-8222-222222222222", name: "Айгерим" } },
+        { starts_at: "2026-06-01T05:00:00Z", status: "completed", services: { name: "Стрижка" }, masters: { id: "22222222-2222-4222-8222-222222222222", name: "Айгерим" } },
+        { starts_at: "2026-05-01T05:00:00Z", status: "confirmed", services: { name: "Маникюр" }, masters: { id: "33333333-3333-4333-8333-333333333333", name: "Нургуль" } },
       ],
     });
     const r = await executeV4Tool("get_client_context", {}, clientInput, db, flags as any);
     expect(r.is_returning).toBe(true);
     expect(r.visit_count).toBe(3);
-    expect(r.preferred_master).toEqual({ id: "m1", name: "Айгерим", visits: 2 });
+    expect(r.preferred_master).toEqual({ id: "22222222-2222-4222-8222-222222222222", name: "Айгерим", visits: 2 });
     expect(r.services_used).toEqual(expect.arrayContaining(["Кератин", "Стрижка", "Маникюр"]));
     expect(r.last_visit.service).toBe("Кератин");
   });
@@ -505,7 +505,7 @@ describe("check_time — outside_hours vs time_taken", () => {
     const db = makeDbWithMastersProbe(DATE, ["09:30", "10:00", "10:30", "11:00", "11:15"]);
     const r = await executeV4Tool(
       "check_time",
-      { service_id: "svc", date: DATE, master_id: "m1", time: "17:00" },
+      { service_id: "11111111-1111-4111-8111-111111111111", date: DATE, master_id: "22222222-2222-4222-8222-222222222222", time: "17:00" },
       cfgInput, db, flags as any,
     );
     expect(r.available).toBe(false);
@@ -515,7 +515,7 @@ describe("check_time — outside_hours vs time_taken", () => {
     const db = makeDbWithMastersProbe(DATE, ["10:00", "12:00"]);
     const r = await executeV4Tool(
       "check_time",
-      { service_id: "svc", date: DATE, master_id: "m1", time: "11:00" },
+      { service_id: "11111111-1111-4111-8111-111111111111", date: DATE, master_id: "22222222-2222-4222-8222-222222222222", time: "11:00" },
       cfgInput, db, flags as any,
     );
     expect(r.available).toBe(false);
