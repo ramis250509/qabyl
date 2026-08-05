@@ -13,13 +13,63 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Copy, CheckCircle2, AlertCircle, Instagram, ExternalLink } from "lucide-react";
+import { Copy, CheckCircle2, AlertCircle, Instagram, ExternalLink, RefreshCw } from "lucide-react";
 import {
   getInstagramConfig,
+  getInstagramDiagnostics,
   setInstagramEnabled,
   testInstagramConnection,
   upsertInstagramConfig,
 } from "@/lib/instagram.functions";
+
+type Diagnostics = Awaited<ReturnType<typeof getInstagramDiagnostics>>;
+
+function whenLabel(iso: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  const mins = Math.round((Date.now() - d.getTime()) / 60000);
+  if (mins < 1) return "только что";
+  if (mins < 60) return `${mins} мин назад`;
+  if (mins < 24 * 60) return `${Math.round(mins / 60)} ч назад`;
+  return d.toLocaleString("ru-RU");
+}
+
+/**
+ * Turn the raw traces into the sentence the salon actually needs. The ordering matters: a webhook
+ * that never arrived is a Meta-side problem and no amount of fiddling on our side will fix it, so
+ * that case must not be buried under "everything looks configured".
+ */
+function diagnose(d: Diagnostics, enabled: boolean) {
+  if (d.lastInboundAt && d.lastOutboundAt) {
+    return {
+      tone: "ok" as const,
+      title: "Всё работает",
+      body: `Последнее сообщение от клиента — ${whenLabel(d.lastInboundAt)}, последний ответ ассистента — ${whenLabel(d.lastOutboundAt)}.`,
+    };
+  }
+  if (d.lastInboundAt && !d.lastOutboundAt) {
+    return {
+      tone: "warn" as const,
+      title: "Сообщения приходят, но ответа не было",
+      body: enabled
+        ? "Webhook работает — значит проблема уже на нашей стороне. Загляните во вкладку «Ошибки»."
+        : "Канал выключен переключателем вверху — включите его.",
+    };
+  }
+  if (d.lastWebhookIssueAt) {
+    return {
+      tone: "warn" as const,
+      title: "Meta присылала сообщение, но оно было отклонено",
+      body: `${d.lastWebhookIssue ?? "причина не записана"} (${whenLabel(d.lastWebhookIssueAt)}).`,
+    };
+  }
+  return {
+    tone: "warn" as const,
+    title: "От Meta не пришло ни одного сообщения",
+    body:
+      "Значит дело в настройке на стороне Meta, а не у нас. Проверьте по порядку: приложение опубликовано (в режиме Development Meta шлёт события только от аккаунтов с ролью в приложении — добавьте пишущий аккаунт как Instagram Tester и примите приглашение в самом Instagram); в разделе webhooks подписано поле messages; Callback URL и Verify Token совпадают с указанными выше.",
+  };
+}
 
 type TestState =
   | { kind: "idle" }
@@ -75,6 +125,20 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
   const [webhookUrl, setWebhookUrl] = useState("");
   const [verifyToken, setVerifyToken] = useState("");
   const [testState, setTestState] = useState<TestState>({ kind: "idle" });
+  const [diag, setDiag] = useState<Diagnostics | null>(null);
+  const [diagBusy, setDiagBusy] = useState(false);
+  const loadDiag = useServerFn(getInstagramDiagnostics);
+
+  async function refreshDiagnostics() {
+    setDiagBusy(true);
+    try {
+      setDiag(await loadDiag({ data: { salonId } }));
+    } catch (e: any) {
+      toast.error(e.message ?? "Не удалось получить диагностику");
+    } finally {
+      setDiagBusy(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -88,6 +152,14 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
         setWebhookUrl(cfg.webhook_url);
         setVerifyToken(cfg.verify_token);
         setEnabledState(cfg.enabled);
+        // Load the diagnostics with the config: whoever opens this tab after setting it up is
+        // usually here precisely because a message went unanswered.
+        try {
+          const d = await loadDiag({ data: { salonId } });
+          if (!cancelled) setDiag(d);
+        } catch {
+          /* diagnostics are advisory — never block the settings form on them */
+        }
       } catch (e: any) {
         if (!cancelled) toast.error(e.message ?? "Не удалось загрузить настройки Instagram");
       } finally {
@@ -362,6 +434,57 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
             <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
             <div>{testState.message}</div>
           </div>
+        )}
+      </Card>
+
+      <Card className="p-6 space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="font-semibold">Диагностика</h2>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={refreshDiagnostics}
+            disabled={diagBusy || loading}
+          >
+            <RefreshCw className={`h-3.5 w-3.5 mr-1 ${diagBusy ? "animate-spin" : ""}`} />
+            Обновить
+          </Button>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Если клиент написал, а ассистент не ответил — начните отсюда. Напишите в Direct салона,
+          подождите 10–15 секунд и нажмите «Обновить».
+        </p>
+        {diag ? (
+          (() => {
+            const v = diagnose(diag, enabled);
+            const cls =
+              v.tone === "ok" ? "text-green-700 bg-green-50" : "text-amber-800 bg-amber-50";
+            const Icon = v.tone === "ok" ? CheckCircle2 : AlertCircle;
+            return (
+              <>
+                <div className={`flex items-start gap-2 text-sm rounded-md p-3 ${cls}`}>
+                  <Icon className="h-4 w-4 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="font-medium">{v.title}</p>
+                    <p className="mt-0.5">{v.body}</p>
+                  </div>
+                </div>
+                <dl className="text-xs text-muted-foreground grid grid-cols-[auto,1fr] gap-x-3 gap-y-1">
+                  <dt>Диалогов в Instagram:</dt>
+                  <dd>{diag.conversationCount}</dd>
+                  <dt>Последнее сообщение от клиента:</dt>
+                  <dd>
+                    {whenLabel(diag.lastInboundAt)}
+                    {diag.lastInboundText ? ` — «${diag.lastInboundText.slice(0, 60)}»` : ""}
+                  </dd>
+                  <dt>Последний ответ ассистента:</dt>
+                  <dd>{whenLabel(diag.lastOutboundAt)}</dd>
+                </dl>
+              </>
+            );
+          })()
+        ) : (
+          <p className="text-sm text-muted-foreground">Загрузка…</p>
         )}
       </Card>
 

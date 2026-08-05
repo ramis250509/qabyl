@@ -150,18 +150,35 @@ export const Route = createFileRoute("/api/public/ig/$salonId")({
             .maybeSingle(),
         ]);
 
+        // Every reason we refuse or ignore a delivery is recorded, not just console-logged.
+        // Debugging "the assistant did not answer" hinges on one question — did Meta reach us at
+        // all? — and a Cloudflare log line the salon owner cannot read does not answer it. These
+        // rows show up in /admin/errors and drive the diagnostics panel in the Instagram tab.
+        const record = async (message: string, context: Record<string, unknown> = {}) => {
+          const { logError } = await import("@/lib/error-log.server");
+          await logError({
+            source: "ig-webhook",
+            level: "warn",
+            message,
+            salonId,
+            context: { rid, ...context },
+          });
+        };
+
         const appSecret = (secrets as any)?.instagram_app_secret ?? "";
         // No app secret means this endpoint has no authentication at all — the URL contains only a
         // salon id, which is not a secret. Refuse rather than process attacker-supplied "client
         // messages" that would drive the assistant and burn the salon's Gemini budget.
         if (!appSecret) {
-          errLog(`no instagram_app_secret configured for salon=${salonId} — refusing webhook`);
+          await record("Webhook отклонён: App Secret не заполнен в настройках салона");
           return new Response("Forbidden", { status: 403 });
         }
         const signature =
           request.headers.get("x-hub-signature-256") ?? request.headers.get("X-Hub-Signature-256");
         if (!(await igVerifySignature(appSecret, rawBody, signature))) {
-          errLog(`bad X-Hub-Signature-256 for salon=${salonId}`);
+          await record("Webhook отклонён: неверная подпись X-Hub-Signature-256", {
+            hasSignatureHeader: Boolean(signature),
+          });
           return new Response("Forbidden", { status: 403 });
         }
 
@@ -179,10 +196,13 @@ export const Route = createFileRoute("/api/public/ig/$salonId")({
         if (events.length === 0) return ack();
 
         // Guard against a mis-pasted webhook URL routing another account's DMs into this salon.
+        // This one is recorded loudly: it is a silent drop, so without a record it looks exactly
+        // like "Meta never called" while the real fix is one wrong digit in the account ID field.
         const configuredIgUser = (secrets as any)?.instagram_user_id ?? "";
         if (configuredIgUser && igUserId && configuredIgUser !== igUserId) {
-          errLog(
-            `webhook for IG account ${igUserId} arrived on salon=${salonId} (configured ${configuredIgUser}) — ignored`,
+          await record(
+            `Webhook проигнорирован: пришёл для Instagram-аккаунта ${igUserId}, а в настройках указан ${configuredIgUser}. Исправьте «Instagram account ID».`,
+            { received: igUserId, configured: configuredIgUser },
           );
           return ack();
         }
@@ -210,7 +230,19 @@ export const Route = createFileRoute("/api/public/ig/$salonId")({
           ((salon as any).instagram_enabled ?? false) === true &&
           ((salon as any).ai_assistant_enabled ?? true) !== false &&
           ((assistant as any)?.enabled ?? true) !== false;
-        if (!assistantOn || !creds.token || conversationsToProcess.size === 0) return ack();
+        // A message arrived and we are deliberately staying silent. Legitimate (channel off, human
+        // took over, duplicate delivery) but indistinguishable from a bug when someone is staring
+        // at an unanswered chat — so say which of the two it was.
+        if (!assistantOn || !creds.token) {
+          await record("Сообщение получено, но ассистент не отвечает в Instagram", {
+            instagram_enabled: (salon as any).instagram_enabled ?? false,
+            ai_assistant_enabled: (salon as any).ai_assistant_enabled ?? true,
+            assistant_enabled: (assistant as any)?.enabled ?? true,
+            hasToken: Boolean(creds.token),
+          });
+          return ack();
+        }
+        if (conversationsToProcess.size === 0) return ack();
 
         const assistantConfig = {
           greeting: (assistant as any)?.greeting ?? null,

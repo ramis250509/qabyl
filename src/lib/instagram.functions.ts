@@ -137,6 +137,74 @@ export const setInstagramEnabled = createServerFn({ method: "POST" })
   });
 
 /**
+ * Answer the one question that matters when a client's message goes unanswered: did Meta actually
+ * call our webhook?
+ *
+ * The decision tree needs no new tables, because the three outcomes each leave their own trace:
+ *   - Meta called and we accepted it  → an inbound row in wa_messages on an instagram conversation
+ *   - Meta called and we refused it   → a warn row in error_logs from source 'ig-webhook'
+ *   - Meta never called               → neither
+ * The third case is the common one, and it is always a Meta-side setup problem (app still in
+ * development mode, webhook field not subscribed, sender has no role on the app) — never something
+ * that can be fixed on our side, which is exactly what the salon needs to be told.
+ */
+export const getInstagramDiagnostics = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => z.object({ salonId: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    await assertSalonAccess(context.supabase, context.userId, data.salonId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+    const { data: convs } = await supabaseAdmin
+      .from("wa_conversations")
+      .select("id")
+      .eq("salon_id", data.salonId)
+      .eq("channel", "instagram");
+    const convIds = (convs ?? []).map((c: any) => c.id as string);
+
+    const [inbound, outbound, webhookIssue] = await Promise.all([
+      convIds.length
+        ? supabaseAdmin
+            .from("wa_messages")
+            .select("created_at, text_body")
+            .in("conversation_id", convIds)
+            .eq("direction", "in")
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle()
+        : Promise.resolve({ data: null }),
+      convIds.length
+        ? supabaseAdmin
+            .from("wa_messages")
+            .select("created_at, text_body")
+            .in("conversation_id", convIds)
+            .eq("direction", "out")
+            .eq("kind", "text")
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle()
+        : Promise.resolve({ data: null }),
+      supabaseAdmin
+        .from("error_logs" as any)
+        .select("ts, message")
+        .eq("salon_id", data.salonId)
+        .eq("source", "ig-webhook")
+        .order("ts", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ]);
+
+    return {
+      conversationCount: convIds.length,
+      lastInboundAt: (inbound as any)?.data?.created_at ?? null,
+      lastInboundText: ((inbound as any)?.data?.text_body ?? null) as string | null,
+      lastOutboundAt: (outbound as any)?.data?.created_at ?? null,
+      lastWebhookIssueAt: (webhookIssue as any)?.data?.ts ?? null,
+      lastWebhookIssue: ((webhookIssue as any)?.data?.message ?? null) as string | null,
+    };
+  });
+
+/**
  * Live credential check against Meta, so the salon finds out the token is wrong HERE and not by
  * watching client messages go unanswered. Calls /me on the Instagram Graph API — the cheapest call
  * that proves the token is valid, and it returns the account id we can compare with what was typed.
