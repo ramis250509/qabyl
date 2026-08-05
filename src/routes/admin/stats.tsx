@@ -51,7 +51,8 @@ function StatsPage() {
     if (branchId !== "all") q = q.eq("branch_id", branchId);
 
     // Assistant funnel is a super-admin-only view, so only fetch its top-of-funnel number
-    // (WhatsApp conversations started in the period) for super admins. wa_conversations has no
+    // (assistant conversations started in the period — WhatsApp and Instagram alike, they share
+    // this table) for super admins. wa_conversations has no
     // branch dimension, so the branch filter doesn't apply here.
     let convPromise: Promise<{ count: number | null }> = Promise.resolve({ count: 0 });
     if (isSuperAdmin) {
@@ -164,14 +165,15 @@ function StatsPage() {
         </Card>
       </div>
 
-      {/* Assistant funnel: how many WhatsApp conversations turned into bookings. Super-admin only. */}
+      {/* Assistant funnel: how many assistant conversations turned into bookings. Super-admin only.
+          Counts every channel — wa_conversations holds both WhatsApp and Instagram Direct. */}
       {isSuperAdmin && (
       <Card className="p-6">
         <h3 className="font-semibold mb-4">Воронка ассистента</h3>
         <div className="grid grid-cols-3 gap-4 text-center">
           <div>
             <p className="text-2xl sm:text-3xl font-bold">{stats.convCount}</p>
-            <p className="text-xs text-muted-foreground mt-1">Диалогов в WhatsApp</p>
+            <p className="text-xs text-muted-foreground mt-1">Диалогов с ассистентом</p>
           </div>
           <div>
             <p className="text-2xl sm:text-3xl font-bold">{stats.aiCount}</p>
@@ -188,7 +190,7 @@ function StatsPage() {
           </div>
         )}
         <p className="text-xs text-muted-foreground mt-3">
-          Диалог — это клиент, написавший в WhatsApp. Конверсия показывает, какую долю из них ассистент довёл до записи.
+          Диалог — это клиент, написавший ассистенту в WhatsApp или Instagram Direct. Конверсия показывает, какую долю из них ассистент довёл до записи.
         </p>
       </Card>
       )}

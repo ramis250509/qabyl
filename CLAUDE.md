@@ -43,6 +43,7 @@ Current routes:
 - `/admin/salons/$salonId` → full salon config (services, masters, branches, site, etc.)
 - `/admin/calendar`, `/admin/stats`, `/admin/notifications`
 - `/api/public/wa/$salonId` → WhatsApp webhook receiver (POST only, secured by per-salon token)
+- `/api/public/ig/$salonId` → Instagram Direct webhook receiver (GET handshake + POST, secured by the Meta app-secret signature)
 - `/preview/salon.$salonId` → salon site preview
 
 ### Server functions (`src/lib/*.functions.ts`)
@@ -88,6 +89,26 @@ Key design decisions:
 - Unprocessed inbound messages drained in a loop (max 3 iterations) inside the lock window
 
 States: `idle → awaiting_branch → collecting → awaiting_photo → awaiting_price_confirm → awaiting_part_of_day → awaiting_slot_choice → awaiting_master_choice → awaiting_name → booking → done`
+
+### Instagram Direct assistant
+
+`src/lib/ig-api.server.ts` + `src/routes/api/public/ig.$salonId.ts` run the same assistant over
+Instagram Direct, using Meta's official Instagram Messaging API (Instagram Login flavour,
+`graph.instagram.com`) — free transport, no aggregator.
+
+- **Same tables**: Instagram conversations live in `wa_conversations` / `wa_messages` with
+  `channel = 'instagram'`. Everything downstream (lock, drain loop, agent, admin panel, stats)
+  is channel-agnostic.
+- **No phone**: `client_phone` holds `ig:<IGSID>` and `external_id` holds the IGSID we reply to.
+  The client's real phone is asked for by the assistant during booking and kept in
+  `state_data.client_phone` (see the `client_phone` gate in `executeV4Tool`).
+- **V4 only** — V3's interactive buttons/lists have no Instagram equivalent.
+- **Auth**: POST is authenticated by `X-Hub-Signature-256` over the raw body (per-salon app
+  secret); the verify token only covers the GET handshake. A salon with no app secret is refused.
+- Per-salon credentials live in `salon_secrets.instagram_*`, edited in the admin panel's
+  Instagram tab (`src/components/admin/InstagramTab.tsx`, server fns in
+  `src/lib/instagram.functions.ts`).
+- Shared lock helpers: `src/lib/chat-lock.server.ts` (the WhatsApp route still has its own copies).
 
 ### i18n
 

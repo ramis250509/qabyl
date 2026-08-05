@@ -1,6 +1,6 @@
 -- =============================================================================
 -- Миграции для ручного применения через Supabase SQL Editor
--- Обновлено 2026-08-01 — добавлены RBAC + предоплата (этапы 1-3 нового плана)
+-- Обновлено 2026-08-05 — добавлен канал Instagram Direct для ИИ-Админа
 -- =============================================================================
 --
 -- ВНИМАНИЕ: этот файл — «пачка что применить сейчас», а не replay истории.
@@ -14,12 +14,29 @@
 --   3) 20260801120000_rbac_manager_role_and_staff_isolation.sql   (НОВОЕ — RBAC)
 --   4) 20260801130000_prepayment_schema.sql                       (НОВОЕ — предоплата)
 --   5) 20260801140000_prepayment_receipts_storage.sql             (НОВОЕ — бакет чеков)
---   6) 20260801150000_ai_assistant_rules.sql                      (НОВОЕ — ai_rules)
+--   6) 20260801150000_ai_assistant_rules.sql                      (ai_rules)
+--   7) 20260805120000_instagram_channel.sql                       (НОВОЕ — Instagram Direct)
 --
--- Все пять — идемпотентны (IF NOT EXISTS / OR REPLACE / DROP POLICY IF EXISTS
+-- Все — идемпотентны (IF NOT EXISTS / OR REPLACE / DROP POLICY IF EXISTS
 -- везде). Повторный прогон не ломает данные.
 --
 -- ROLLBACK новых миграций (порядок обратный):
+--   -- Instagram-канал (после отката ассистент в Instagram перестаёт работать,
+--   -- WhatsApp не затрагивается):
+--   DROP INDEX IF EXISTS public.wa_conversations_channel_idx;
+--   DROP INDEX IF EXISTS public.wa_conversations_external_uidx;
+--   ALTER TABLE public.wa_conversations DROP CONSTRAINT IF EXISTS wa_conversations_channel_chk;
+--   ALTER TABLE public.wa_conversations DROP COLUMN IF EXISTS external_id,
+--                                       DROP COLUMN IF EXISTS channel;
+--   ALTER TABLE public.salon_secrets DROP COLUMN IF EXISTS instagram_verify_token,
+--                                    DROP COLUMN IF EXISTS instagram_app_secret,
+--                                    DROP COLUMN IF EXISTS instagram_token,
+--                                    DROP COLUMN IF EXISTS instagram_user_id;
+--   ALTER TABLE public.salons DROP COLUMN IF EXISTS instagram_enabled;
+--   -- ВНИМАНИЕ: строки Instagram-диалогов (client_phone LIKE 'ig:%') после отката
+--   -- останутся в wa_conversations без признака канала. При необходимости:
+--   --   DELETE FROM public.wa_conversations WHERE client_phone LIKE 'ig:%';
+--
 --   -- Storage:
 --   DELETE FROM storage.buckets WHERE id = 'prepayment-receipts';
 --   DROP POLICY IF EXISTS "Salon admin reads own prepayment receipts" ON storage.objects;
@@ -51,7 +68,13 @@
 --   -- manager enum-значение остаётся (см. выше). Безопасно.
 --
 -- ПРОВЕРКА ПОСЛЕ ПРИМЕНЕНИЯ:
---   SELECT to_regclass('public.excluded_contacts')          AS excluded_contacts_ok,
+--   SELECT EXISTS (SELECT 1 FROM information_schema.columns
+--                   WHERE table_name = 'wa_conversations' AND column_name = 'channel')
+--                                                           AS ig_channel_col_ok,
+--          EXISTS (SELECT 1 FROM information_schema.columns
+--                   WHERE table_name = 'salon_secrets' AND column_name = 'instagram_token')
+--                                                           AS ig_secrets_ok,
+--          to_regclass('public.excluded_contacts')          AS excluded_contacts_ok,
 --          to_regclass('public.ops_config')                 AS ops_config_ok,
 --          to_regclass('public.prepayment_settings')        AS prepayment_settings_ok,
 --          to_regclass('public.appointment_prepayments')    AS prepayment_appt_ok,
@@ -88,3 +111,15 @@
 --      слот освобождается (cron джоба prepayment_expire_holds).
 --
 -- =============================================================================
+
+-- РУЧНАЯ ПРОВЕРКА INSTAGRAM ПОСЛЕ ПРИМЕНЕНИЯ:
+--   1) Админка салона → вкладка «Instagram»: заполни Instagram account ID, Access Token
+--      и App Secret, нажми «Сохранить и проверить» — должно показать @username аккаунта.
+--   2) В Meta App Dashboard пропиши Callback URL и Verify Token со вкладки, подпишись
+--      на поле `messages`. Meta должна принять подписку (GET-хендшейк отвечает challenge).
+--   3) Включи переключатель канала вверху вкладки.
+--   4) Напиши в Direct с ЛИЧНОГО аккаунта — ассистент должен ответить.
+--   5) Доведи до записи: перед подтверждением ассистент обязан спросить номер телефона;
+--      после записи проверь, что запись появилась в календаре с этим номером.
+--   6) Ответь клиенту вручную из приложения Instagram — ассистент должен замолчать
+--      на 5 минут (ai_paused = true у диалога).
