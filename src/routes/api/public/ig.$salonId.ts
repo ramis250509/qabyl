@@ -242,11 +242,19 @@ export const Route = createFileRoute("/api/public/ig/$salonId")({
           ((salon as any).instagram_enabled ?? false) === true &&
           ((salon as any).ai_assistant_enabled ?? true) !== false &&
           ((assistant as any)?.enabled ?? true) !== false;
-        // A message arrived and we are deliberately staying silent. Legitimate (channel off, human
-        // took over, duplicate delivery) but indistinguishable from a bug when someone is staring
-        // at an unanswered chat — so say which of the two it was.
+        // A message arrived and we are deliberately staying silent. Legitimate, but from the
+        // outside identical to a bug — so name the exact switch that is off. Four different
+        // toggles can produce this, they live on three different screens, and "the assistant is
+        // not answering" sends the owner hunting through all of them.
         if (!assistantOn || !creds.token) {
-          await record("Сообщение получено, но ассистент не отвечает в Instagram", {
+          const off = !((salon as any).instagram_enabled ?? false)
+            ? "канал Instagram выключен — включите переключатель вверху вкладки «Instagram»"
+            : !((salon as any).ai_assistant_enabled ?? true)
+              ? "ИИ-ассистент не подключён для этого салона — включается владельцем платформы"
+              : !((assistant as any)?.enabled ?? true)
+                ? "ассистент выключен — включите переключатель «Активен» во вкладке «Ассистент» и сохраните"
+                : "не заполнен Access Token во вкладке «Instagram»";
+          await record(`Сообщение получено, но ответа не будет: ${off}`, {
             instagram_enabled: (salon as any).instagram_enabled ?? false,
             ai_assistant_enabled: (salon as any).ai_assistant_enabled ?? true,
             assistant_enabled: (assistant as any)?.enabled ?? true,
