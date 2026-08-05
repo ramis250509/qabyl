@@ -173,6 +173,10 @@ export const getInstagramDiagnostics = createServerFn({ method: "POST" })
             .limit(1)
             .maybeSingle()
         : Promise.resolve({ data: null }),
+      // "Last reply" must mean last reply Instagram actually ACCEPTED, not last reply we composed.
+      // A refused send still writes its row (the text is worth keeping for the admin), but with a
+      // null message id — counting those as success would report a healthy channel to a salon whose
+      // every answer is being bounced, and would also outrank the error row recorded moments before.
       convIds.length
         ? supabaseAdmin
             .from("wa_messages")
@@ -180,6 +184,7 @@ export const getInstagramDiagnostics = createServerFn({ method: "POST" })
             .in("conversation_id", convIds)
             .eq("direction", "out")
             .eq("kind", "text")
+            .not("green_api_message_id", "is", null)
             .order("created_at", { ascending: false })
             .limit(1)
             .maybeSingle()

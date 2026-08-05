@@ -218,7 +218,10 @@ export const Route = createFileRoute("/api/public/ig/$salonId")({
 
         const creds: IgCreds = {
           token: (secrets as any)?.instagram_token ?? "",
-          igUserId: configuredIgUser || igUserId,
+          // Prefer the id Meta itself used in this delivery over the one typed into the settings:
+          // when they differ (see the two-ids note above) Meta's own value is the one its API
+          // expects on the send endpoint.
+          igUserId: igUserId || configuredIgUser,
         };
 
         // Ingest EVERY event first (so the admin panel and the audit log stay complete even when
@@ -280,10 +283,14 @@ export const Route = createFileRoute("/api/public/ig/$salonId")({
               convId,
               log,
               errLog,
+              record,
               ms,
             });
           } catch (e: any) {
-            errLog(`turn failed for conv=${convId}: ${e?.message ?? e}`);
+            // Anything that escapes the turn leaves the client staring at silence, so it must be
+            // recorded and not merely logged — this catch used to be the last blind spot on the
+            // path between "message received" and "reply sent".
+            await record(`Не удалось обработать сообщение: ${e?.message ?? e}`, { convId });
           }
         }
 
@@ -583,10 +590,23 @@ async function runConversationTurn(opts: {
   convId: string;
   log: (m: string, ...r: unknown[]) => void;
   errLog: (m: string, ...r: unknown[]) => void;
+  record: (message: string, context?: Record<string, unknown>) => Promise<void>;
   ms: () => number;
 }): Promise<void> {
-  const { db, salonId, salon, assistant, assistantConfig, secrets, creds, convId, log, errLog, ms } =
-    opts;
+  const {
+    db,
+    salonId,
+    salon,
+    assistant,
+    assistantConfig,
+    secrets,
+    creds,
+    convId,
+    log,
+    errLog,
+    record,
+    ms,
+  } = opts;
 
   const lockId = crypto.randomUUID();
   if (!(await acquireConversationLock(db, convId, lockId))) {
@@ -616,7 +636,9 @@ async function runConversationTurn(opts: {
 
     const recipientId = conv.external_id as string;
     if (!recipientId) {
-      errLog(`conv=${convId} has no external_id — cannot reply on Instagram`);
+      await record("У диалога нет Instagram-идентификатора получателя — ответить невозможно", {
+        convId,
+      });
       return;
     }
 
@@ -809,7 +831,13 @@ async function runConversationTurn(opts: {
       const tAgentDone = ms();
       if (!isDuplicateReply) {
         const res = await igSendMessage(creds, recipientId, sentText);
-        if (!res.ok) errLog(`send failed: ${res.error}`);
+        if (!res.ok) {
+          // THE failure that matters: the assistant did its work and Instagram refused to deliver
+          // it. Meta's own code and wording are carried through verbatim — code 190 means the
+          // 60-day token expired or was revoked, code 10/200 means the permission is missing —
+          // because the fix is completely different in each case.
+          await record(`Instagram отклонил отправку ответа: ${res.error}`, { convId });
+        }
         sentMessageId = res.ok ? res.messageId : undefined;
         lastSentReply = sentText;
       }

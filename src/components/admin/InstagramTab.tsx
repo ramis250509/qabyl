@@ -40,6 +40,19 @@ function whenLabel(iso: string | null): string {
  * that case must not be buried under "everything looks configured".
  */
 function diagnose(d: Diagnostics, enabled: boolean) {
+  const issueAt = d.lastWebhookIssueAt ? new Date(d.lastWebhookIssueAt).getTime() : 0;
+  const outAt = d.lastOutboundAt ? new Date(d.lastOutboundAt).getTime() : 0;
+
+  // A recorded problem that is NEWER than the last successful reply outranks everything else: it
+  // is, by definition, what went wrong most recently. Meta's own wording is passed straight
+  // through — "code=190 …" says "the token expired", and nothing we could paraphrase says it better.
+  if (issueAt && issueAt > outAt) {
+    return {
+      tone: "warn" as const,
+      title: "Последняя ошибка",
+      body: `${d.lastWebhookIssue ?? "причина не записана"} (${whenLabel(d.lastWebhookIssueAt)}).`,
+    };
+  }
   if (d.lastInboundAt && d.lastOutboundAt) {
     return {
       tone: "ok" as const,
@@ -47,20 +60,13 @@ function diagnose(d: Diagnostics, enabled: boolean) {
       body: `Последнее сообщение от клиента — ${whenLabel(d.lastInboundAt)}, последний ответ ассистента — ${whenLabel(d.lastOutboundAt)}.`,
     };
   }
-  if (d.lastInboundAt && !d.lastOutboundAt) {
+  if (d.lastInboundAt) {
     return {
       tone: "warn" as const,
       title: "Сообщения приходят, но ответа не было",
       body: enabled
-        ? "Webhook работает — значит проблема уже на нашей стороне. Загляните во вкладку «Ошибки»."
+        ? "Webhook работает — значит дело уже на нашей стороне. Напишите ещё раз и обновите: причина появится здесь же."
         : "Канал выключен переключателем вверху — включите его.",
-    };
-  }
-  if (d.lastWebhookIssueAt) {
-    return {
-      tone: "warn" as const,
-      title: "Meta присылала сообщение, но оно было отклонено",
-      body: `${d.lastWebhookIssue ?? "причина не записана"} (${whenLabel(d.lastWebhookIssueAt)}).`,
     };
   }
   return {
@@ -491,6 +497,14 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
                   </dd>
                   <dt>Последний ответ ассистента:</dt>
                   <dd>{whenLabel(diag.lastOutboundAt)}</dd>
+                  {diag.lastWebhookIssueAt && (
+                    <>
+                      <dt>Последняя ошибка:</dt>
+                      <dd>
+                        {whenLabel(diag.lastWebhookIssueAt)} — {diag.lastWebhookIssue}
+                      </dd>
+                    </>
+                  )}
                 </dl>
               </>
             );

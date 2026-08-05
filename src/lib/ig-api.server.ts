@@ -125,12 +125,26 @@ export async function igSendMessage(
   const chunks = splitForInstagram(text);
   if (chunks.length === 0) return { ok: false, error: "empty text" };
 
+  // Meta documents this endpoint both as /me/messages and as /<IG_ID>/messages, and which one a
+  // given token is accepted on has varied. Resolving it once here — on the first chunk, then
+  // reusing the winner — keeps a token that only works on the explicit-id form from producing a
+  // salon whose assistant reads every message and answers none.
+  let path = "/me/messages";
   let first: IgSendResult | null = null;
   for (const chunk of chunks) {
-    const res = await igPost(creds, "/me/messages", {
-      recipient: { id: recipientId },
-      message: { text: chunk },
-    });
+    const payload = { recipient: { id: recipientId }, message: { text: chunk } };
+    let res = await igPost(creds, path, payload);
+    if (!res.ok && path === "/me/messages" && creds.igUserId) {
+      const viaId = await igPost(creds, `/${creds.igUserId}/messages`, payload);
+      if (viaId.ok) {
+        path = `/${creds.igUserId}/messages`;
+        res = viaId;
+      } else {
+        // Both forms failed — report the /me error, which is the documented default and the more
+        // meaningful of the two.
+        return res;
+      }
+    }
     if (!first) first = res;
     // Stop on the first failure — sending the tail of a reply whose head never arrived
     // produces a confusing half-message for the client.
