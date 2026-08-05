@@ -402,7 +402,8 @@ async function ingestEvent(opts: {
   const previousState = (existingConv?.state ?? "idle") as string;
   const inProgress = previousState !== "idle" && previousState !== "done";
   const sessionGapMs = inProgress ? 12 * 60 * 60 * 1000 : 20 * 60 * 1000;
-  const startsNewSession = !existingConv || (prevMsgAtMs > 0 && Date.now() - prevMsgAtMs > sessionGapMs);
+  const startsNewSession =
+    !existingConv || (prevMsgAtMs > 0 && Date.now() - prevMsgAtMs > sessionGapMs);
 
   // Instagram gives us an opaque IGSID; without a profile lookup every chat in the admin panel
   // would read as a bare number. Only worth the request once, on the first message.
@@ -699,7 +700,10 @@ async function runConversationTurn(opts: {
         await db
           .from("wa_messages")
           .update({ processed_at: new Date().toISOString() })
-          .in("id", stale.map((m: any) => m.id));
+          .in(
+            "id",
+            stale.map((m: any) => m.id),
+          );
       }
       if (fresh.length === 0) continue;
 
@@ -807,7 +811,10 @@ async function runConversationTurn(opts: {
         await db
           .from("wa_messages")
           .update({ processed_at: new Date().toISOString() })
-          .in("id", fresh.map((m: any) => m.id));
+          .in(
+            "id",
+            fresh.map((m: any) => m.id),
+          );
         await db
           .from("wa_conversations")
           .update({ state: "idle", state_data: {} })
@@ -892,7 +899,10 @@ async function runConversationTurn(opts: {
       await db
         .from("wa_messages")
         .update({ processed_at: new Date().toISOString() })
-        .in("id", fresh.map((m: any) => m.id));
+        .in(
+          "id",
+          fresh.map((m: any) => m.id),
+        );
 
       const updates: Record<string, any> = {
         last_message_at: new Date().toISOString(),

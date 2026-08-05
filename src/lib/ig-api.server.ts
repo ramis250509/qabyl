@@ -191,13 +191,10 @@ export async function igFetchProfile(
   igsid: string,
 ): Promise<{ name: string | null; username: string | null } | null> {
   try {
-    const res = await fetch(
-      `${IG_GRAPH}/${encodeURIComponent(igsid)}?fields=name,username`,
-      {
-        headers: { Authorization: `Bearer ${creds.token}` },
-        signal: AbortSignal.timeout(8000),
-      },
-    );
+    const res = await fetch(`${IG_GRAPH}/${encodeURIComponent(igsid)}?fields=name,username`, {
+      headers: { Authorization: `Bearer ${creds.token}` },
+      signal: AbortSignal.timeout(8000),
+    });
     if (!res.ok) return null;
     const body: any = await res.json();
     return { name: body?.name ?? null, username: body?.username ?? null };
@@ -278,7 +275,10 @@ export type IgInboundEvent = {
  * in event types we do not handle (`read`, `reaction`, delivery receipts). Anything without a
  * message or a postback is dropped here so the route only ever sees real client input.
  */
-export function parseIgWebhook(payload: any): { igUserId: string | null; events: IgInboundEvent[] } {
+export function parseIgWebhook(payload: any): {
+  igUserId: string | null;
+  events: IgInboundEvent[];
+} {
   const events: IgInboundEvent[] = [];
   let igUserId: string | null = null;
 
@@ -317,7 +317,7 @@ export function parseIgWebhook(payload: any): { igUserId: string | null; events:
 
       events.push({
         clientId,
-        mid: msg?.mid ? String(msg.mid) : (postback?.mid ? String(postback.mid) : null),
+        mid: msg?.mid ? String(msg.mid) : postback?.mid ? String(postback.mid) : null,
         text: (msg?.text ?? postback?.title ?? null) || null,
         imageUrl: image?.payload?.url ?? null,
         audioUrl: audio?.payload?.url ?? null,

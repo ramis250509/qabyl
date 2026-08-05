@@ -6,11 +6,7 @@
 // (Instagram hard-rejects a body over 1000 chars — an off-by-one there means the client gets
 // nothing at all).
 import { test, expect, describe } from "bun:test";
-import {
-  igVerifySignature,
-  parseIgWebhook,
-  splitForInstagram,
-} from "@/lib/ig-api.server";
+import { igVerifySignature, parseIgWebhook, splitForInstagram } from "@/lib/ig-api.server";
 
 const IG_ACCOUNT = "17841400000000000";
 const CLIENT = "9876543210";
@@ -115,14 +111,26 @@ describe("parseIgWebhook", () => {
         {
           id: IG_ACCOUNT,
           messaging: [
-            { sender: { id: "a" }, recipient: { id: IG_ACCOUNT }, message: { mid: "1", text: "раз" } },
-            { sender: { id: "b" }, recipient: { id: IG_ACCOUNT }, message: { mid: "2", text: "два" } },
+            {
+              sender: { id: "a" },
+              recipient: { id: IG_ACCOUNT },
+              message: { mid: "1", text: "раз" },
+            },
+            {
+              sender: { id: "b" },
+              recipient: { id: IG_ACCOUNT },
+              message: { mid: "2", text: "два" },
+            },
           ],
         },
         {
           id: IG_ACCOUNT,
           messaging: [
-            { sender: { id: "c" }, recipient: { id: IG_ACCOUNT }, message: { mid: "3", text: "три" } },
+            {
+              sender: { id: "c" },
+              recipient: { id: IG_ACCOUNT },
+              message: { mid: "3", text: "три" },
+            },
           ],
         },
       ],

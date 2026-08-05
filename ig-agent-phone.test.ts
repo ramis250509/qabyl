@@ -6,11 +6,7 @@
 // keyed on it — so on Instagram those lookups silently match nothing unless they are gated. This
 // file pins the gates. Run: bun test ig-agent-phone.test.ts
 import { test, expect, describe } from "bun:test";
-import {
-  buildSystemPromptV4,
-  executeV4Tool,
-  normalizeClientPhone,
-} from "@/lib/wa-agent-v4.server";
+import { buildSystemPromptV4, executeV4Tool, normalizeClientPhone } from "@/lib/wa-agent-v4.server";
 import type { WaAgentInput } from "@/lib/wa-agent.server";
 
 function igInput(overrides: Partial<WaAgentInput> = {}): WaAgentInput {
@@ -108,7 +104,13 @@ describe("create_appointment phone gate", () => {
   };
 
   test("refuses to book with no number at all", async () => {
-    const res = await executeV4Tool("create_appointment", baseArgs, igInput(), null as any, freshFlags());
+    const res = await executeV4Tool(
+      "create_appointment",
+      baseArgs,
+      igInput(),
+      null as any,
+      freshFlags(),
+    );
     expect(res.success).toBe(false);
     expect(res.reason).toBe("need_client_phone");
     expect(res.note).toContain("client_phone");

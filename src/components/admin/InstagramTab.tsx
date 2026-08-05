@@ -72,8 +72,7 @@ function diagnose(d: Diagnostics, enabled: boolean) {
   return {
     tone: "warn" as const,
     title: "От Meta не пришло ни одного сообщения",
-    body:
-      "Значит дело в настройке на стороне Meta, а не у нас. Проверьте по порядку: приложение опубликовано (в режиме Development Meta шлёт события только от аккаунтов с ролью в приложении — добавьте пишущий аккаунт как Instagram Tester и примите приглашение в самом Instagram); в разделе webhooks подписано поле messages; Callback URL и Verify Token совпадают с указанными выше.",
+    body: "Значит дело в настройке на стороне Meta, а не у нас. Проверьте по порядку: приложение опубликовано (в режиме Development Meta шлёт события только от аккаунтов с ролью в приложении — добавьте пишущий аккаунт как Instagram Tester и примите приглашение в самом Instagram); в разделе webhooks подписано поле messages; Callback URL и Verify Token совпадают с указанными выше.",
   };
 }
 
@@ -108,9 +107,18 @@ function CopyField({ label, value, hint }: { label: string; value: string; hint?
     <div>
       <Label>{label}</Label>
       <div className="flex gap-2 mt-1">
-        <Input readOnly value={value} className="font-mono text-xs" onFocus={(e) => e.currentTarget.select()} />
+        <Input
+          readOnly
+          value={value}
+          className="font-mono text-xs"
+          onFocus={(e) => e.currentTarget.select()}
+        />
         <Button type="button" variant="outline" size="icon" onClick={copy} title="Скопировать">
-          {copied ? <CheckCircle2 className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
+          {copied ? (
+            <CheckCircle2 className="h-4 w-4 text-green-600" />
+          ) : (
+            <Copy className="h-4 w-4" />
+          )}
         </Button>
       </div>
       {hint && <p className="text-xs text-muted-foreground mt-1">{hint}</p>}
@@ -328,9 +336,9 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
               developers.facebook.com/apps
               <ExternalLink className="h-3 w-3" />
             </a>{" "}
-            → «Создать приложение» → продукт <b>Instagram</b> → <b>«API setup with Instagram
-            login»</b> (именно этот пункт, не «with Facebook login»). Там подключите свой
-            Instagram-аккаунт и сгенерируйте токен доступа с правами{" "}
+            → «Создать приложение» → продукт <b>Instagram</b> →{" "}
+            <b>«API setup with Instagram login»</b> (именно этот пункт, не «with Facebook login»).
+            Там подключите свой Instagram-аккаунт и сгенерируйте токен доступа с правами{" "}
             <code className="text-xs">instagram_business_basic</code> и{" "}
             <code className="text-xs">instagram_business_manage_messages</code>.
           </p>
@@ -388,10 +396,9 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
             disabled={loading}
           />
           <p className="text-xs text-muted-foreground mt-1">
-            Meta → Instagram → <b>API setup with Instagram login</b> → блок «Generate access
-            tokens» → кнопка «Generate token» напротив вашего аккаунта. Действует 60 дней — после
-            этого сгенерируйте заново и вставьте сюда, иначе ассистент перестанет отвечать в
-            Instagram.
+            Meta → Instagram → <b>API setup with Instagram login</b> → блок «Generate access tokens»
+            → кнопка «Generate token» напротив вашего аккаунта. Действует 60 дней — после этого
+            сгенерируйте заново и вставьте сюда, иначе ассистент перестанет отвечать в Instagram.
           </p>
           <p className="text-xs text-amber-700 mt-1">
             Не подходит токен из «API setup with <b>Facebook</b> login» — это другой тип токена, с
@@ -418,7 +425,11 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
           <Button onClick={onSave} disabled={saving || loading}>
             {saving ? "..." : "Сохранить и проверить"}
           </Button>
-          <Button variant="outline" onClick={onTest} disabled={loading || testState.kind === "running"}>
+          <Button
+            variant="outline"
+            onClick={onTest}
+            disabled={loading || testState.kind === "running"}
+          >
             {testState.kind === "running" ? "Проверяем..." : "Проверить связь"}
           </Button>
         </div>
@@ -527,8 +538,8 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
             минут, чтобы не перебивать вас.
           </li>
           <li>
-            Когда ассистент не может помочь, он передаёт диалог вам и присылает уведомление —
-            туда же, куда приходят уведомления по WhatsApp.
+            Когда ассистент не может помочь, он передаёт диалог вам и присылает уведомление — туда
+            же, куда приходят уведомления по WhatsApp.
           </li>
         </ul>
       </Card>

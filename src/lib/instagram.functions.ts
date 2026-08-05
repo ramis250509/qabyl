@@ -42,11 +42,7 @@ export const getInstagramConfig = createServerFn({ method: "POST" })
         .select("instagram_user_id, instagram_token, instagram_app_secret, instagram_verify_token")
         .eq("salon_id", data.salonId)
         .maybeSingle(),
-      supabaseAdmin
-        .from("salons")
-        .select("instagram_enabled")
-        .eq("id", data.salonId)
-        .maybeSingle(),
+      supabaseAdmin.from("salons").select("instagram_enabled").eq("id", data.salonId).maybeSingle(),
     ]);
 
     // The verify token is generated on first open rather than made a manual step: the salon has to
@@ -57,10 +53,9 @@ export const getInstagramConfig = createServerFn({ method: "POST" })
       verifyToken = genToken();
       await supabaseAdmin
         .from("salon_secrets")
-        .upsert(
-          { salon_id: data.salonId, instagram_verify_token: verifyToken } as any,
-          { onConflict: "salon_id" },
-        );
+        .upsert({ salon_id: data.salonId, instagram_verify_token: verifyToken } as any, {
+          onConflict: "salon_id",
+        });
     }
 
     return {
