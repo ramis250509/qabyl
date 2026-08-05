@@ -24,7 +24,14 @@ import {
 type TestState =
   | { kind: "idle" }
   | { kind: "running" }
-  | { kind: "ok"; username: string | null; accountId: string | null; accountType: string | null }
+  | {
+      kind: "ok";
+      username: string | null;
+      accountId: string | null;
+      accountType: string | null;
+      // The account ID was read back from Meta and saved for the owner, rather than typed in.
+      autofilledId?: boolean;
+    }
   | { kind: "error"; message: string };
 
 function CopyField({ label, value, hint }: { label: string; value: string; hint?: string }) {
@@ -92,6 +99,47 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
     };
   }, [salonId]);
 
+  /**
+   * Turn a connection-check result into UI state — and, when the check succeeded while the account
+   * ID field is still empty, fill it in and persist it.
+   *
+   * Meta shows the Instagram account ID in a different place from the token, so making the owner
+   * hunt for it is a pointless extra step: the token itself already identifies the account, and the
+   * check reads it back from /me. Saving it here is what lets the channel be switched on, since
+   * enabling requires all three credentials.
+   */
+  async function applyTestResult(res: Awaited<ReturnType<typeof test>>) {
+    if (!res.ok) {
+      setTestState({ kind: "error", message: res.error });
+      return;
+    }
+    let autofilled = false;
+    if (!userId.trim() && res.accountId) {
+      setUserId(res.accountId);
+      autofilled = true;
+      try {
+        await save({
+          data: {
+            salonId,
+            instagram_user_id: res.accountId,
+            instagram_token: token.trim() || null,
+            instagram_app_secret: appSecret.trim() || null,
+          },
+        });
+      } catch {
+        // Non-fatal: the field is filled on screen, the owner can still press "Сохранить".
+        autofilled = false;
+      }
+    }
+    setTestState({
+      kind: "ok",
+      username: res.username ?? null,
+      accountId: res.accountId ?? null,
+      accountType: res.accountType ?? null,
+      autofilledId: autofilled,
+    });
+  }
+
   async function onSave() {
     setSaving(true);
     try {
@@ -105,17 +153,7 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
       });
       // A saved token is almost always followed by "did it work?" — answer it without a second click.
       setTestState({ kind: "running" });
-      const res = await test({ data: { salonId } });
-      setTestState(
-        res.ok
-          ? {
-              kind: "ok",
-              username: res.username ?? null,
-              accountId: res.accountId ?? null,
-              accountType: res.accountType ?? null,
-            }
-          : { kind: "error", message: res.error },
-      );
+      await applyTestResult(await test({ data: { salonId } }));
       toast.success("Сохранено");
     } catch (e: any) {
       toast.error(e.message ?? "Не удалось сохранить");
@@ -128,17 +166,7 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
   async function onTest() {
     setTestState({ kind: "running" });
     try {
-      const res = await test({ data: { salonId } });
-      setTestState(
-        res.ok
-          ? {
-              kind: "ok",
-              username: res.username ?? null,
-              accountId: res.accountId ?? null,
-              accountType: res.accountType ?? null,
-            }
-          : { kind: "error", message: res.error },
-      );
+      await applyTestResult(await test({ data: { salonId } }));
     } catch (e: any) {
       setTestState({ kind: "error", message: e.message ?? "Проверка не удалась" });
     }
@@ -218,8 +246,9 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
               developers.facebook.com/apps
               <ExternalLink className="h-3 w-3" />
             </a>{" "}
-            → «Создать приложение» → продукт <b>Instagram</b> → «API setup with Instagram login».
-            Там подключите свой Instagram-аккаунт и сгенерируйте токен доступа с правами{" "}
+            → «Создать приложение» → продукт <b>Instagram</b> → <b>«API setup with Instagram
+            login»</b> (именно этот пункт, не «with Facebook login»). Там подключите свой
+            Instagram-аккаунт и сгенерируйте токен доступа с правами{" "}
             <code className="text-xs">instagram_business_basic</code> и{" "}
             <code className="text-xs">instagram_business_manage_messages</code>.
           </p>
@@ -260,7 +289,9 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
             disabled={loading}
           />
           <p className="text-xs text-muted-foreground mt-1">
-            Meta → Instagram → API setup, поле «Instagram account ID» (только цифры).
+            Можно не заполнять: заполните токен и нажмите «Сохранить и проверить» — ID подставится
+            сам. Вручную его можно взять в Meta → Instagram → API setup with Instagram login, в
+            строке подключённого аккаунта.
           </p>
         </div>
 
@@ -274,8 +305,14 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
             disabled={loading}
           />
           <p className="text-xs text-muted-foreground mt-1">
-            Долгосрочный токен из «Generate token». Действует 60 дней — после этого его нужно
-            сгенерировать заново и вставить сюда, иначе ассистент перестанет отвечать в Instagram.
+            Meta → Instagram → <b>API setup with Instagram login</b> → блок «Generate access
+            tokens» → кнопка «Generate token» напротив вашего аккаунта. Действует 60 дней — после
+            этого сгенерируйте заново и вставьте сюда, иначе ассистент перестанет отвечать в
+            Instagram.
+          </p>
+          <p className="text-xs text-amber-700 mt-1">
+            Не подходит токен из «API setup with <b>Facebook</b> login» — это другой тип токена, с
+            ним переписка работать не будет.
           </p>
         </div>
 
@@ -315,6 +352,7 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
                 </>
               ) : null}
               {testState.accountType ? ` (${testState.accountType})` : null}.
+              {testState.autofilledId && " Instagram account ID подставлен автоматически."}
               {!enabled && " Осталось включить канал переключателем вверху."}
             </div>
           </div>
