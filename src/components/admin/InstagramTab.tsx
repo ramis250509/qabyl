@@ -81,6 +81,9 @@ type TestState =
       accountType: string | null;
       // The account ID was read back from Meta and saved for the owner, rather than typed in.
       autofilledId?: boolean;
+      // The stored ID differs from what /me returned. Harmless — the same account has two ids —
+      // but worth surfacing so a genuinely wrong ID is still noticeable.
+      idMismatch?: boolean;
     }
   | { kind: "error"; message: string };
 
@@ -209,6 +212,7 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
       accountId: res.accountId ?? null,
       accountType: res.accountType ?? null,
       autofilledId: autofilled,
+      idMismatch: Boolean(res.idMismatch),
     });
   }
 
@@ -361,9 +365,10 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
             disabled={loading}
           />
           <p className="text-xs text-muted-foreground mt-1">
-            Можно не заполнять: заполните токен и нажмите «Сохранить и проверить» — ID подставится
-            сам. Вручную его можно взять в Meta → Instagram → API setup with Instagram login, в
-            строке подключённого аккаунта.
+            Можно не заполнять: введите токен и нажмите «Сохранить и проверить» — ID подставится
+            сам. Вручную его видно в Meta → Instagram → API setup with Instagram login, под
+            названием аккаунта. У аккаунта бывает два разных ID (начинается на 178… и на другую
+            цифру) — подойдёт любой, на работу ассистента это не влияет.
           </p>
         </div>
 
@@ -425,6 +430,13 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
               ) : null}
               {testState.accountType ? ` (${testState.accountType})` : null}.
               {testState.autofilledId && " Instagram account ID подставлен автоматически."}
+              {testState.idMismatch && testState.accountId && (
+                <>
+                  {" "}
+                  Указанный вами ID отличается от {testState.accountId} — это нормально, у аккаунта
+                  два разных ID, на работу не влияет.
+                </>
+              )}
               {!enabled && " Осталось включить канал переключателем вверху."}
             </div>
           </div>

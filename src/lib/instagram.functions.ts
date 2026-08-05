@@ -249,19 +249,18 @@ export const testInstagramConnection = createServerFn({ method: "POST" })
         };
       }
 
+      // A mismatch here is NOT a failure. One Instagram account has two ids — the 17841… one shown
+      // in the Meta dashboard and the app-scoped one /me returns — and an owner who copied from the
+      // dashboard will legitimately differ from what we just read back. Treating that as an error
+      // rejected a perfectly working setup, so it is reported as a note instead.
       const configured = (row as any)?.instagram_user_id ?? "";
       const actual = body?.id ? String(body.id) : "";
-      if (configured && actual && configured !== actual) {
-        return {
-          ok: false as const,
-          error: `Токен принадлежит аккаунту ${actual}, а в поле Instagram account ID указан ${configured}. Исправьте ID.`,
-        };
-      }
       return {
         ok: true as const,
         username: body?.username ?? null,
         accountId: actual || null,
         accountType: body?.account_type ?? null,
+        idMismatch: Boolean(configured && actual && configured !== actual),
       };
     } catch (e: any) {
       return { ok: false as const, error: e?.message ?? "Не удалось связаться с Meta" };

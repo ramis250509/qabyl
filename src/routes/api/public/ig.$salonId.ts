@@ -195,16 +195,25 @@ export const Route = createFileRoute("/api/public/ig/$salonId")({
         const { igUserId, events } = parseIgWebhook(payload);
         if (events.length === 0) return ack();
 
-        // Guard against a mis-pasted webhook URL routing another account's DMs into this salon.
-        // This one is recorded loudly: it is a silent drop, so without a record it looks exactly
-        // like "Meta never called" while the real fix is one wrong digit in the account ID field.
+        // One Instagram account legitimately has TWO ids, and they are not interchangeable:
+        //   17841…  the professional account id shown in the Meta dashboard, and what Meta puts in
+        //           entry[].id on the webhook
+        //   285…    the app-scoped id that graph.instagram.com/me returns for the same account
+        // An owner copying from the dashboard stores the first; our own connection check stores the
+        // second. Both are correct, so comparing them and DROPPING the delivery on a mismatch
+        // silently threw away every message — looking, from the outside, exactly like Meta never
+        // calling at all. The mismatch is recorded but no longer blocks anything.
+        //
+        // Nothing is lost security-wise: the delivery is already authenticated by the per-salon
+        // app-secret signature above, and the salon is identified by the URL path. This check could
+        // only ever catch a mis-pasted webhook URL between two salons sharing one Meta app — and
+        // even then, dropping is the wrong response to what is a configuration slip.
         const configuredIgUser = (secrets as any)?.instagram_user_id ?? "";
         if (configuredIgUser && igUserId && configuredIgUser !== igUserId) {
           await record(
-            `Webhook проигнорирован: пришёл для Instagram-аккаунта ${igUserId}, а в настройках указан ${configuredIgUser}. Исправьте «Instagram account ID».`,
+            `Webhook пришёл для Instagram-аккаунта ${igUserId}, а в настройках указан ${configuredIgUser}. Сообщение обработано, но стоит проверить поле «Instagram account ID».`,
             { received: igUserId, configured: configuredIgUser },
           );
-          return ack();
         }
 
         const creds: IgCreds = {
