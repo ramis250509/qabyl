@@ -33,6 +33,7 @@ import { MasterDayOverrides } from "@/components/admin/MasterDayOverrides";
 import { SalonDayOverridesCard } from "@/components/admin/SalonDayOverridesCard";
 import { AiAssistantTab } from "@/components/admin/AiAssistantTab";
 import { InstagramTab } from "@/components/admin/InstagramTab";
+import { PrepaymentTab } from "@/components/admin/PrepaymentTab";
 import { ServiceExportDialog } from "@/components/admin/ServiceExportDialog";
 import { INDUSTRIES_META, INDUSTRY_ORDER, normalizeIndustry, type IndustryKey } from "@/lib/industries";
 import { SERVICE_CATALOG_TEMPLATES, colorForCategoryIndex } from "@/lib/service-catalog-templates";
@@ -325,6 +326,7 @@ function SalonEdit() {
               <TabsTrigger value="site">Сайт</TabsTrigger>
               <TabsTrigger value="integrations">WhatsApp</TabsTrigger>
               <TabsTrigger value="instagram">Instagram</TabsTrigger>
+              <TabsTrigger value="prepayment">Предоплата</TabsTrigger>
               {(isSuperAdmin || salon.ai_assistant_enabled) && (
                 <TabsTrigger value="ai">Ассистент</TabsTrigger>
               )}
@@ -373,6 +375,10 @@ function SalonEdit() {
 
           <TabsContent value="instagram">
             <InstagramTab salonId={salonId} salonName={salon.name} />
+          </TabsContent>
+
+          <TabsContent value="prepayment">
+            <PrepaymentTab salonId={salonId} />
           </TabsContent>
 
           {(isSuperAdmin || salon.ai_assistant_enabled) && (
