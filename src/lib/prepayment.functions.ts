@@ -9,39 +9,10 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { sha256Hex } from "./prepayment/hashes";
-import { verifyReceipt } from "./prepayment/verify";
 
-const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
-const ALLOWED_MIME = new Set([
-  "application/pdf",
-  "image/png",
-  "image/jpeg",
-  "image/webp",
-  "image/heic",
-  "image/heif",
-]);
-
-// Magic-byte guard — never trust the client's Content-Type alone. An .html
-// file with a .png extension and image/png Content-Type would otherwise reach
-// storage. This blocks the obvious executables.
-function isMimeContentPlausible(mime: string, bytes: Uint8Array): boolean {
-  if (bytes.length < 4) return false;
-  if (mime === "application/pdf")
-    return bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46; // %PDF
-  if (mime === "image/png")
-    return bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47;
-  if (mime === "image/jpeg") return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
-  if (mime === "image/webp") {
-    const s = new TextDecoder("latin1").decode(bytes.subarray(0, 12));
-    return s.startsWith("RIFF") && s.slice(8, 12) === "WEBP";
-  }
-  if (mime === "image/heic" || mime === "image/heif") {
-    const s = new TextDecoder("latin1").decode(bytes.subarray(4, 12));
-    return s.startsWith("ftyphe") || s.startsWith("ftypmif") || s.startsWith("ftypheic");
-  }
-  return false;
-}
+// File validation, hashing, verification and persistence all live in
+// prepayment/process.server.ts so that every channel goes through the same
+// checks. This module is only the browser-facing transport around it.
 
 // ─────────────────────────── settings CRUD ─────────────────────────────────
 
@@ -148,8 +119,11 @@ export const getPrepaymentByToken = createServerFn({ method: "POST" })
 // ─────────────────────────── public: upload receipt ────────────────────────
 // Accepts a base64-encoded file. Server-fns can't take FormData yet in this
 // version of TanStack Start, so the client base64-encodes the bytes and we
-// decode + magic-byte-check + hash + verify + store here. Called by both the
-// public booking page and the WA agent.
+// decode here. Everything after the decode is channel-agnostic and lives in
+// prepayment/process.server.ts — the Instagram path calls the same function.
+//
+// The credential is appointments.manage_token: opaque, per-appointment, and the
+// only thing an anon caller ever hands us.
 export const uploadPrepaymentReceipt = createServerFn({ method: "POST" })
   .inputValidator((input) =>
     z
@@ -162,25 +136,11 @@ export const uploadPrepaymentReceipt = createServerFn({ method: "POST" })
       .parse(input),
   )
   .handler(async ({ data }) => {
-    if (!ALLOWED_MIME.has(data.mime)) {
-      return { ok: false as const, error: "Файл такого типа не поддерживается", verdict: null };
-    }
-    const bytes = base64ToBytes(data.base64);
-    if (bytes.length > MAX_BYTES) {
-      return { ok: false as const, error: "Файл больше 10 МБ", verdict: null };
-    }
-    if (!isMimeContentPlausible(data.mime, bytes)) {
-      return {
-        ok: false as const,
-        error: "Содержимое файла не совпадает с заявленным типом",
-        verdict: null,
-      };
-    }
-
     const mod = await import("@/integrations/supabase/client.server");
     const supabaseAdmin = mod.supabaseAdmin as any;
 
-    // Resolve the appointment + prepayment by token.
+    // Token → appointment. The token is the ONLY thing that authorises this
+    // call, so it is resolved before a single byte is decoded.
     const { data: snap, error: snapErr } = await supabaseAdmin.rpc(
       "get_prepayment_by_token" as any,
       { _token: data.token },
@@ -189,190 +149,26 @@ export const uploadPrepaymentReceipt = createServerFn({ method: "POST" })
     if (!snap || (snap as any).found === false) {
       return { ok: false as const, error: "Запись не найдена", verdict: null };
     }
-    const s = snap as any;
-    if (s.appt_status === "cancelled" || s.appt_status === "payment_expired") {
-      return { ok: false as const, error: "Бронь уже неактивна", verdict: null };
-    }
-    if (s.status === "verified") {
-      return {
-        ok: true as const,
-        verdict: "verified" as const,
-        already: true,
-        reasons: ["Оплата уже подтверждена"],
-      };
-    }
 
-    const salonId: string = s.salon_id;
-    const appointmentId: string = s.appointment_id;
-
-    // Hash the raw file — regardless of verify outcome, this hash lands in the
-    // dedup index if we choose to accept it.
-    const sha = await sha256Hex(bytes);
-
-    // Existing hashes / txns for this salon (anti-reuse).
-    const { data: existingHashes } = await supabaseAdmin
-      .from("prepayment_receipt_hashes")
-      .select("file_sha256, txn_id, file_phash")
-      .eq("salon_id", salonId);
-    const shaSet = new Set<string>();
-    const txnSet = new Set<string>();
-    const phashList: string[] = [];
-    (existingHashes ?? []).forEach((h: any) => {
-      if (h.file_sha256) shaSet.add(h.file_sha256);
-      if (h.txn_id) txnSet.add(h.txn_id);
-      if (h.file_phash) phashList.push(h.file_phash);
-    });
-
-    // Load the salon's settings so verify knows what to expect.
-    const { data: cfg } = await supabaseAdmin
-      .from("prepayment_settings")
-      .select("recipient_name, recipient_details, verify_mode, auto_max_amount")
-      .eq("salon_id", salonId)
-      .maybeSingle();
-    const cfgAny = cfg as any;
-
-    // hold_started_at ≈ appointment_prepayments.created_at (we don't ship it
-    // through the RPC snapshot — refetch it once for verify).
-    const { data: pp } = await supabaseAdmin
-      .from("appointment_prepayments")
-      .select("id, created_at, hold_expires_at, expected_amount, currency, status")
-      .eq("appointment_id", appointmentId)
-      .maybeSingle();
-    if (!pp)
-      return {
-        ok: false as const,
-        error: "Предоплата не настроена для этой записи",
-        verdict: null,
-      };
-    const ppAny = pp as any;
-
-    // Storage path (private bucket).
-    const ext = extForMime(data.mime, data.filename);
-    const objectPath = `${salonId}/${appointmentId}/${cryptoRandomId()}.${ext}`;
-
-    // Mark processing before we do the (slow) Vision call.
-    await supabaseAdmin
-      .from("appointment_prepayments")
-      .update({
-        status: "processing",
-        receipt_path: objectPath,
-        receipt_mime: data.mime,
-        receipt_bytes: bytes.length,
-        file_sha256: sha,
-      })
-      .eq("id", ppAny.id);
-    await supabaseAdmin.from("prepayment_audit").insert({
-      appointment_id: appointmentId,
-      salon_id: salonId,
-      actor_kind: "client_via_token",
-      action: "uploaded",
-      detail: { filename: data.filename, mime: data.mime, bytes: bytes.length },
-    });
-
-    // Verify (extract → parse → validate).
-    const result = await verifyReceipt({
-      bytes,
+    const { processReceipt } = await import("./prepayment/process.server");
+    const result = await processReceipt({
+      appointmentId: (snap as any).appointment_id,
+      bytes: base64ToBytes(data.base64),
       mime: data.mime,
       filename: data.filename,
-      fileSha256: sha,
-      expectations: {
-        expectedAmount: Number(ppAny.expected_amount),
-        expectedCurrency: ppAny.currency,
-        recipientName: cfgAny?.recipient_name ?? null,
-        recipientPhone: cfgAny?.recipient_details?.phone ?? null,
-        recipientAccount:
-          cfgAny?.recipient_details?.account ?? cfgAny?.recipient_details?.card ?? null,
-        holdStartedAt: new Date(ppAny.created_at),
-        holdExpiresAt: new Date(ppAny.hold_expires_at),
-        existingFileSha256s: shaSet,
-        existingTxnIds: txnSet,
-        existingPhashes: phashList,
-      },
+      actorKind: "client_via_token",
     });
 
-    // Upload the file to storage AFTER verify decides — even 'rejected' files
-    // are kept for the audit trail, so upload unconditionally.
-    const { error: upErr } = await supabaseAdmin.storage
-      .from("prepayment-receipts")
-      .upload(objectPath, bytes, { contentType: data.mime, upsert: false });
-    if (upErr) {
-      // Non-fatal: record the failure but keep the verdict — admin can re-request.
-      await supabaseAdmin.from("prepayment_audit").insert({
-        appointment_id: appointmentId,
-        salon_id: salonId,
-        actor_kind: "system",
-        action: "upload_failed",
-        detail: { error: upErr.message },
-      });
-    }
-
-    // Decide final verdict + apply verify_mode.
-    const verifyMode = cfgAny?.verify_mode ?? "auto";
-    const autoMax = cfgAny?.auto_max_amount ? Number(cfgAny.auto_max_amount) : null;
-    const expected = Number(ppAny.expected_amount);
-    let finalStatus: string = result.verdict; // 'verified' | 'manual_review' | 'rejected'
-
-    if (finalStatus === "verified") {
-      if (verifyMode === "manual_always") {
-        finalStatus = "manual_review";
-      } else if (verifyMode === "manual_after_verify") {
-        finalStatus = "manual_review";
-      } else if (verifyMode === "auto_under_amount" && autoMax !== null && expected > autoMax) {
-        finalStatus = "manual_review";
-      }
-    }
-
-    // Persist verify output.
-    await supabaseAdmin
-      .from("appointment_prepayments")
-      .update({
-        status: finalStatus,
-        verdict: result.verdict,
-        verdict_reasons: result.reasons,
-        confidence: result.confidence,
-        bank: result.bank,
-        extracted: result.extracted as any,
-        txn_id: result.extracted?.txnId ?? null,
-      })
-      .eq("id", ppAny.id);
-
-    // Anti-reuse index gets the hash + txn only if we ACCEPTED the file for
-    // this appointment (i.e. verified or manual_review). Rejected duplicates
-    // don't need re-adding — they're already there or will be re-checked.
-    if (finalStatus === "verified" || finalStatus === "manual_review") {
-      await supabaseAdmin.from("prepayment_receipt_hashes").insert({
-        salon_id: salonId,
-        appointment_id: appointmentId,
-        file_sha256: sha,
-        txn_id: result.extracted?.txnId ?? null,
-        bank: result.bank,
-      });
-    }
-
-    await supabaseAdmin.from("prepayment_audit").insert({
-      appointment_id: appointmentId,
-      salon_id: salonId,
-      actor_kind: "system",
-      action: finalStatus,
-      detail: {
-        reasons: result.reasons,
-        reasonCodes: result.reasonCodes,
-        confidence: result.confidence,
-        usedFallback: result.usedFallback,
-      },
-    });
-
-    if (finalStatus === "verified") {
-      await supabaseAdmin.rpc("confirm_prepayment" as any, { _appointment_id: appointmentId });
-    }
-
-    return {
-      ok: true as const,
-      verdict: finalStatus as "verified" | "manual_review" | "rejected",
-      reasons: result.reasons,
-      bank: result.bank,
-      confidence: result.confidence,
-    };
+    return result.ok
+      ? {
+          ok: true as const,
+          verdict: result.verdict,
+          reasons: result.reasons,
+          ...(result.already ? { already: true } : {}),
+          bank: result.bank ?? null,
+          confidence: result.confidence ?? 0,
+        }
+      : { ok: false as const, error: result.error ?? "Не удалось обработать файл", verdict: null };
   });
 
 // ─────────────────────────── admin: override + review ──────────────────────
@@ -520,30 +316,10 @@ export const listPendingReviews = createServerFn({ method: "POST" })
 
 // ─────────────────────────── helpers ───────────────────────────────────────
 
-function extForMime(mime: string, filename: string): string {
-  if (mime === "application/pdf") return "pdf";
-  if (mime === "image/png") return "png";
-  if (mime === "image/jpeg") return "jpg";
-  if (mime === "image/webp") return "webp";
-  if (mime === "image/heic") return "heic";
-  if (mime === "image/heif") return "heif";
-  const dot = filename.lastIndexOf(".");
-  const rest = dot >= 0 ? filename.slice(dot + 1) : "bin";
-  return rest.replace(/[^a-z0-9]/gi, "").slice(0, 6) || "bin";
-}
-
 function base64ToBytes(b64: string): Uint8Array {
   const cleaned = b64.replace(/^data:[^;]+;base64,/, "");
   const bin = atob(cleaned);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
   return out;
-}
-
-function cryptoRandomId(): string {
-  const arr = new Uint8Array(16);
-  crypto.getRandomValues(arr);
-  let hex = "";
-  for (let i = 0; i < 16; i += 1) hex += arr[i].toString(16).padStart(2, "0");
-  return hex;
 }
