@@ -196,6 +196,21 @@ export function buildSystemPromptV4(
     `ЕСЛИ ИНСТРУМЕНТ ВЕРНУЛ ОШИБКУ (обязательно, железное правило): НЕ извиняйся дважды за одно и то же. Первый раз — попробуй перевызвать инструмент по-другому (другая дата, без master_id, другой филиал). Если и второй вызов не дал результата — ОБЯЗАТЕЛЬНО вызови escalate_to_human (в reason опиши, что запрашивал клиент и какой инструмент упал) и вежливо скажи клиенту, что передаёшь диалог администратору. НЕЛЬЗЯ отвечать «сейчас не получилось получить данные, попробуйте через минуту» два раза подряд — это выглядит как сломанный бот и злит клиента.`,
     `ЯЗЫК ЭТОГО ДИАЛОГА (СТРОГО, ЖЁСТКОЕ ПРАВИЛО, НУЛЕВАЯ ТЕРПИМОСТЬ К СМЕШЕНИЮ): отвечай ТОЛЬКО на ${langName} языке (языки салона: ${langs}). Этот язык уже определён системой по всей истории диалога — доверяй ему, а не только последнему сообщению. НА ${langName} ЯЗЫКЕ должно быть АБСОЛЮТНО ВСЁ в твоём сообщении БЕЗ ЕДИНОГО ИСКЛЮЧЕНИЯ: сам текст, пояснения, инструкции, подписи, сводка подтверждения записи, сообщения после записи/переноса/отмены, любые шаблоны и подписи к ссылкам. Ни одного слова, фразы или строки на другом языке в одном сообщении быть НЕ ДОЛЖНО — даже служебной подписи вроде «reschedule or cancel». Если не знаешь слово на ${langName} — перефразируй, но НЕ вставляй иноязычный фрагмент. КОРОТКИЕ и НЕЯЗЫКОВЫЕ реплики клиента (цифра варианта, название филиала или ${sn.genSg}, «да»/«ок»/«макул», имя, дата, время) НЕ являются сигналом смены языка — отвечай НА ЭТОМ ЖЕ языке. Переключайся на другой язык, ТОЛЬКО когда клиент явно и уверенно пишет РАЗВЁРНУТОЕ сообщение на другом языке (не одно слово/цифра/имя) — и тогда ВЕСЬ следующий ответ полностью на новом языке.`,
     `ОБРАЩЕНИЕ: всегда на «Вы», даже если клиент пишет на «ты» — это вежливый стиль администратора. В кыргызском используй вежливые формы (сиз, -ңыз/-ңиз/-ыңыз), в других языках — аналогичную вежливую форму, если она есть в языке.`,
+    // Instagram Direct carries no phone number. Every appointment needs one (мастер должен иметь
+    // возможность позвонить, плюс серверная валидация требует 10–15 цифр), so on this channel the
+    // assistant has to collect it — and must not blurt the request out at "здравствуйте", which
+    // reads as a cold-call script and kills the conversation. The tool layer enforces the rule;
+    // this block is what makes the ASKING natural instead of the model discovering the block by
+    // failing a call.
+    ...(input.channel === "instagram"
+      ? [
+          ``,
+          `КАНАЛ: это Instagram Direct, не WhatsApp. Пиши ещё короче, чем обычно — в Instagram читают на бегу. Не упоминай WhatsApp как способ связи${input.client?.phone ? "" : " и не обещай «напишем вам в WhatsApp»"}.`,
+          input.client?.phone
+            ? `НОМЕР КЛИЕНТА: уже известен (${input.client?.phone}) — повторно НЕ спрашивай.`
+            : `НОМЕР ТЕЛЕФОНА (ВАЖНО): в Instagram номер клиента НЕ приходит автоматически — у тебя его нет. Без номера запись создать невозможно. Спрашивай номер ОДИН раз и ТОЛЬКО тогда, когда услуга, мастер, дата и время уже выбраны и осталось подтвердить — вместе с вопросом об имени или сразу после него («Как вас зовут и на какой номер вас записать?»). НЕ спрашивай номер в приветствии, при вопросе о цене и при показе свободных окон — это отпугивает. Получив номер, передай его в create_appointment в поле client_phone. Если клиент отказывается назвать номер — объясни в одном предложении, что номер нужен мастеру для связи и напоминания, и предложи продолжить запись в WhatsApp; не настаивай дважды.`,
+        ]
+      : []),
     // NB: tone_instructions, pricing_rules, knowledgeBook, knowledge_base and ai_rules were
     // previously interleaved through the middle of the prompt. They are now consolidated
     // into the "ПРАВИЛА ЭТОГО САЛОНА" block appended at the very end so recency-weighted
@@ -535,6 +550,11 @@ const V4_TOOL_DECLARATIONS = [
         date: { type: "string", description: "Дата YYYY-MM-DD из таблицы дат" },
         time: { type: "string", description: "Время начала в формате HH:MM, напр. 11:00" },
         client_name: { type: "string" },
+        client_phone: {
+          type: "string",
+          description:
+            "Номер телефона клиента — ОБЯЗАТЕЛЕН для диалогов в Instagram Direct (там номер не приходит автоматически, его нужно спросить у клиента). Передавай так, как клиент его написал, вместе с кодом страны (например +996 555 123456). В WhatsApp-диалогах не передавай — номер уже известен.",
+        },
         client_confirmation: {
           type: "string",
           description:
@@ -687,7 +707,35 @@ type V4RunFlags = {
   // to escalate to the admin AND to send the client a graceful "administrator will reply" text
   // instead of a bare "technical error", so the client never feels ignored.
   geminiTotalFailure?: boolean;
+  // Instagram only: the phone number the client gave us during THIS turn. Instagram Direct carries
+  // no phone, but an appointment cannot exist without one (validate_appointment_phone requires
+  // 10–15 digits), so the assistant asks for it and passes it to create_appointment. Persisted into
+  // state_data.client_phone so every later turn — and every later tool call — has it for free.
+  collectedPhone?: string | null;
 };
+
+/**
+ * Normalize a phone the client typed into a chat ("+996 555 12-34-56", "0555 123456") to the bare
+ * digit form the rest of the system stores. Returns null when the result cannot plausibly be an
+ * international number, which is exactly the check the appointments trigger applies — catching it
+ * here means the assistant can ask again instead of the booking blowing up in the RPC.
+ *
+ * Local KG/KZ/RU numbers written with a leading 0 ("0555 123456") are expanded with the salon's
+ * country code when one can be inferred from the digits; otherwise the client is asked to include
+ * the country code.
+ */
+export function normalizeClientPhone(raw: unknown): string | null {
+  let digits = String(raw ?? "").replace(/\D/g, "");
+  if (!digits) return null;
+  // "8 705 …" (RU/KZ domestic prefix) → "7 705 …"
+  if (digits.length === 11 && digits.startsWith("8")) digits = `7${digits.slice(1)}`;
+  // "0555 123456" (KG domestic, 10 digits) → "996 555 123456"
+  if (digits.length === 10 && digits.startsWith("0")) digits = `996${digits.slice(1)}`;
+  // Bare KG subscriber number "555123456" (9 digits) → "996555123456"
+  if (digits.length === 9) digits = `996${digits}`;
+  if (digits.length < 10 || digits.length > 15) return null;
+  return digits;
+}
 
 // Normalize a loose clock string ("11", "11:0", "11.00", "11 00") → "HH:MM" or null.
 export function normHHMM(t: string): string | null {
@@ -1157,6 +1205,32 @@ export async function executeV4Tool(
   const withinCutoff = (startsAt: string) =>
     cutoffHours > 0 && new Date(startsAt).getTime() - Date.now() < cutoffHours * 60 * 60 * 1000;
 
+  // The client's phone number, which is this client's IDENTITY for every appointment query below.
+  // On WhatsApp it is the transport's own address and always present. On Instagram there is no
+  // phone until the client types one, so it is "" on the first turns and gets filled in by
+  // create_appointment's client_phone argument (kept on `flags` for the rest of this turn, and
+  // persisted into state_data.client_phone for the next ones).
+  const clientPhone = input.client?.phone || flags.collectedPhone || "";
+
+  // Tools whose entire answer is "what does THIS client have with us" — they filter appointments by
+  // phone. With an unknown phone they would each return an empty set, and the model would confidently
+  // tell an Instagram client "у вас нет записей" when in fact we simply do not know who they are.
+  // A distinct reason makes it ask for the number instead. create_appointment is deliberately NOT in
+  // this list: it has its own richer gate below that also accepts the number as an argument.
+  const PHONE_SCOPED_TOOLS = new Set([
+    "get_my_appointments",
+    "get_client_context",
+    "cancel_appointment",
+    "reschedule_appointment",
+  ]);
+  if (!clientPhone && PHONE_SCOPED_TOOLS.has(name)) {
+    return {
+      success: false,
+      reason: "need_client_phone",
+      note: "Мы пока НЕ знаем номер телефона этого клиента (диалог в Instagram Direct — номер оттуда не приходит), поэтому найти его записи невозможно. НЕ говори, что записей нет. Вежливо попроси номер телефона, на который оформлялась запись, и повтори вызов после ответа клиента.",
+    };
+  }
+
   switch (name) {
     case "get_services": {
       const services = await loadAiVisibleServicesForSalon(db, input.salon.salonId);
@@ -1509,6 +1583,28 @@ export async function executeV4Tool(
           note: "Клиент ещё не назвал своё имя. НЕ создавай запись. Спроси естественно: «Подскажите, пожалуйста, как вас зовут?» или «Как вас зовут?». Плейсхолдеры («Клиент», «Неизвестно», имя из WhatsApp-профиля) в client_name недопустимы — нужно услышать имя от самого клиента в этом диалоге. После того как клиент назовёт имя, покажи полную сводку записи и только после «да» вызови create_appointment снова.",
         };
       }
+
+      // Server-side gate on the phone, the Instagram counterpart of the name gate above.
+      // WhatsApp hands us the number for free; Instagram Direct has no phone at all, so a booking
+      // made there would otherwise be unreachable — the salon could not call or send a reminder,
+      // and create_appointment's own trigger would reject it anyway (10–15 digits required).
+      // Asking is therefore mandatory, and a mistyped number must come back as a specific reason
+      // so the model asks again instead of reporting a booking that does not exist.
+      const phoneFromArgs = normalizeClientPhone(args.client_phone);
+      const bookingPhone = clientPhone || phoneFromArgs || "";
+      if (!bookingPhone) {
+        const gaveSomething = String(args.client_phone ?? "").trim().length > 0;
+        return {
+          success: false,
+          reason: gaveSomething ? "invalid_phone" : "need_client_phone",
+          note: gaveSomething
+            ? "Номер телефона, который передан в client_phone, некорректный. Вежливо попроси клиента прислать номер ещё раз, полностью и с кодом страны (например +996 555 123456). Запись НЕ создана."
+            : "У тебя НЕТ номера телефона клиента (это Instagram Direct — номер там не передаётся, его нужно спросить). НЕ создавай запись. Вежливо попроси номер телефона: «Оставьте, пожалуйста, номер телефона для записи — мастер сможет с вами связаться». Получив номер, покажи полную сводку записи и только после «да» вызови create_appointment снова, передав номер в поле client_phone.",
+        };
+      }
+      // Remember it for the rest of this turn (get_my_appointments and friends read `clientPhone`)
+      // and for every future turn (persisted into state_data.client_phone by runWaAgentV4).
+      if (!clientPhone) flags.collectedPhone = bookingPhone;
       // Reject hallucinated ids BEFORE we hit the RPC — otherwise Postgres throws "invalid input
       // syntax for type uuid" which the tool loop catches and surfaces to the client as a generic
       // "не получилось создать запись". A specific reason lets the model self-recover.
@@ -1581,7 +1677,7 @@ export async function executeV4Tool(
           .from("appointments")
           .select("id, starts_at, masters(name)")
           .eq("salon_id", input.salon.salonId)
-          .eq("client_phone", input.client.phone)
+          .eq("client_phone", bookingPhone)
           .eq("service_id", args.service_id)
           .eq("status", "confirmed")
           .gte("starts_at", new Date().toISOString())
@@ -1607,7 +1703,7 @@ export async function executeV4Tool(
         _service_id: args.service_id,
         _starts_at: resolved.slotStart,
         _client_name: args.client_name,
-        _client_phone: input.client.phone,
+        _client_phone: bookingPhone,
         _client_notes: null,
         _branch_id: (args.branch_id as string | null) ?? flags.selectedBranchId ?? null,
         _addon_ids: [],
@@ -1643,7 +1739,7 @@ export async function executeV4Tool(
             .from("appointments")
             .select("id, starts_at, masters(name)")
             .eq("salon_id", input.salon.salonId)
-            .eq("client_phone", input.client.phone)
+            .eq("client_phone", bookingPhone)
             .eq("service_id", args.service_id)
             .eq("master_id", args.master_id)
             .eq("starts_at", resolved.slotStart)
@@ -1652,7 +1748,7 @@ export async function executeV4Tool(
           if (dup) {
             flags.appointmentId = (dup as any).id as string;
             console.log(
-              `[wa-v4] create_appointment idempotent-hit phone=${input.client.phone} at=${resolved.slotStart} → existing id=${(dup as any).id}`,
+              `[wa-v4] create_appointment idempotent-hit phone=${bookingPhone} at=${resolved.slotStart} → existing id=${(dup as any).id}`,
             );
             // Report as success so the model confirms to the client — the booking IS there,
             // it just wasn't created THIS call. This is exactly what "at-least-once → exactly-once"
@@ -1667,7 +1763,7 @@ export async function executeV4Tool(
         // Log every other failure: the client-facing symptom (assistant claimed a booking that
         // doesn't exist) is invisible without this, since the failure is just a tool result.
         console.error(
-          `[wa-v4] create_appointment FAILED phone=${input.client.phone} service=${args.service_id} master=${args.master_id} at=${resolved.slotStart}: ${error.message}`,
+          `[wa-v4] create_appointment FAILED phone=${bookingPhone} service=${args.service_id} master=${args.master_id} at=${resolved.slotStart}: ${error.message}`,
         );
         return { success: false, error: error.message };
       }
@@ -1675,7 +1771,7 @@ export async function executeV4Tool(
       if (args.branch_id) flags.selectedBranchId = args.branch_id as string;
       flags.justBookedManageUrl = await fetchManageUrlV4(db, newId as string);
       console.log(
-        `[wa-v4] create_appointment OK id=${newId} phone=${input.client.phone} at=${resolved.slotStart}`,
+        `[wa-v4] create_appointment OK id=${newId} phone=${bookingPhone} at=${resolved.slotStart}`,
       );
       return { success: true, appointment_id: newId };
     }
@@ -1688,7 +1784,7 @@ export async function executeV4Tool(
         .from("appointments")
         .select("id, starts_at, services(name), masters(name)")
         .eq("salon_id", input.salon.salonId)
-        .eq("client_phone", input.client.phone)
+        .eq("client_phone", clientPhone)
         .eq("status", "confirmed")
         .gte("starts_at", new Date().toISOString())
         .order("starts_at");
@@ -1730,7 +1826,7 @@ export async function executeV4Tool(
           "starts_at, status, branch_id, services(name), masters(id, name, branch_id, is_active)",
         )
         .eq("salon_id", input.salon.salonId)
-        .eq("client_phone", input.client.phone)
+        .eq("client_phone", clientPhone)
         .neq("status", "cancelled")
         .lt("starts_at", new Date().toISOString())
         .order("starts_at", { ascending: false })
@@ -1778,7 +1874,7 @@ export async function executeV4Tool(
         .from("appointments")
         .select("id, starts_at, client_phone")
         .eq("id", args.appointment_id)
-        .eq("client_phone", input.client.phone)
+        .eq("client_phone", clientPhone)
         .maybeSingle();
       if (!appt) return { success: false, error: "not_found" };
       if (withinCutoff((appt as any).starts_at)) {
@@ -1801,7 +1897,7 @@ export async function executeV4Tool(
         .from("appointments")
         .update({ status: "cancelled" })
         .eq("id", args.appointment_id)
-        .eq("client_phone", input.client.phone);
+        .eq("client_phone", clientPhone);
       if (error) return { success: false, error: error.message };
       return { success: true };
     }
@@ -1811,7 +1907,7 @@ export async function executeV4Tool(
         .from("appointments")
         .select("id, starts_at, master_id, service_id, client_phone")
         .eq("id", args.appointment_id)
-        .eq("client_phone", input.client.phone)
+        .eq("client_phone", clientPhone)
         .maybeSingle();
       if (!appt) return { success: false, error: "not_found" };
       if (withinCutoff((appt as any).starts_at)) {
@@ -2727,6 +2823,10 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
       ? ({ photo_notes: flags.photoNotes.slice(-PHOTO_NOTES_CAP) } as any)
       : {}),
     ...(persistedCache ? ({ gemini_cache: persistedCache } as any) : {}),
+    // Instagram: once the client has given a phone, it becomes their identity for every later turn
+    // (the webhook feeds it back in as input.client.phone), so "перенеси мою запись" a day later
+    // works without asking again.
+    ...(flags.collectedPhone ? ({ client_phone: flags.collectedPhone } as any) : {}),
   };
 
   // On escalation, hand the webhook a plain-text alert for the salon admin's own WhatsApp
@@ -2750,13 +2850,23 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
           .join("\n");
         // Staff-facing text: never brand this as "ИИ-Админ"/"бот" — for the salon's employees the
         // handover should read like a normal internal note from the admin line.
+        //
+        // Channel matters here in a way it does not anywhere else in this function: the whole
+        // point of the note is "go and answer this person", and the staff member needs to be told
+        // WHICH app to open. On Instagram there may also be no phone at all yet, so the client is
+        // identified by their Instagram name instead of a number that does not exist.
+        const isInstagram = input.channel === "instagram";
+        const knownPhone = input.client?.phone || flags.collectedPhone || "";
+        const who = knownPhone
+          ? `+${knownPhone}${input.client.name ? ` (${input.client.name})` : ""}`
+          : (input.client.name ?? "клиент в Instagram Direct");
         return (
           `🔔 Клиенту нужна ваша помощь — диалог передан вам.\n` +
-          `👤 Клиент: +${input.client.phone}${input.client.name ? ` (${input.client.name})` : ""}\n` +
+          `👤 Клиент: ${who}\n` +
           `📌 Причина: ${flags.escalateReason ?? "нужна помощь"}\n` +
           `🕒 Время: ${when}\n\n` +
           (historyLines ? `💬 Последние сообщения:\n${historyLines}\n\n` : "") +
-          `Откройте WhatsApp и ответьте клиенту — автоответы на паузе.`
+          `Откройте ${isInstagram ? "Instagram Direct" : "WhatsApp"} и ответьте клиенту — автоответы на паузе.`
         );
       })()
     : undefined;

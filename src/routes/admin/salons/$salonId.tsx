@@ -32,6 +32,7 @@ import { BranchHoursEditor, defaultBranchHours, invalidHourDays, type BranchHour
 import { MasterDayOverrides } from "@/components/admin/MasterDayOverrides";
 import { SalonDayOverridesCard } from "@/components/admin/SalonDayOverridesCard";
 import { AiAssistantTab } from "@/components/admin/AiAssistantTab";
+import { InstagramTab } from "@/components/admin/InstagramTab";
 import { ServiceExportDialog } from "@/components/admin/ServiceExportDialog";
 import { INDUSTRIES_META, INDUSTRY_ORDER, normalizeIndustry, type IndustryKey } from "@/lib/industries";
 import { SERVICE_CATALOG_TEMPLATES, colorForCategoryIndex } from "@/lib/service-catalog-templates";
@@ -323,6 +324,7 @@ function SalonEdit() {
               <TabsTrigger value="masters">Мастера</TabsTrigger>
               <TabsTrigger value="site">Сайт</TabsTrigger>
               <TabsTrigger value="integrations">WhatsApp</TabsTrigger>
+              <TabsTrigger value="instagram">Instagram</TabsTrigger>
               {(isSuperAdmin || salon.ai_assistant_enabled) && (
                 <TabsTrigger value="ai">Ассистент</TabsTrigger>
               )}
@@ -367,6 +369,10 @@ function SalonEdit() {
 
           <TabsContent value="integrations">
             <IntegrationsTab salon={salon} onSaved={(s) => setSalon(s)} />
+          </TabsContent>
+
+          <TabsContent value="instagram">
+            <InstagramTab salonId={salonId} salonName={salon.name} />
           </TabsContent>
 
           {(isSuperAdmin || salon.ai_assistant_enabled) && (

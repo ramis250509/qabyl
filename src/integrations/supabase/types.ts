@@ -770,6 +770,10 @@ export type Database = {
           greenapi_instance: string | null
           greenapi_token: string | null
           greenapi_webhook_token: string | null
+          instagram_app_secret: string | null
+          instagram_token: string | null
+          instagram_user_id: string | null
+          instagram_verify_token: string | null
           owner_notify_phone: string | null
           salon_id: string
           updated_at: string
@@ -778,6 +782,10 @@ export type Database = {
           greenapi_instance?: string | null
           greenapi_token?: string | null
           greenapi_webhook_token?: string | null
+          instagram_app_secret?: string | null
+          instagram_token?: string | null
+          instagram_user_id?: string | null
+          instagram_verify_token?: string | null
           owner_notify_phone?: string | null
           salon_id: string
           updated_at?: string
@@ -786,6 +794,10 @@ export type Database = {
           greenapi_instance?: string | null
           greenapi_token?: string | null
           greenapi_webhook_token?: string | null
+          instagram_app_secret?: string | null
+          instagram_token?: string | null
+          instagram_user_id?: string | null
+          instagram_verify_token?: string | null
           owner_notify_phone?: string | null
           salon_id?: string
           updated_at?: string
@@ -825,6 +837,7 @@ export type Database = {
           hero_subtitle: string | null
           hero_title: string | null
           id: string
+          instagram_enabled: boolean
           instagram_url: string | null
           is_active: boolean
           lat: number | null
@@ -861,6 +874,7 @@ export type Database = {
           hero_subtitle?: string | null
           hero_title?: string | null
           id?: string
+          instagram_enabled?: boolean
           instagram_url?: string | null
           is_active?: boolean
           lat?: number | null
@@ -897,6 +911,7 @@ export type Database = {
           hero_subtitle?: string | null
           hero_title?: string | null
           id?: string
+          instagram_enabled?: boolean
           instagram_url?: string | null
           is_active?: boolean
           lat?: number | null
@@ -1072,9 +1087,11 @@ export type Database = {
           ai_paused: boolean
           ai_paused_at: string | null
           appointment_id: string | null
+          channel: string
           client_name: string | null
           client_phone: string
           created_at: string
+          external_id: string | null
           id: string
           last_appointment_at: string | null
           last_message_at: string
@@ -1093,9 +1110,11 @@ export type Database = {
           ai_paused?: boolean
           ai_paused_at?: string | null
           appointment_id?: string | null
+          channel?: string
           client_name?: string | null
           client_phone: string
           created_at?: string
+          external_id?: string | null
           id?: string
           last_appointment_at?: string | null
           last_message_at?: string
@@ -1114,9 +1133,11 @@ export type Database = {
           ai_paused?: boolean
           ai_paused_at?: string | null
           appointment_id?: string | null
+          channel?: string
           client_name?: string | null
           client_phone?: string
           created_at?: string
+          external_id?: string | null
           id?: string
           last_appointment_at?: string | null
           last_message_at?: string

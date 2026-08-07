@@ -163,6 +163,13 @@ export type WaSalonInfo = {
 export type WaAgentInput = {
   salon: WaSalonContext;
   config: WaAssistantConfig;
+  // Transport this conversation arrived on. Absent = WhatsApp (every pre-Instagram caller).
+  // The agent is channel-agnostic except for one thing: on WhatsApp the client's phone number
+  // comes free with the transport, on Instagram it does not exist at all — so the assistant has
+  // to ask for it before it can create an appointment (appointments require a real phone).
+  channel?: "whatsapp" | "instagram";
+  // On Instagram this is "" until the client tells us their number; the agent then collects it
+  // and it is persisted into state_data.client_phone for subsequent turns.
   client: { phone: string; name: string | null };
   history: WaIncomingMessage[];
   lastMessages: WaIncomingMessage[]; // unprocessed inbound messages merged into this turn

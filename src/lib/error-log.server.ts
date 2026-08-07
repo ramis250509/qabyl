@@ -12,6 +12,10 @@ export type ErrorSource =
   | "wa-webhook"
   | "wa-agent-v4"
   | "wa-agent-v3"
+  // Instagram Direct channel. Kept separate from wa-webhook so /admin/errors can tell at a glance
+  // whether a spike is the WhatsApp transport or the Instagram one — they fail for different
+  // reasons (Green-API instance unpaid vs a 60-day Meta token that expired).
+  | "ig-webhook"
   | "server-fn"
   | "edge-fn"
   | "client"

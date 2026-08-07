@@ -1,0 +1,1 @@
+{"nodes": [{"id": "$graphify-root$_supabase_migrations_20260710120000_create_wa_media_bucket_sql", "label": "20260710120000_create_wa_media_bucket.sql", "file_type": "code", "source_file": "supabase/migrations/20260710120000_create_wa_media_bucket.sql", "source_location": null}], "edges": []}
