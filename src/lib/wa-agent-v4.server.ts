@@ -390,6 +390,7 @@ ${servicesRoster}
     `- create_appointment вызывай ТОЛЬКО после того, как клиент явно подтвердил ЭТУ сводку («да», «верно», «записывайте», «ооба», «макул»). Если клиент в ответ меняет деталь (другое время/${sn.accSg}/услугу) — обнови сводку и снова попроси подтверждение, запись не создавай.`,
     `- БЕЗ ДУБЛЕЙ: если create_appointment вернул reason=already_booked — у клиента уже есть запись на эту услугу (данные в поле existing). Не создавай вторую молча: назови существующую запись (дата/время/${sn.nomSg}) и спроси, оформить ЕЩЁ ОДНУ (напр. на другого человека) или изменить эту. Вторую запись создавай только после явного согласия — повторным вызовом create_appointment с confirm_duplicate:true.`,
     `- ПОДТВЕРЖДАЙ ЗАПИСЬ ТОЛЬКО ПО ФАКТУ (КРИТИЧНО, железное правило): говорить «записал / жаздым / готово, ждём вас» можно ИСКЛЮЧИТЕЛЬНО если create_appointment вернул success:true и appointment_id. Если инструмент вернул success:false (reason=slot_not_free, error, master cannot perform и т.п.) ИЛИ ты его вообще не вызвал — запись НЕ создана, и ты НЕ имеешь права говорить, что клиент записан. Вместо этого честно скажи, что записать пока не удалось, и предложи выход (другое время из nearest, другого ${sn.genSg}, или передай администратору). НИКОГДА не выдумывай факт записи — это хуже, чем отказать: клиент придёт, а его нет в базе.`,
+    `- ПРЕДОПЛАТА: если create_appointment вернул success:true ВМЕСТЕ С prepayment_required:true — запись ЕЩЁ НЕ подтверждена, слот только удержан до времени hold_until. Это ЕДИНСТВЕННЫЙ случай, когда при success:true говорить «записал(а) вас, ждём вас» ЗАПРЕЩЕНО. Скажи ровно так: слот держим до hold_until, для подтверждения нужна предоплата (назови amount и currency), реквизиты — из поля requisites, и попроси прислать скриншот чека прямо сюда, в этот чат. Предупреди, что без оплаты до hold_until слот освободится. Никаких ссылок и сайтов — чек принимается здесь же, в переписке. Когда клиент пришлёт чек, проверка произойдёт автоматически, и подтверждение отправится само — тебе не нужно ничего делать с чеком и НЕ нужно повторно вызывать create_appointment.`,
     `- ${sn.nomSg.toUpperCase()} ОБЯЗАТЕЛЕН для записи: create_appointment без реального master_id невозможен. Если клиент не выбрал ${sn.accSg} или сказал «всё равно / потом выберу / скажу когда приду» — НЕ обещай «выберете на месте» без записи: сам выбери конкретного свободного ${sn.accSg}, передай его master_id в create_appointment и назови клиенту, к кому записал. Нельзя «записать без ${sn.genSg}» — такой записи не существует.`,
     `- ВРЕМЯ ЗАПИСИ (СТРОГО): в create_appointment/reschedule_appointment передавай время как date + time (HH:MM, напр. 11:00) — НИКОГДА не вычисляй и не пиши ISO/таймстемпы сам, сервер сам подберёт точный слот. Если инструмент вернул reason=slot_not_free — это время уже заняли, предложи клиенту времена из поля nearest и переспроси; НИКОГДА не подставляй другое время молча (клиент просил 11:00 — не записывай на другое без его согласия).`,
     `- ДЛЯ КОГО ЗАПИСЬ: если клиент записывает не себя, а другого (дочку, маму, подругу — «кызымды жазам», «на дочь»), в client_name пиши имя ТОГО, КОГО записывают, а не имя клиента. Спроси имя именно этого человека («А как зовут дочку?»), не переспрашивай про клиента. Держи в голове ранее упомянутые детали (возраст ребёнка и т.п.) — не теряй их.`,
@@ -712,6 +713,15 @@ type V4RunFlags = {
   // 10–15 digits), so the assistant asks for it and passes it to create_appointment. Persisted into
   // state_data.client_phone so every later turn — and every later tool call — has it for free.
   collectedPhone?: string | null;
+  // Set when the booking was created as a prepayment hold instead of a confirmed
+  // appointment. Drives the next conversation state (awaiting_receipt) and gives
+  // the model the numbers it must quote to the client.
+  prepayment?: {
+    appointmentId: string;
+    amount: number;
+    currency: string;
+    holdExpiresAt: string;
+  } | null;
 };
 
 /**
@@ -1697,6 +1707,29 @@ export async function executeV4Tool(
           };
         }
       }
+      // Does this salon take a prepayment? Opt-in, off by default, and a missing
+      // settings row means off — so the overwhelming majority of bookings skip
+      // straight past this into the normal confirmed-booking path below.
+      //
+      // Fail-safe on purpose: ANY error here (table absent because the migration
+      // has not been applied yet, RLS, a network blip) is read as "prepayment
+      // off" and the booking proceeds normally. The alternative — letting this
+      // throw — would turn a missing table into "не получилось записать" for
+      // every client of every salon, including the ones that never asked for
+      // prepayment at all.
+      let prepayCfg: any = null;
+      try {
+        const { data } = await db
+          .from("prepayment_settings")
+          .select("enabled, recipient_name, recipient_details, instruction_ru, hold_minutes")
+          .eq("salon_id", input.salon.salonId)
+          .maybeSingle();
+        prepayCfg = data ?? null;
+      } catch (e: any) {
+        console.warn(`[wa-v4] prepayment_settings unreadable, booking without prepayment: ${e?.message ?? e}`);
+      }
+      const prepayOn = Boolean(prepayCfg?.enabled);
+
       const rpcArgs: any = {
         _salon_id: input.salon.salonId,
         _master_id: args.master_id,
@@ -1725,6 +1758,60 @@ export async function executeV4Tool(
       if (args.duration_min != null) {
         rpcArgs._duration_override_min = Number(args.duration_min);
       }
+
+      // ── Prepayment path ─────────────────────────────────────────────────────
+      // Same validation as a normal booking (the RPC delegates to
+      // create_appointment), but the row lands as pending_payment with a hold
+      // and the slot is blocked while the client pays. Nothing is confirmed here
+      // — the receipt does that — so the model must NOT tell the client they are
+      // booked, only that the slot is held until the deadline.
+      if (prepayOn) {
+        const { data: held, error: holdErr } = await db.rpc(
+          "create_appointment_with_prepayment" as any,
+          rpcArgs,
+        );
+        if (holdErr) {
+          console.error(
+            `[wa-v4] create_appointment_with_prepayment FAILED phone=${bookingPhone} at=${resolved.slotStart}: ${holdErr.message}`,
+          );
+          return { success: false, error: holdErr.message };
+        }
+        const h = held as any;
+        flags.appointmentId = h.appointment_id as string;
+        flags.prepayment = {
+          appointmentId: h.appointment_id as string,
+          amount: Number(h.amount),
+          currency: String(h.currency),
+          holdExpiresAt: String(h.hold_expires_at),
+        };
+        if (args.branch_id) flags.selectedBranchId = args.branch_id as string;
+        const cfgAny = prepayCfg as any;
+        const details = cfgAny?.recipient_details ?? {};
+        const requisites = [
+          details.bank ? `банк: ${details.bank}` : null,
+          details.phone ? `номер: ${details.phone}` : null,
+          details.card ? `карта: ${details.card}` : null,
+          cfgAny?.recipient_name ? `получатель: ${cfgAny.recipient_name}` : null,
+        ]
+          .filter(Boolean)
+          .join(", ");
+        const deadline = formatTimeInTz(h.hold_expires_at, tz);
+        console.log(
+          `[wa-v4] prepayment hold id=${h.appointment_id} amount=${h.amount} ${h.currency} until=${h.hold_expires_at}`,
+        );
+        return {
+          success: true,
+          appointment_id: h.appointment_id,
+          prepayment_required: true,
+          amount: Number(h.amount),
+          currency: h.currency,
+          hold_until: deadline,
+          requisites: requisites || null,
+          instruction: cfgAny?.instruction_ru ?? null,
+          note: `Слот ЗАБРОНИРОВАН, но запись ЕЩЁ НЕ подтверждена — нужна предоплата ${h.amount} ${h.currency}. НЕ говори «записал(а) вас» и «ждём вас». Скажи, что держишь слот до ${deadline}, назови сумму и реквизиты (${requisites || "реквизиты не заданы — передай администратору"}), и попроси прислать скриншот чека СЮДА, в этот чат. Предупреди, что без оплаты до ${deadline} слот освободится. Подтвердить запись можно будет только после проверки чека.`,
+        };
+      }
+
       const { data: newId, error } = await db.rpc("create_appointment", rpcArgs);
       if (error) {
         // Postgres unique_violation on the appointments_active_dedup_uidx index (migration
@@ -2798,7 +2885,14 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     })),
   );
 
-  const nextState: WaAgentState = flags.appointmentId ? "done" : "collecting";
+  // A prepayment hold is NOT a finished booking: the conversation stays open
+  // waiting for the receipt, and the webhook uses this state to route the next
+  // photo into the receipt verifier rather than into the agent.
+  const nextState: WaAgentState = flags.prepayment
+    ? "awaiting_receipt"
+    : flags.appointmentId
+      ? "done"
+      : "collecting";
   // Persist the Gemini prompt-cache handle across turns. Reused as long as it hasn't expired
   // (checked at turn start). Cleared on cache-miss so we recreate next turn.
   // Await the concurrent creation promise — by now it has almost always resolved (the tool loop
@@ -2827,6 +2921,15 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     // (the webhook feeds it back in as input.client.phone), so "перенеси мою запись" a day later
     // works without asking again.
     ...(flags.collectedPhone ? ({ client_phone: flags.collectedPhone } as any) : {}),
+    // Which appointment the next receipt belongs to, and what it has to prove.
+    ...(flags.prepayment
+      ? ({
+          prepayment_appointment_id: flags.prepayment.appointmentId,
+          prepayment_amount: flags.prepayment.amount,
+          prepayment_currency: flags.prepayment.currency,
+          prepayment_hold_expires_at: flags.prepayment.holdExpiresAt,
+        } as any)
+      : {}),
   };
 
   // On escalation, hand the webhook a plain-text alert for the salon admin's own WhatsApp

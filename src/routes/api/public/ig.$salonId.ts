@@ -717,6 +717,79 @@ async function runConversationTurn(opts: {
         }
       }
 
+      // ---- Prepayment receipt short-circuit -------------------------------------------------
+      // The slot is being held and the client just sent a picture: that picture is a payment
+      // receipt. Verify it here and answer from the verdict — the model is never asked to
+      // reason about money, and never gets the chance to improvise "оплата принята". A text
+      // message in this state is NOT a receipt (it is usually a question), so it falls through
+      // to the agent as normal.
+      const receiptMsg =
+        state === "awaiting_receipt" && stateData?.prepayment_appointment_id
+          ? fresh.find((m: any) => m.kind === "image" && m.media_path)
+          : null;
+      if (receiptMsg) {
+        void igSendTypingOn(creds, recipientId);
+        const { handleChatReceipt } = await import("@/lib/prepayment/chat-receipt.server");
+        const outcome = await handleChatReceipt({
+          db,
+          appointmentId: stateData.prepayment_appointment_id as string,
+          mediaPath: (receiptMsg as any).media_path as string,
+          actorKind: "ig_agent",
+          timezone: salon.timezone ?? "UTC",
+          errLog,
+        });
+        log(`receipt verdict=${outcome.verdict} appt=${stateData.prepayment_appointment_id}`);
+
+        if (!(await stillHoldingConversationLock(db, convId, lockId))) {
+          errLog("lock lost before receipt reply — dropping to avoid a double message");
+          break;
+        }
+        const sent = await igSendMessage(creds, recipientId, outcome.reply);
+        await db.from("wa_messages").insert({
+          conversation_id: convId,
+          salon_id: salonId,
+          direction: "out",
+          kind: "text",
+          text_body: outcome.reply,
+          green_api_message_id: sent.ok ? (sent.messageId ?? null) : null,
+          meta: { receipt_verdict: outcome.verdict },
+        });
+        await db
+          .from("wa_messages")
+          .update({ processed_at: new Date().toISOString() })
+          .in(
+            "id",
+            fresh.map((m: any) => m.id),
+          );
+
+        // A receipt that needs a human is worthless if nobody is told about it.
+        if (outcome.needsSalonReview) {
+          await db.from("notifications").insert({
+            salon_id: salonId,
+            appointment_id: stateData.prepayment_appointment_id,
+            type: "appointment.created",
+            title: "Чек ждёт проверки",
+            body: `${conv.client_name ?? "Клиент"} прислал(а) чек в Instagram — нужна ручная проверка.`,
+          });
+        }
+
+        const paidApptId = stateData.prepayment_appointment_id as string;
+        state = outcome.nextState as WaAgentState;
+        // Clearing state_data on success drops the prepayment keys, so read the id first.
+        stateData = outcome.nextState === "done" ? {} : stateData;
+        await db
+          .from("wa_conversations")
+          .update({
+            state,
+            state_data: stateData,
+            ...(outcome.verdict === "verified"
+              ? { status: "booked", appointment_id: paidApptId }
+              : {}),
+          })
+          .eq("id", convId);
+        continue;
+      }
+
       // The turn takes seconds (Gemini + tool loop); show the client something is happening.
       void igSendTypingOn(creds, recipientId);
 

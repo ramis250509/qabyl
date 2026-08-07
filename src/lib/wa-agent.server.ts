@@ -118,6 +118,10 @@ export type WaAgentState =
   | "awaiting_category" // V3: shown when a salon has more services than fit one 10-row list
   | "awaiting_service" // V3
   | "awaiting_photo"
+  // Prepayment: the slot is held and we are waiting for the client to send a
+  // payment receipt. While in this state an inbound image is treated as a
+  // receipt and never as a "I want this hairstyle" reference photo.
+  | "awaiting_receipt"
   | "awaiting_price_confirm"
   | "awaiting_date_choice" // V3
   | "awaiting_part_of_day"
@@ -153,6 +157,13 @@ export type WaAgentStateData = {
   greeted?: boolean; // we have already greeted the client in this session → never greet twice
   reask_count?: number; // consecutive turns we re-asked the SAME question after an unrecognized reply
   needs_human?: boolean; // bot gave up after repeated confusion → conversation flagged for a live admin
+  // Prepayment hold awaiting a receipt. Set when create_appointment booked through
+  // create_appointment_with_prepayment; the webhook reads it to route the client's
+  // next photo into the receipt verifier instead of the agent.
+  prepayment_appointment_id?: string;
+  prepayment_amount?: number;
+  prepayment_currency?: string;
+  prepayment_hold_expires_at?: string; // ISO
 };
 
 export type WaSalonInfo = {
