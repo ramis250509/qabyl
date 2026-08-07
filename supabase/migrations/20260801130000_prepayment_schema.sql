@@ -242,74 +242,117 @@ CREATE POLICY "Salon admin reads prepayment audit" ON public.prepayment_audit
 GRANT SELECT ON public.prepayment_audit TO authenticated;
 GRANT ALL ON public.prepayment_audit TO service_role;
 
--- ── 7) Update get_available_slots and create_appointment — hold counts as busy
--- get_available_slots's conflict check runs on `status = 'confirmed'`. That
--- would let two people book the same slot while one is holding it. Widen the
--- check to include pending_payment.
-CREATE OR REPLACE FUNCTION public.get_available_slots(
-  _master_id uuid,
-  _service_id uuid,
-  _date date
-)
-RETURNS TABLE(slot_start timestamptz, slot_end timestamptz)
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public
-AS $$
+-- ── 7) Update get_available_slots — hold counts as busy ─────────────────────
+-- The conflict check runs on `status = 'confirmed'`, which would let two people
+-- book the same slot while one is holding it for prepayment. Widen it to
+-- include pending_payment.
+--
+-- IMPORTANT: the body below is a VERBATIM copy of the live definition from
+-- 20260615151341 (branch working hours + master_day_overrides for off/workday/
+-- break + buffer_after_min). The ONLY change is the appointments status list.
+-- Do not "simplify" it — an earlier draft of this migration replaced the whole
+-- function with a much older body, which would have silently dropped branch
+-- opening hours, master days off and breaks for EVERY salon, prepayment or not.
+-- If get_available_slots is ever changed again, re-copy the latest body here.
+CREATE OR REPLACE FUNCTION public.get_available_slots(_master_id uuid, _service_id uuid, _date date)
+ RETURNS TABLE(slot_start timestamp with time zone, slot_end timestamp with time zone)
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
 DECLARE
-  _duration int;
-  _tz text;
-  _wd smallint;
-  _sched record;
-  _slot_start timestamptz;
-  _slot_end timestamptz;
+  _duration int; _buffer int; _tz text; _wd smallint;
+  _branch_id uuid; _branch_hours jsonb; _branch_intervals jsonb;
+  _override record; _override_intervals jsonb;
+  _master_intervals jsonb;
+  _break_intervals jsonb;
+  _slot_start timestamptz; _slot_end timestamptz; _slot_block_end timestamptz;
   _step interval := interval '15 minutes';
+  _eff_start time; _eff_end time;
+  _row record;
 BEGIN
-  SELECT duration_min INTO _duration FROM services WHERE id = _service_id AND is_active = true;
+  SELECT duration_min, COALESCE(buffer_after_min,0) INTO _duration, _buffer
+  FROM services WHERE id = _service_id AND is_active = true;
   IF _duration IS NULL THEN RETURN; END IF;
 
-  SELECT s.timezone INTO _tz FROM masters m JOIN salons s ON s.id = m.salon_id WHERE m.id = _master_id;
+  SELECT s.timezone, m.branch_id INTO _tz, _branch_id
+  FROM masters m JOIN salons s ON s.id = m.salon_id WHERE m.id = _master_id;
   IF _tz IS NULL THEN _tz := 'UTC'; END IF;
 
   _wd := EXTRACT(DOW FROM _date)::smallint;
 
-  FOR _sched IN
-    SELECT start_time, end_time FROM master_schedules
-    WHERE master_id = _master_id AND weekday = _wd
-    ORDER BY start_time
+  IF _branch_id IS NOT NULL THEN
+    SELECT working_hours INTO _branch_hours FROM branches WHERE id = _branch_id;
+    IF _branch_hours IS NOT NULL AND jsonb_typeof(_branch_hours) = 'object' THEN
+      _branch_intervals := _branch_hours -> _wd::text;
+      IF _branch_intervals IS NOT NULL AND jsonb_typeof(_branch_intervals) = 'array'
+         AND jsonb_array_length(_branch_intervals) = 0 THEN RETURN; END IF;
+    END IF;
+  END IF;
+
+  SELECT * INTO _override FROM master_day_overrides
+  WHERE master_id = _master_id AND date = _date;
+
+  IF FOUND AND (_override.is_off OR _override.kind = 'off') THEN RETURN; END IF;
+
+  -- Only treat override intervals as the master's workday when kind = 'workday'
+  IF FOUND AND _override.kind = 'workday'
+     AND _override.intervals IS NOT NULL AND jsonb_typeof(_override.intervals) = 'array'
+     AND jsonb_array_length(_override.intervals) > 0 THEN
+    _override_intervals := _override.intervals;
+  END IF;
+
+  -- Collect break intervals (kind = 'break')
+  IF FOUND AND _override.kind = 'break'
+     AND _override.intervals IS NOT NULL AND jsonb_typeof(_override.intervals) = 'array' THEN
+    _break_intervals := _override.intervals;
+  END IF;
+
+  IF _override_intervals IS NOT NULL THEN
+    _master_intervals := _override_intervals;
+  ELSE
+    SELECT jsonb_agg(jsonb_build_object('start', start_time::text, 'end', end_time::text))
+    INTO _master_intervals
+    FROM master_schedules WHERE master_id = _master_id AND weekday = _wd;
+  END IF;
+
+  IF _master_intervals IS NULL OR jsonb_array_length(_master_intervals) = 0 THEN RETURN; END IF;
+
+  FOR _row IN
+    SELECT
+      GREATEST((mi->>'start')::time,
+        CASE WHEN _branch_intervals IS NULL OR jsonb_typeof(_branch_intervals) <> 'array'
+             THEN (mi->>'start')::time ELSE (bi->>'start')::time END) AS s,
+      LEAST((mi->>'end')::time,
+        CASE WHEN _branch_intervals IS NULL OR jsonb_typeof(_branch_intervals) <> 'array'
+             THEN (mi->>'end')::time ELSE (bi->>'end')::time END) AS e
+    FROM jsonb_array_elements(_master_intervals) mi
+    LEFT JOIN LATERAL jsonb_array_elements(
+      CASE WHEN _branch_intervals IS NULL OR jsonb_typeof(_branch_intervals) <> 'array'
+           THEN jsonb_build_array(mi) ELSE _branch_intervals END
+    ) bi ON true
   LOOP
-    _slot_start := ((_date::text || ' ' || _sched.start_time::text)::timestamp AT TIME ZONE _tz);
+    _eff_start := _row.s; _eff_end := _row.e;
+    IF _eff_start >= _eff_end THEN CONTINUE; END IF;
+    _slot_start := ((_date::text || ' ' || _eff_start::text)::timestamp AT TIME ZONE _tz);
     LOOP
       _slot_end := _slot_start + (_duration || ' minutes')::interval;
-      EXIT WHEN _slot_end > ((_date::text || ' ' || _sched.end_time::text)::timestamp AT TIME ZONE _tz);
-
-      IF _slot_start <= now() THEN
-        _slot_start := _slot_start + _step;
-        CONTINUE;
-      END IF;
-
-      IF NOT EXISTS (
-        SELECT 1 FROM appointments a
-        WHERE a.master_id = _master_id
-          AND a.status IN ('confirmed', 'pending_payment')  -- NEW: hold counts as busy
-          AND a.starts_at < _slot_end
-          AND a.ends_at > _slot_start
-      )
+      _slot_block_end := _slot_end + (_buffer || ' minutes')::interval;
+      EXIT WHEN _slot_end > ((_date::text || ' ' || _eff_end::text)::timestamp AT TIME ZONE _tz);
+      IF _slot_start <= now() THEN _slot_start := _slot_start + _step; CONTINUE; END IF;
+      IF NOT EXISTS (SELECT 1 FROM appointments a WHERE a.master_id = _master_id AND a.status IN ('confirmed','pending_payment') AND a.starts_at < _slot_block_end AND a.ends_at > _slot_start)
+      AND NOT EXISTS (SELECT 1 FROM master_time_off t WHERE t.master_id = _master_id AND t.starts_at < _slot_block_end AND t.ends_at > _slot_start)
       AND NOT EXISTS (
-        SELECT 1 FROM master_time_off t
-        WHERE t.master_id = _master_id
-          AND t.starts_at < _slot_end
-          AND t.ends_at > _slot_start
+        SELECT 1 FROM jsonb_array_elements(COALESCE(_break_intervals,'[]'::jsonb)) bi
+        WHERE ((_date::text || ' ' || (bi->>'start'))::timestamp AT TIME ZONE _tz) < _slot_block_end
+          AND ((_date::text || ' ' || (bi->>'end'))::timestamp AT TIME ZONE _tz) > _slot_start
       )
-      THEN
-        slot_start := _slot_start;
-        slot_end := _slot_end;
-        RETURN NEXT;
-      END IF;
-
+      THEN slot_start := _slot_start; slot_end := _slot_end; RETURN NEXT; END IF;
       _slot_start := _slot_start + _step;
     END LOOP;
   END LOOP;
 END;
-$$;
+$function$;
 
 GRANT EXECUTE ON FUNCTION public.get_available_slots(uuid, uuid, date) TO anon, authenticated;
 
