@@ -11,6 +11,9 @@
 // the normal deploy, so there is no second artefact to remember to publish.
 //
 // Auth: the shared cron secret, the same one the reschedule/cancel trigger uses.
+// It is read from the CRON_SECRET env var if set, otherwise from the Supabase
+// vault entry named `cron_secret` that reminders and cleanup already rely on —
+// so there is nothing to configure for this endpoint to work.
 //
 // Scope: Instagram conversations. WhatsApp holds are not messaged here — that
 // channel's outbound path goes through the send-whatsapp edge function and its
@@ -22,11 +25,24 @@ export const Route = createFileRoute("/api/public/prepayment-expired")({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const secret = request.headers.get("x-cron-secret") ?? "";
-        const expected = process.env.CRON_SECRET ?? "";
-        // Constant-ish comparison is overkill for a job-to-self call, but an empty
-        // configured secret must never authorise anything.
-        if (!expected || secret !== expected) {
+        const provided = request.headers.get("x-cron-secret") ?? "";
+        if (!provided) return new Response("Forbidden", { status: 403 });
+
+        const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+        const db = supabaseAdmin as any;
+
+        // Same resolution order as send-push: the env var when someone set one,
+        // otherwise the vault secret every other cron consumer already uses. The
+        // fallback is what makes this endpoint work with no configuration at all
+        // — the secret exists the moment reminders do.
+        let expected = (process.env.CRON_SECRET ?? "").trim();
+        if (!expected) {
+          const { data: sec, error: rpcErr } = await db.rpc("internal_get_cron_secret");
+          if (rpcErr) console.error("[prepayment-expired] cron secret rpc error", rpcErr.message);
+          expected = ((sec as string) ?? "").trim();
+        }
+        // An unset secret must never authorise anything.
+        if (!expected || provided !== expected) {
           return new Response("Forbidden", { status: 403 });
         }
 
@@ -38,9 +54,6 @@ export const Route = createFileRoute("/api/public/prepayment-expired")({
         }
         const appointmentId = String(body?.appointment_id ?? "");
         if (!appointmentId) return new Response("Bad request", { status: 400 });
-
-        const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-        const db = supabaseAdmin as any;
 
         // The conversation that created this hold. state_data still carries the
         // appointment id until the client pays or the state is reset.
