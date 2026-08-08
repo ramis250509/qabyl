@@ -5,7 +5,7 @@
       "name": "Dev Server (Vite + TanStack Start)",
       "runtimeExecutable": "bun",
       "runtimeArgs": ["dev"],
-      "autoPort": true
+      "port": 8080
     },
     {
       "name": "Preview (production build)",
