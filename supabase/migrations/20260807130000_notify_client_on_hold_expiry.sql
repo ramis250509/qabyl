@@ -23,7 +23,7 @@ DECLARE
   r RECORD;
   cnt integer := 0;
   secret text;
-  notify_url text := 'https://qabyl.com/api/public/prepayment-expired';
+  notify_url text := 'https://qabyl.com/api/internal/cron/prepayment-expired';
 BEGIN
   SELECT public.internal_get_cron_secret() INTO secret;
 

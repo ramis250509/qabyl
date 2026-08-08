@@ -1,14 +1,20 @@
-// Cron-triggered ops endpoints — Cloudflare Worker route.
-//   /api/internal/cron/digest    → Chief of Staff daily digest (Кэп)
-//   /api/internal/cron/sre-scan  → SRE new-error scan (Деби)
+// Cron-triggered endpoints — Cloudflare Worker route.
+//   /api/internal/cron/digest              → Chief of Staff daily digest (Кэп)
+//   /api/internal/cron/sre-scan            → SRE new-error scan (Деби)
+//   /api/internal/cron/prepayment-expired  → tell the client their held slot was released
 //
-// Called by pg_cron via net.http_post with header x-cron-secret (see migration
-// 20260730120000). We compare it against env CRON_SECRET — set that to the same value
-// stored in the Supabase vault as 'cron_secret'.
+// Called by pg_cron via net.http_post with header x-cron-secret (see migrations
+// 20260730120000 and 20260807130000).
 //
-// Proactive messages go to env TELEGRAM_CHAT_ID; optional forum-topic ids
-// TELEGRAM_TOPIC_CHIEF / TELEGRAM_TOPIC_SRE route each agent into its own topic.
-// The kill-switch and per-agent pause are honoured here too.
+// The secret is read from env CRON_SECRET when set, and otherwise from the
+// Supabase vault entry 'cron_secret' that reminders, cleanup-wa-media and the
+// reschedule trigger already use — so a new cron job works with no extra setup,
+// and forgetting the env var cannot silently disable delivery.
+//
+// The ops agents deliver to Telegram (env TELEGRAM_CHAT_ID; optional forum-topic
+// ids TELEGRAM_TOPIC_CHIEF / TELEGRAM_TOPIC_SRE) and honour the kill-switch.
+// Those guards belong to those two jobs only — a job that has nothing to do with
+// Telegram must not be skipped because no chat is configured.
 
 import { createFileRoute } from "@tanstack/react-router";
 import { sendMessage } from "@/lib/ops-telegram.server";
@@ -37,26 +43,48 @@ export const Route = createFileRoute("/api/internal/cron/$job")({
   server: {
     handlers: {
       POST: async ({ request, params }) => {
-        const secret = process.env.CRON_SECRET ?? "";
         const provided = request.headers.get("x-cron-secret") ?? "";
+        if (!provided) return json({ error: "unauthorized" }, 401);
+
+        let secret = (process.env.CRON_SECRET ?? "").trim();
+        if (!secret) {
+          const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+          const { data: sec, error: rpcErr } = await (supabaseAdmin as any).rpc(
+            "internal_get_cron_secret",
+          );
+          if (rpcErr) console.error("[cron] secret rpc error", rpcErr.message);
+          secret = ((sec as string) ?? "").trim();
+        }
+        // An unset secret must never authorise anything.
         if (!secret || provided !== secret) {
           return json({ error: "unauthorized" }, 401);
-        }
-
-        const chatId = process.env.TELEGRAM_CHAT_ID;
-        if (!chatId) {
-          console.error("[ops-cron] TELEGRAM_CHAT_ID not set — cannot deliver");
-          return json({ skipped: true, reason: "no_chat_id" });
-        }
-
-        // Global kill-switch.
-        if (!(await agentsEnabled())) {
-          return json({ skipped: true, reason: "agents_disabled" });
         }
 
         const job = params.job;
 
         try {
+          // Prepayment hold expiry — nothing to do with Telegram or the ops
+          // agents, so it is dispatched before their guards.
+          if (job === "prepayment-expired") {
+            const body = await request.json().catch(() => null);
+            const appointmentId = String((body as any)?.appointment_id ?? "");
+            if (!appointmentId) return json({ error: "missing_appointment_id" }, 400);
+            const { notifyHoldExpired } = await import("@/lib/prepayment/expiry-notify.server");
+            const res = await notifyHoldExpired(appointmentId);
+            return json({ ok: true, ...res });
+          }
+
+          // ---- Ops agents (Кэп / Деби) ----
+          const chatId = process.env.TELEGRAM_CHAT_ID;
+          if (!chatId) {
+            console.error("[ops-cron] TELEGRAM_CHAT_ID not set — cannot deliver");
+            return json({ skipped: true, reason: "no_chat_id" });
+          }
+          // Global kill-switch.
+          if (!(await agentsEnabled())) {
+            return json({ skipped: true, reason: "agents_disabled" });
+          }
+
           if (job === "digest") {
             if (!(await isAgentActive("chief")))
               return json({ skipped: true, reason: "chief_paused" });

@@ -27,7 +27,6 @@ import { Route as AdminCalendarRouteImport } from './routes/admin/calendar'
 import { Route as AdminAccountRouteImport } from './routes/admin/account'
 import { Route as AdminSalonsIndexRouteImport } from './routes/admin/salons/index'
 import { Route as PreviewSalonSalonIdRouteImport } from './routes/preview.salon.$salonId'
-import { Route as ApiPublicPrepaymentExpiredRouteImport } from './routes/api/public/prepayment-expired'
 import { Route as ApiInternalTelegramRouteImport } from './routes/api/internal/telegram'
 import { Route as AdminSalonsSalonIdRouteImport } from './routes/admin/salons/$salonId'
 import { Route as ApiPublicWaSalonIdRouteImport } from './routes/api/public/wa.$salonId'
@@ -124,12 +123,6 @@ const PreviewSalonSalonIdRoute = PreviewSalonSalonIdRouteImport.update({
   path: '/preview/salon/$salonId',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiPublicPrepaymentExpiredRoute =
-  ApiPublicPrepaymentExpiredRouteImport.update({
-    id: '/api/public/prepayment-expired',
-    path: '/api/public/prepayment-expired',
-    getParentRoute: () => rootRouteImport,
-  } as any)
 const ApiInternalTelegramRoute = ApiInternalTelegramRouteImport.update({
   id: '/api/internal/telegram',
   path: '/api/internal/telegram',
@@ -175,7 +168,6 @@ export interface FileRoutesByFullPath {
   '/admin/': typeof AdminIndexRoute
   '/admin/salons/$salonId': typeof AdminSalonsSalonIdRoute
   '/api/internal/telegram': typeof ApiInternalTelegramRoute
-  '/api/public/prepayment-expired': typeof ApiPublicPrepaymentExpiredRoute
   '/preview/salon/$salonId': typeof PreviewSalonSalonIdRoute
   '/admin/salons/': typeof AdminSalonsIndexRoute
   '/api/internal/cron/$job': typeof ApiInternalCronJobRoute
@@ -200,7 +192,6 @@ export interface FileRoutesByTo {
   '/admin': typeof AdminIndexRoute
   '/admin/salons/$salonId': typeof AdminSalonsSalonIdRoute
   '/api/internal/telegram': typeof ApiInternalTelegramRoute
-  '/api/public/prepayment-expired': typeof ApiPublicPrepaymentExpiredRoute
   '/preview/salon/$salonId': typeof PreviewSalonSalonIdRoute
   '/admin/salons': typeof AdminSalonsIndexRoute
   '/api/internal/cron/$job': typeof ApiInternalCronJobRoute
@@ -227,7 +218,6 @@ export interface FileRoutesById {
   '/admin/': typeof AdminIndexRoute
   '/admin/salons/$salonId': typeof AdminSalonsSalonIdRoute
   '/api/internal/telegram': typeof ApiInternalTelegramRoute
-  '/api/public/prepayment-expired': typeof ApiPublicPrepaymentExpiredRoute
   '/preview/salon/$salonId': typeof PreviewSalonSalonIdRoute
   '/admin/salons/': typeof AdminSalonsIndexRoute
   '/api/internal/cron/$job': typeof ApiInternalCronJobRoute
@@ -255,7 +245,6 @@ export interface FileRouteTypes {
     | '/admin/'
     | '/admin/salons/$salonId'
     | '/api/internal/telegram'
-    | '/api/public/prepayment-expired'
     | '/preview/salon/$salonId'
     | '/admin/salons/'
     | '/api/internal/cron/$job'
@@ -280,7 +269,6 @@ export interface FileRouteTypes {
     | '/admin'
     | '/admin/salons/$salonId'
     | '/api/internal/telegram'
-    | '/api/public/prepayment-expired'
     | '/preview/salon/$salonId'
     | '/admin/salons'
     | '/api/internal/cron/$job'
@@ -306,7 +294,6 @@ export interface FileRouteTypes {
     | '/admin/'
     | '/admin/salons/$salonId'
     | '/api/internal/telegram'
-    | '/api/public/prepayment-expired'
     | '/preview/salon/$salonId'
     | '/admin/salons/'
     | '/api/internal/cron/$job'
@@ -325,7 +312,6 @@ export interface RootRouteChildren {
   CatalogSlugRoute: typeof CatalogSlugRoute
   ManageTokenRoute: typeof ManageTokenRoute
   ApiInternalTelegramRoute: typeof ApiInternalTelegramRoute
-  ApiPublicPrepaymentExpiredRoute: typeof ApiPublicPrepaymentExpiredRoute
   PreviewSalonSalonIdRoute: typeof PreviewSalonSalonIdRoute
   ApiInternalCronJobRoute: typeof ApiInternalCronJobRoute
   ApiPublicIgSalonIdRoute: typeof ApiPublicIgSalonIdRoute
@@ -460,13 +446,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PreviewSalonSalonIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/public/prepayment-expired': {
-      id: '/api/public/prepayment-expired'
-      path: '/api/public/prepayment-expired'
-      fullPath: '/api/public/prepayment-expired'
-      preLoaderRoute: typeof ApiPublicPrepaymentExpiredRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/internal/telegram': {
       id: '/api/internal/telegram'
       path: '/api/internal/telegram'
@@ -542,7 +521,6 @@ const rootRouteChildren: RootRouteChildren = {
   CatalogSlugRoute: CatalogSlugRoute,
   ManageTokenRoute: ManageTokenRoute,
   ApiInternalTelegramRoute: ApiInternalTelegramRoute,
-  ApiPublicPrepaymentExpiredRoute: ApiPublicPrepaymentExpiredRoute,
   PreviewSalonSalonIdRoute: PreviewSalonSalonIdRoute,
   ApiInternalCronJobRoute: ApiInternalCronJobRoute,
   ApiPublicIgSalonIdRoute: ApiPublicIgSalonIdRoute,
