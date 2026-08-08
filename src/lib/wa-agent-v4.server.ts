@@ -2821,6 +2821,26 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     });
     const retry = await runToolLoop();
     if (retry) reply = retry;
+
+    // The retry is a request, not a guarantee — the model has been observed repeating the same
+    // fabricated times. verifiedFreeTimes grows during the retry (it may have looked at other
+    // days), so re-check against the updated truth and refuse to send fabricated times at all.
+    // Sending them is the worst outcome available: the client picks one, and either the booking
+    // fails in front of them or they arrive to a slot that was never free.
+    const retryTimes = [...reply.matchAll(/\b([01]?\d|2[0-3]):([0-5]\d)\b/g)].map(
+      (m) => `${m[1].padStart(2, "0")}:${m[2]}`,
+    );
+    const stillInvented =
+      retryTimes.length > 0 &&
+      !retryTimes.some((t) => verifiedFreeTimes.has(t)) &&
+      OFFER_RE.test(reply);
+    if (stillInvented) {
+      debug.errors.push("invented_slots_suppressed");
+      reply = verifiedFreeTimes.size
+        ? `Свободное время есть: ${[...verifiedFreeTimes].sort().join(", ")}. Какое вам удобно?`
+        : "Сейчас уточню свободное время у администратора и вернусь с ответом.";
+      if (!verifiedFreeTimes.size) flags.needsHuman = true;
+    }
     try {
       const { logError } = await import("./error-log.server");
       await logError({

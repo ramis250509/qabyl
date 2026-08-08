@@ -259,8 +259,17 @@ export type IgInboundEvent = {
   text: string | null;
   imageUrl: string | null;
   audioUrl: string | null;
-  /** true when the salon answered manually from the Instagram app — a human takeover. */
+  /**
+   * true for ANY message sent by the business account — including the ones this bot just sent
+   * through the API. On its own it does NOT mean a human took over; see `echoAppId`.
+   */
   isEcho: boolean;
+  /**
+   * Present on echoes of messages sent through an app (i.e. by us, via the API). A message typed
+   * by a human in the Instagram app carries no app id. This is what separates "the salon owner is
+   * answering" from "our own reply came back".
+   */
+  echoAppId: string | null;
   /** Tap on an icebreaker / generic-template button. */
   postbackPayload: string | null;
   /** Message the client is replying to (story mention, post share…), for context only. */
@@ -322,6 +331,7 @@ export function parseIgWebhook(payload: any): {
         imageUrl: image?.payload?.url ?? null,
         audioUrl: audio?.payload?.url ?? null,
         isEcho,
+        echoAppId: msg?.app_id != null ? String(msg.app_id) : null,
         postbackPayload: postback?.payload ?? null,
         replyToStory: Boolean(msg?.reply_to?.story),
         timestampMs: Number(ev?.timestamp) || Date.now(),

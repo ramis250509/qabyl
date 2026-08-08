@@ -81,6 +81,37 @@ describe("parseIgWebhook", () => {
     expect(events).toHaveLength(1);
     expect(events[0].clientId).toBe(CLIENT);
     expect(events[0].isEcho).toBe(true);
+    // No app_id → a human typed this in the Instagram app → a real takeover.
+    expect(events[0].echoAppId).toBeNull();
+  });
+
+  test("an echo of OUR OWN api reply carries app_id", () => {
+    // Meta echoes every outbound message of the business account, including the ones the bot sent
+    // itself. Treating those as a manual takeover muted the assistant for five minutes after each
+    // of its own replies, so the client wrote into silence. app_id is what tells them apart.
+    const { events } = parseIgWebhook({
+      object: "instagram",
+      entry: [
+        {
+          id: IG_ACCOUNT,
+          messaging: [
+            {
+              sender: { id: IG_ACCOUNT },
+              recipient: { id: CLIENT },
+              message: {
+                mid: "mid.4",
+                text: "Извините, не получилось разобрать голосовое сообщение",
+                is_echo: true,
+                app_id: 1234567890,
+              },
+            },
+          ],
+        },
+      ],
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0].isEcho).toBe(true);
+    expect(events[0].echoAppId).toBe("1234567890");
   });
 
   test("drops read receipts, reactions and deletions", () => {

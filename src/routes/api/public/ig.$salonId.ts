@@ -357,11 +357,48 @@ async function ingestEvent(opts: {
   ]);
   if (dup) return null; // Meta redelivery — already stored and answered
 
-  // ---- Salon answered manually from the Instagram app. Meta echoes that back to us; treat it
-  // exactly like a WhatsApp manual takeover — pause the assistant so two "administrators" are
-  // never typing at the same client at once.
+  // ---- Echo: a message sent BY the salon account. Two very different things arrive here.
+  //
+  // Meta echoes every outbound message of the business account, including the ones this bot just
+  // sent through the API. Pausing on all of them meant the assistant muted itself for five minutes
+  // after each of its own replies — the client kept writing into silence, and the only trace was
+  // "Сообщение получено, но ассистент не отвечает". Only a message we did NOT send is a takeover.
+  //
+  // Ours is recognised two ways, because neither alone is reliable:
+  //   * app_id — Meta sets it on messages sent through an app; a human typing in the Instagram app
+  //     produces an echo without one. This is the primary signal.
+  //   * the mid we recorded when sending. Belt and braces for the case where app_id is absent.
+  // The mid lookup also closes the race where the echo arrives before we stored the outbound row:
+  // if neither matches but the text is identical to something we sent in the last two minutes, it
+  // is still ours.
   if (ev.isEcho) {
     if (!existingConv) return null;
+
+    let ours = ev.echoAppId != null;
+    if (!ours && ev.mid) {
+      const { data: sent } = await db
+        .from("wa_messages")
+        .select("id")
+        .eq("conversation_id", existingConv.id)
+        .eq("direction", "out")
+        .eq("green_api_message_id", ev.mid)
+        .maybeSingle();
+      ours = Boolean(sent);
+    }
+    if (!ours && ev.text) {
+      const { data: recent } = await db
+        .from("wa_messages")
+        .select("id")
+        .eq("conversation_id", existingConv.id)
+        .eq("direction", "out")
+        .eq("text_body", ev.text)
+        .gte("created_at", new Date(Date.now() - 120_000).toISOString())
+        .limit(1);
+      ours = (recent ?? []).length > 0;
+    }
+
+    if (ours) return null; // our own reply coming back — not a takeover, do not pause
+
     await db
       .from("wa_conversations")
       .update({ ai_paused: true, ai_paused_at: nowIso })
@@ -466,17 +503,27 @@ async function ingestEvent(opts: {
   let textBody = ev.text;
   if (!textBody && ev.audioUrl) {
     const audio = await fetchAsBase64(ev.audioUrl, MAX_AUDIO_BYTES);
+    // Meta's CDN often serves voice notes as application/octet-stream, and Gemini rejects a
+    // mime type it does not recognise — the transcription then fails for a reason that has
+    // nothing to do with the recording. Instagram voice notes are MPEG-4 audio, so anything
+    // that is not already an audio/* type is sent as audio/mp4.
+    const audioMime =
+      audio && /^audio\//i.test(audio.mime) ? audio.mime.split(";")[0].trim() : "audio/mp4";
     const tr = audio
       ? await transcribeAudio({
           apiKey: process.env.GEMINI_API_KEY ?? "",
           audioBase64: audio.base64,
-          mime: audio.mime,
+          mime: audioMime,
         })
       : ({ ok: false, error: "audio download failed" } as const);
     if (tr.ok && tr.text) {
       textBody = tr.text;
     } else {
-      errLog(`voice transcription failed: ${(tr as any).error}`);
+      // The served content-type is in here on purpose: without it a transcription failure is
+      // indistinguishable between "bad recording" and "we sent Gemini a type it refuses".
+      errLog(
+        `voice transcription failed: ${(tr as any).error} (served=${audio?.mime ?? "n/a"} sent=${audioMime})`,
+      );
       // Stored as already-processed so the agent never picks up an empty message, and the admin
       // still sees that something arrived.
       await db.from("wa_messages").insert({
