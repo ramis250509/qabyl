@@ -22,11 +22,29 @@
 -- Все — идемпотентны (IF NOT EXISTS / OR REPLACE / DROP POLICY IF EXISTS
 -- везде). Повторный прогон не ломает данные.
 --
+-- ЧТОБЫ ЗАРАБОТАЛА ПРЕДОПЛАТА, НУЖНЫ ВСЕ ПЯТЬ: 3, 4, 5, 8, 9 — именно в этом
+-- порядке. Нельзя применить только 8 и 9: таблицу prepayment_settings создаёт
+-- (4), а функцию user_manager_salon_id, на которую ссылается её RLS-политика,
+-- создаёт (3).
+--
+-- ОСТОРОЖНО, ЭТА ОШИБКА УЖЕ БЫЛА (2026-08-08): применили только 8 и 9, обе
+-- прошли «успешно», а админка продолжила писать
+--   Could not find the table 'public.prepayment_settings' in the schema cache
+-- Причина: тела plpgsql-функций Postgres не проверяет на существование таблиц в
+-- момент CREATE, поэтому (8) и (9) спокойно создаются поверх отсутствующей
+-- схемы и молчат. Диагностика — что реально есть в базе:
+--   SELECT to_regclass('public.prepayment_settings')        AS t_settings,
+--          to_regclass('public.appointment_prepayments')    AS t_appt,
+--          to_regproc('public.user_manager_salon_id(uuid)') AS fn_rbac;
+-- NULL в t_settings = миграция (4) не применена.
+--
 -- ПОРЯДОК 8 ПОСЛЕ 4 ОБЯЗАТЕЛЕН: (8) удаляет 8-аргументную версию
 -- create_appointment_with_prepayment, созданную в (4), и заменяет её обёрткой
--- над create_appointment. Если применить (8) раньше (4) — DROP не найдёт что
--- удалять (это не ошибка), но CREATE сошлётся на таблицы предоплаты, которых
--- ещё нет, и упадёт.
+-- над create_appointment.
+--
+-- ЕСЛИ ТАБЛИЦЫ ЕСТЬ, А ОШИБКА ПРО schema cache ОСТАЁТСЯ: это PostgREST с
+-- устаревшим кэшем схемы, а не отсутствующая таблица. Лечится одной строкой:
+--   NOTIFY pgrst, 'reload schema';
 --
 -- ЧТО МЕНЯЕТСЯ ДЛЯ САЛОНОВ БЕЗ ПРЕДОПЛАТЫ: ничего. (8) добавляет
 -- create_appointment необязательный параметр _hold_minutes; без него поведение
