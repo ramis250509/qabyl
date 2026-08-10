@@ -15,12 +15,16 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Copy, CheckCircle2, AlertCircle, Instagram, ExternalLink, RefreshCw } from "lucide-react";
 import {
+  deleteCommentTrigger,
   getInstagramConfig,
   getInstagramDiagnostics,
+  listCommentTriggers,
   setInstagramEnabled,
   testInstagramConnection,
+  upsertCommentTrigger,
   upsertInstagramConfig,
 } from "@/lib/instagram.functions";
+import { Textarea } from "@/components/ui/textarea";
 
 type Diagnostics = Awaited<ReturnType<typeof getInstagramDiagnostics>>;
 
@@ -123,6 +127,262 @@ function CopyField({ label, value, hint }: { label: string; value: string; hint?
       </div>
       {hint && <p className="text-xs text-muted-foreground mt-1">{hint}</p>}
     </div>
+  );
+}
+
+type TriggerRow = {
+  id: string;
+  keyword: string;
+  match_mode: "exact" | "contains";
+  media_id: string | null;
+  reply_text: string;
+  public_reply: string | null;
+  ai_context: string | null;
+  enabled: boolean;
+  sent_count: number;
+};
+
+const NEW_TRIGGER = {
+  id: null as string | null,
+  keyword: "",
+  matchMode: "contains" as "exact" | "contains",
+  mediaId: "",
+  replyText: "",
+  publicReply: "",
+  aiContext: "",
+  enabled: true,
+};
+
+/**
+ * "Напиши ХОЧУ в комментариях" — Meta's Private Replies, exposed to the owner.
+ *
+ * The one API rule the UI has to make visible, because it shapes what the owner should write:
+ * Instagram allows exactly ONE message per commenter until that person answers. So the text
+ * below is not an opener in a sequence — it is the whole first contact, and it has to end with
+ * something the person can reply to. The assistant takes over from their reply onward.
+ */
+function CommentTriggersCard({ salonId }: { salonId: string }) {
+  const list = useServerFn(listCommentTriggers);
+  const upsert = useServerFn(upsertCommentTrigger);
+  const remove = useServerFn(deleteCommentTrigger);
+
+  const [rows, setRows] = useState<TriggerRow[]>([]);
+  const [draft, setDraft] = useState({ ...NEW_TRIGGER });
+  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  async function reload() {
+    try {
+      const data = (await list({ data: { salonId } })) as TriggerRow[];
+      setRows(data ?? []);
+    } catch (e: any) {
+      // A salon on a database without the migration should see the rest of the tab work.
+      console.warn("comment triggers load failed", e);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [salonId]);
+
+  async function saveDraft() {
+    if (draft.keyword.trim().length < 2) {
+      toast.error("Кодовое слово — минимум 2 символа");
+      return;
+    }
+    if (!draft.replyText.trim()) {
+      toast.error("Напишите сообщение, которое уйдёт в директ");
+      return;
+    }
+    setBusy(true);
+    try {
+      await upsert({
+        data: {
+          salonId,
+          id: draft.id,
+          keyword: draft.keyword.trim(),
+          matchMode: draft.matchMode,
+          mediaId: draft.mediaId.trim() || null,
+          replyText: draft.replyText.trim(),
+          publicReply: draft.publicReply.trim() || null,
+          aiContext: draft.aiContext.trim() || null,
+          enabled: draft.enabled,
+        },
+      });
+      setDraft({ ...NEW_TRIGGER });
+      await reload();
+      toast.success("Сохранено");
+    } catch (e: any) {
+      toast.error(e?.message ?? "Не удалось сохранить");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggle(row: TriggerRow, enabled: boolean) {
+    setRows((rs) => rs.map((r) => (r.id === row.id ? { ...r, enabled } : r)));
+    try {
+      await upsert({
+        data: {
+          salonId,
+          id: row.id,
+          keyword: row.keyword,
+          matchMode: row.match_mode,
+          mediaId: row.media_id,
+          replyText: row.reply_text,
+          publicReply: row.public_reply,
+          aiContext: row.ai_context,
+          enabled,
+        },
+      });
+    } catch (e: any) {
+      toast.error(e?.message ?? "Не удалось изменить");
+      await reload();
+    }
+  }
+
+  return (
+    <Card className="p-6 space-y-4">
+      <div className="space-y-1">
+        <h2 className="font-semibold">Кодовое слово в комментариях → сообщение в директ</h2>
+        <p className="text-sm text-muted-foreground">
+          Клиент пишет под постом, например, «ХОЧУ» — и сразу получает от вас личное сообщение.
+          Дальше разговор ведёт ассистент. Работает по официальному механизму Instagram, ничего
+          обходить не нужно.
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Instagram разрешает отправить такому человеку <b>только одно</b> сообщение, пока он не
+          ответит. Поэтому закончите его вопросом — так у клиента будет причина написать в ответ.
+          Ещё два ограничения Meta: ответить можно на комментарий не старше 7 дней и только один раз
+          на каждый комментарий.
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Чтобы это заработало, в настройках вашего приложения Meta нужно подписать вебхук на поле{" "}
+          <code>comments</code> (там же, где уже подписано <code>messages</code>) и выдать
+          разрешение <code>instagram_business_manage_comments</code>.
+        </p>
+      </div>
+
+      {loading ? (
+        <p className="text-sm text-muted-foreground">Загрузка…</p>
+      ) : rows.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Пока ни одного кодового слова.</p>
+      ) : (
+        <div className="space-y-3">
+          {rows.map((r) => (
+            <div key={r.id} className="rounded-md border p-3 space-y-1.5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="font-medium truncate">«{r.keyword}»</span>
+                  <span className="text-xs text-muted-foreground shrink-0">
+                    {r.match_mode === "exact" ? "точное совпадение" : "содержится в тексте"}
+                    {r.media_id ? " · один пост" : " · любой пост"}
+                    {r.sent_count > 0 ? ` · сработало ${r.sent_count}` : ""}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Switch checked={r.enabled} onCheckedChange={(v) => toggle(r, v)} />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={async () => {
+                      await remove({ data: { salonId, id: r.id } });
+                      await reload();
+                    }}
+                  >
+                    Удалить
+                  </Button>
+                </div>
+              </div>
+              <p className="text-sm text-muted-foreground whitespace-pre-wrap">{r.reply_text}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="rounded-md border border-dashed p-3 space-y-3">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label>Кодовое слово</Label>
+            <Input
+              value={draft.keyword}
+              placeholder="ХОЧУ"
+              onChange={(e) => setDraft({ ...draft, keyword: e.target.value })}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Как искать</Label>
+            <div className="flex gap-2">
+              {(
+                [
+                  { code: "contains", label: "Есть в комментарии" },
+                  { code: "exact", label: "Только это слово" },
+                ] as const
+              ).map((m) => (
+                <Button
+                  key={m.code}
+                  type="button"
+                  size="sm"
+                  variant={draft.matchMode === m.code ? "default" : "outline"}
+                  onClick={() => setDraft({ ...draft, matchMode: m.code })}
+                >
+                  {m.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>Сообщение в директ</Label>
+          <Textarea
+            rows={3}
+            value={draft.replyText}
+            placeholder="Здравствуйте! Вижу ваш комментарий 🙂 Расскажу про кератин и цены — подскажите, какая у вас длина волос?"
+            onChange={(e) => setDraft({ ...draft, replyText: e.target.value })}
+          />
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label>Ответ под постом (необязательно)</Label>
+            <Input
+              value={draft.publicReply}
+              placeholder="Ответила вам в директ 💌"
+              onChange={(e) => setDraft({ ...draft, publicReply: e.target.value })}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>ID поста (необязательно)</Label>
+            <Input
+              value={draft.mediaId}
+              placeholder="пусто = любой пост"
+              onChange={(e) => setDraft({ ...draft, mediaId: e.target.value })}
+            />
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>Что ассистенту знать об этом посте (необязательно)</Label>
+          <Input
+            value={draft.aiContext}
+            placeholder="Клиент пришёл с поста про кератин со скидкой"
+            onChange={(e) => setDraft({ ...draft, aiContext: e.target.value })}
+          />
+          <p className="text-xs text-muted-foreground">
+            Ассистент увидит это в начале разговора и не будет здороваться так, будто ничего не
+            было.
+          </p>
+        </div>
+
+        <Button onClick={saveDraft} disabled={busy}>
+          {busy ? "Сохранение…" : draft.id ? "Сохранить" : "Добавить кодовое слово"}
+        </Button>
+      </div>
+    </Card>
   );
 }
 
@@ -524,6 +784,8 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
           <p className="text-sm text-muted-foreground">Загрузка…</p>
         )}
       </Card>
+
+      <CommentTriggersCard salonId={salonId} />
 
       <Card className="p-6 space-y-2">
         <h2 className="font-semibold">Как это работает у клиента</h2>

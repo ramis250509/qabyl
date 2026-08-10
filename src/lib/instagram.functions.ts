@@ -266,3 +266,103 @@ export const testInstagramConnection = createServerFn({ method: "POST" })
       return { ok: false as const, error: e?.message ?? "Не удалось связаться с Meta" };
     }
   });
+
+// ─────────────────── comment → DM triggers ───────────────────────────────────
+// The table is RLS-protected and the owner could in principle write it straight from the
+// browser. It goes through server functions anyway, for one reason that matters: the reply
+// text is what Meta's one-private-reply-per-comment rule spends, so it is validated here
+// (length, non-empty keyword, no duplicate keyword per post) instead of failing later as a
+// rejected API call the owner never sees.
+
+const TRIGGER_INPUT = z.object({
+  salonId: z.string().uuid(),
+  id: z.string().uuid().nullable().default(null),
+  keyword: z.string().trim().min(2).max(60),
+  matchMode: z.enum(["exact", "contains"]).default("contains"),
+  // Empty string in the UI means "any post"; normalised to null for the COALESCE unique index.
+  mediaId: z.string().trim().max(100).nullable().default(null),
+  replyText: z.string().trim().min(1).max(900),
+  publicReply: z.string().trim().max(300).nullable().default(null),
+  aiContext: z.string().trim().max(500).nullable().default(null),
+  enabled: z.boolean().default(true),
+});
+
+export const listCommentTriggers = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => z.object({ salonId: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    await assertSalonAccess(context.supabase, context.userId, data.salonId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: rows, error } = await (supabaseAdmin as any)
+      .from("instagram_comment_triggers")
+      .select("*")
+      .eq("salon_id", data.salonId)
+      .order("created_at", { ascending: true });
+    if (error) throw new Error(error.message);
+
+    // "Сработало N раз" is the only number that tells an owner whether the keyword they chose
+    // is the one people actually type. Counted per trigger over successful sends only.
+    const { data: events } = await (supabaseAdmin as any)
+      .from("instagram_comment_events")
+      .select("trigger_id, outcome")
+      .eq("salon_id", data.salonId)
+      .eq("outcome", "sent");
+    const counts = new Map<string, number>();
+    for (const e of (events ?? []) as any[]) {
+      if (!e.trigger_id) continue;
+      counts.set(e.trigger_id, (counts.get(e.trigger_id) ?? 0) + 1);
+    }
+    return ((rows ?? []) as any[]).map((r) => ({ ...r, sent_count: counts.get(r.id) ?? 0 }));
+  });
+
+export const upsertCommentTrigger = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => TRIGGER_INPUT.parse(input))
+  .handler(async ({ data, context }) => {
+    await assertSalonAccess(context.supabase, context.userId, data.salonId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const payload = {
+      salon_id: data.salonId,
+      keyword: data.keyword.toLowerCase(),
+      match_mode: data.matchMode,
+      media_id: data.mediaId || null,
+      reply_text: data.replyText,
+      public_reply: data.publicReply || null,
+      ai_context: data.aiContext || null,
+      enabled: data.enabled,
+    };
+    const q = data.id
+      ? (supabaseAdmin as any)
+          .from("instagram_comment_triggers")
+          .update(payload)
+          .eq("id", data.id)
+          .eq("salon_id", data.salonId)
+      : (supabaseAdmin as any).from("instagram_comment_triggers").insert(payload);
+    const { error } = await q;
+    if (error) {
+      // The unique index is (salon_id, keyword, COALESCE(media_id,'')) — two triggers on the
+      // same word for the same post would make which one fires arbitrary.
+      if (/duplicate key|23505/i.test(error.message)) {
+        throw new Error("Такое кодовое слово для этого поста уже есть");
+      }
+      throw new Error(error.message);
+    }
+    return { ok: true };
+  });
+
+export const deleteCommentTrigger = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) =>
+    z.object({ salonId: z.string().uuid(), id: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    await assertSalonAccess(context.supabase, context.userId, data.salonId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { error } = await (supabaseAdmin as any)
+      .from("instagram_comment_triggers")
+      .delete()
+      .eq("id", data.id)
+      .eq("salon_id", data.salonId);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });

@@ -39,6 +39,12 @@ const SETTINGS_INPUT = z.object({
   instructionRu: z.string().max(2000).nullable(),
   instructionKy: z.string().max(2000).nullable(),
   instructionEn: z.string().max(2000).nullable(),
+  // Payment QR. The bytes go straight from the browser into the payment-qr bucket (RLS-scoped
+  // to the salon's own prefix); only the resulting path/URL come through here. `.optional()`
+  // rather than `.nullable()` alone so an older client that doesn't send these fields leaves
+  // an existing QR untouched instead of wiping it.
+  qrPath: z.string().max(300).nullable().optional(),
+  qrUrl: z.string().max(600).nullable().optional(),
 });
 
 async function assertSalonOwner(userId: string, salonId: string) {
@@ -94,6 +100,16 @@ export const upsertPrepaymentSettings = createServerFn({ method: "POST" })
       instruction_ru: data.instructionRu,
       instruction_ky: data.instructionKy,
       instruction_en: data.instructionEn,
+      // Multi-tenant guard: the bucket layout is <salon_id>/<uuid>.<ext>, and this QR ends up
+      // in front of paying clients. A path outside this salon's prefix is rejected outright
+      // rather than stored — the agent has the same check before sending, but a bad row should
+      // never exist in the first place.
+      ...(data.qrPath !== undefined
+        ? {
+            qr_path: data.qrPath && data.qrPath.startsWith(`${data.salonId}/`) ? data.qrPath : null,
+            qr_url: data.qrPath && data.qrPath.startsWith(`${data.salonId}/`) ? data.qrUrl : null,
+          }
+        : {}),
     };
     const { error } = await supabaseAdmin
       .from("prepayment_settings")

@@ -182,6 +182,50 @@ export async function igSendTypingOn(creds: IgCreds, recipientId: string): Promi
 }
 
 /**
+ * Private reply to a comment — the ONLY officially supported way to start a DM with someone
+ * who has never written to the account. https://developers.facebook.com/docs/instagram-platform/private-replies/
+ *
+ * The mechanics Meta enforces, and which the caller must respect:
+ *   * the recipient is the COMMENT id, not a user id (that is the whole trick);
+ *   * exactly ONE private reply per comment — a second attempt is rejected, which is why the
+ *     webhook keeps a dedup ledger (instagram_comment_events) rather than relying on retries
+ *     being harmless;
+ *   * it must be sent within 7 DAYS of the comment;
+ *   * after this one message we may not send another until the person replies. So the text
+ *     has to be self-contained AND invite an answer — an opener that ends without a question
+ *     burns the single shot we get.
+ *   * requires instagram_business_manage_comments in addition to the messaging permission.
+ */
+export async function igSendPrivateReply(
+  creds: IgCreds,
+  commentId: string,
+  text: string,
+): Promise<IgSendResult> {
+  // Never chunk here: chunking would mean two messages, and the second one is exactly what
+  // Meta forbids until the person answers. Truncating is the honest failure mode.
+  const body = text.length > IG_TEXT_LIMIT ? `${text.slice(0, IG_TEXT_LIMIT - 1)}…` : text;
+  const payload = { recipient: { comment_id: commentId }, message: { text: body } };
+  const res = await igPost(creds, "/me/messages", payload);
+  if (!res.ok && creds.igUserId) {
+    return igPost(creds, `/${creds.igUserId}/messages`, payload);
+  }
+  return res;
+}
+
+/**
+ * Public reply under the comment ("ответила вам в директ 💌"). Optional and separate from the
+ * private reply on purpose: the DM is the conversion, but other readers of the post only see
+ * the public thread — an account that never answers publicly looks abandoned.
+ */
+export async function igSendCommentReply(
+  creds: IgCreds,
+  commentId: string,
+  message: string,
+): Promise<IgSendResult> {
+  return igPost(creds, `/${encodeURIComponent(commentId)}/replies`, { message });
+}
+
+/**
  * Look up the sender's display name / handle. Instagram gives us an IGSID, not a name, so
  * without this every conversation in the admin panel would read as a bare number.
  * Returns null on any failure — a missing name must never block a reply.
@@ -340,4 +384,127 @@ export function parseIgWebhook(payload: any): {
   }
 
   return { igUserId, events };
+}
+
+// ---------------------------------------------------------------------------
+// Comments → DM (Private Replies)
+// ---------------------------------------------------------------------------
+
+export type IgCommentEvent = {
+  commentId: string;
+  /** IGSID of the commenter — same id space as a DM sender, so it keys the same conversation. */
+  fromId: string | null;
+  fromUsername: string | null;
+  text: string;
+  /** Post/reel the comment sits under. Lets a trigger be scoped to one campaign. */
+  mediaId: string | null;
+  /** A reply to another comment rather than a top-level one. */
+  isReply: boolean;
+  timestampMs: number;
+};
+
+/**
+ * Comments arrive on `entry[].changes[]` with field "comments", NOT on `entry[].messaging`
+ * — a different shape entirely from the DM webhook, which is why it needs its own parser.
+ *
+ * Deliberately dropped here:
+ *   * the account's own comments (from.id === entry.id) — otherwise a salon answering its own
+ *     post with the keyword would trigger a private reply to itself;
+ *   * anything without a comment id or text, which is nothing we can act on.
+ */
+export function parseIgCommentWebhook(payload: any): {
+  igUserId: string | null;
+  comments: IgCommentEvent[];
+} {
+  const comments: IgCommentEvent[] = [];
+  let igUserId: string | null = null;
+  const entries: any[] = Array.isArray(payload?.entry) ? payload.entry : [];
+
+  for (const entry of entries) {
+    if (!igUserId && entry?.id) igUserId = String(entry.id);
+    const changes: any[] = Array.isArray(entry?.changes) ? entry.changes : [];
+    for (const ch of changes) {
+      if (ch?.field !== "comments" && ch?.field !== "live_comments") continue;
+      const v = ch?.value ?? {};
+      const commentId = v?.id ? String(v.id) : null;
+      if (!commentId) continue;
+      const fromId = v?.from?.id ? String(v.from.id) : null;
+      // The business commenting on its own post must never trigger anything.
+      if (fromId && entry?.id && fromId === String(entry.id)) continue;
+      const text = String(v?.text ?? "").trim();
+      if (!text) continue;
+      comments.push({
+        commentId,
+        fromId,
+        fromUsername: v?.from?.username ? String(v.from.username) : null,
+        text,
+        mediaId: v?.media?.id ? String(v.media.id) : null,
+        isReply: Boolean(v?.parent_id),
+        timestampMs: v?.timestamp ? Number(v.timestamp) * 1000 : Date.now(),
+      });
+    }
+  }
+  return { igUserId, comments };
+}
+
+export type IgCommentTrigger = {
+  id: string;
+  keyword: string;
+  match_mode: "exact" | "contains";
+  media_id: string | null;
+  reply_text: string;
+  public_reply: string | null;
+  ai_context: string | null;
+  enabled: boolean;
+};
+
+/**
+ * Strip everything that is not a letter, digit or space so "ЦЕНА!!! 🔥" matches the keyword
+ * "цена". Emoji-heavy, punctuation-heavy comments are the norm under a promo post, and an
+ * exact-match trigger that only fires on a bare word would look broken to the owner.
+ */
+export function normalizeCommentText(text: string): string {
+  return (text ?? "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Pick the trigger that fires for this comment, or null.
+ *
+ * Ordering is what makes multi-campaign accounts behave: a trigger scoped to THIS post beats a
+ * catch-all one, and an exact match beats a substring — so "цена" under a specific reel wins
+ * over a global "цена", and a global "запись" doesn't swallow a post-specific "запись на брови".
+ */
+export function matchCommentTrigger(
+  triggers: IgCommentTrigger[],
+  comment: { text: string; mediaId: string | null },
+): IgCommentTrigger | null {
+  const norm = normalizeCommentText(comment.text);
+  if (!norm) return null;
+  const candidates = triggers.filter((t) => {
+    if (!t.enabled) return false;
+    if (t.media_id && t.media_id !== comment.mediaId) return false;
+    const kw = normalizeCommentText(t.keyword);
+    if (!kw) return false;
+    return t.match_mode === "exact" ? norm === kw : norm.includes(kw);
+  });
+  if (!candidates.length) return null;
+  return candidates.sort((a, b) => {
+    const scoped = Number(Boolean(b.media_id)) - Number(Boolean(a.media_id));
+    if (scoped !== 0) return scoped;
+    const exact = Number(b.match_mode === "exact") - Number(a.match_mode === "exact");
+    if (exact !== 0) return exact;
+    // Longest keyword last-resort tiebreak: the more specific phrase wins.
+    return b.keyword.length - a.keyword.length;
+  })[0];
+}
+
+/** Meta refuses a private reply older than 7 days. Checking locally saves a guaranteed-failed call. */
+export const PRIVATE_REPLY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+export function commentWithinPrivateReplyWindow(timestampMs: number, nowMs = Date.now()): boolean {
+  return nowMs - timestampMs < PRIVATE_REPLY_WINDOW_MS;
 }

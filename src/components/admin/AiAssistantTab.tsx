@@ -1,3 +1,4 @@
+import type React from "react";
 import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
@@ -45,7 +46,42 @@ type Assistant = {
   knowledge_answers: Record<string, string>;
   sales_mode: boolean;
   assistant_branch_id: string | null;
+  // Sales playbook. Structured rather than free text so the assistant can inject ONLY the
+  // objection that actually fired into a given reply — see src/lib/sales-playbook.server.ts.
+  sales_usp: string[];
+  sales_objections: { trigger: string; answer: string }[];
+  sales_promos: { title: string; details: string; until: string }[];
+  booking_link_mode: "off" | "auto" | "eager";
 };
+
+// ── Tolerant readers for the JSONB sales columns ─────────────────────────────
+// The columns are `jsonb` and the DB only guarantees "is an array". Everything inside is
+// normalised here so the rest of the component can treat the shapes as given.
+function toStringList(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.map((x) => (typeof x === "string" ? x : ((x as any)?.text ?? ""))).filter(Boolean);
+}
+
+function toObjectionList(v: unknown): { trigger: string; answer: string }[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .map((x) => ({
+      trigger: String((x as any)?.trigger ?? ""),
+      answer: String((x as any)?.answer ?? ""),
+    }))
+    .filter((o) => o.trigger || o.answer);
+}
+
+function toPromoList(v: unknown): { title: string; details: string; until: string }[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .map((x) => ({
+      title: String((x as any)?.title ?? ""),
+      details: String((x as any)?.details ?? ""),
+      until: String((x as any)?.until ?? ""),
+    }))
+    .filter((p) => p.title || p.details);
+}
 
 const DEFAULT_GREETING =
   "Здравствуйте! 👋 Я помощник салона. Подскажу по услугам, ценам и помогу записаться на удобное время.";
@@ -87,6 +123,10 @@ export function AiAssistantTab({
     knowledge_answers: {},
     sales_mode: false,
     assistant_branch_id: null,
+    sales_usp: [],
+    sales_objections: [],
+    sales_promos: [],
+    booking_link_mode: "auto",
   });
   const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
 
@@ -127,6 +167,17 @@ export function AiAssistantTab({
           knowledge_answers: ((row as any).knowledge_answers as Record<string, string>) ?? {},
           sales_mode: !!(row as any).sales_mode,
           assistant_branch_id: (row as any).assistant_branch_id ?? null,
+          // Tolerant reads: a salon whose row predates the sales migration has these as
+          // undefined, and a hand-edited value could be anything. Never let the settings
+          // screen crash on shape — an owner locked out of their assistant config is worse
+          // than a lost list.
+          sales_usp: toStringList((row as any).sales_usp),
+          sales_objections: toObjectionList((row as any).sales_objections),
+          sales_promos: toPromoList((row as any).sales_promos),
+          booking_link_mode:
+            (row as any).booking_link_mode === "off" || (row as any).booking_link_mode === "eager"
+              ? (row as any).booking_link_mode
+              : "auto",
         });
       }
       setLoading(false);
@@ -206,6 +257,20 @@ export function AiAssistantTab({
         knowledge_answers: data.knowledge_answers ?? {},
         sales_mode: data.sales_mode,
         assistant_branch_id: data.assistant_branch_id,
+        // Blank rows are dropped rather than stored: an empty USP or a trigger with no answer
+        // would render as a dangling bullet in the assistant's prompt.
+        sales_usp: data.sales_usp.map((s) => s.trim()).filter(Boolean),
+        sales_objections: data.sales_objections
+          .map((o) => ({ trigger: o.trigger.trim(), answer: o.answer.trim() }))
+          .filter((o) => o.trigger && o.answer),
+        sales_promos: data.sales_promos
+          .map((p) => ({
+            title: p.title.trim(),
+            details: p.details.trim() || null,
+            until: p.until.trim() || null,
+          }))
+          .filter((p) => p.title),
+        booking_link_mode: data.booking_link_mode,
       } as any,
       { onConflict: "salon_id" },
     );
@@ -470,6 +535,8 @@ export function AiAssistantTab({
             продажи.
           </p>
         </div>
+
+        <SalesPlaybookSection data={data} setData={setData} />
 
         <div className="space-y-2">
           <Label>Приветствие</Label>
@@ -765,6 +832,219 @@ export function AiAssistantTab({
 // Checked in the WA webhook (src/routes/api/public/wa.$salonId.ts) at the earliest possible point
 // so no Gemini / Green-API spend / conversation state is touched.
 type ExcludedContact = { id: string; phone: string; label: string | null; created_at?: string };
+
+// ─────────────────────────── Книга продаж ────────────────────────────────────
+// Three lists and one policy switch. Deliberately NOT another free-text box: the assistant
+// injects only the objection that actually came up in a given message, and picking one entry
+// out of a wall of prose is not something it can do reliably. Everything here is optional —
+// an empty playbook means the assistant handles objections honestly on facts alone and never
+// claims an advantage the owner did not write down.
+function SalesPlaybookSection({
+  data,
+  setData,
+}: {
+  data: Assistant;
+  setData: React.Dispatch<React.SetStateAction<Assistant>>;
+}) {
+  const patch = (p: Partial<Assistant>) => setData((d) => ({ ...d, ...p }));
+
+  return (
+    <div className="space-y-6 rounded-lg border border-dashed p-4">
+      <div className="space-y-1">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-primary" />
+          <Label className="text-sm font-semibold">Книга продаж</Label>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Здесь вы задаёте, чем ваш бизнес силён, что отвечать на частые возражения и какие акции
+          сейчас действуют. Ассистент использует ТОЛЬКО то, что здесь написано — он не придумывает
+          скидки, преимущества и гарантии сам.
+        </p>
+      </div>
+
+      {/* USP */}
+      <div className="space-y-2">
+        <Label className="text-sm">Чем вы сильны</Label>
+        <p className="text-xs text-muted-foreground">
+          Короткие конкретные факты, а не общие слова. «Работаем 8 лет, мастера с сертификатами
+          L'Oreal» — хорошо. «Индивидуальный подход и качество» — ассистенту нечего с этим делать.
+        </p>
+        {data.sales_usp.map((u, i) => (
+          <div key={i} className="flex gap-2">
+            <Input
+              value={u}
+              placeholder="Например: используем только профессиональную косметику, состав показываем перед процедурой"
+              onChange={(e) => {
+                const next = [...data.sales_usp];
+                next[i] = e.target.value;
+                patch({ sales_usp: next });
+              }}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => patch({ sales_usp: data.sales_usp.filter((_, j) => j !== i) })}
+            >
+              Удалить
+            </Button>
+          </div>
+        ))}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => patch({ sales_usp: [...data.sales_usp, ""] })}
+        >
+          + Добавить преимущество
+        </Button>
+      </div>
+
+      {/* Objections */}
+      <div className="space-y-2">
+        <Label className="text-sm">Частые возражения и ваши ответы</Label>
+        <p className="text-xs text-muted-foreground">
+          Слева — как это говорит клиент («дорого», «у других дешевле», «боюсь, что испортите
+          волосы»). Справа — что вы хотите, чтобы он услышал. Ваш ответ важнее любых общих правил
+          ассистента.
+        </p>
+        {data.sales_objections.map((o, i) => (
+          <div key={i} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]">
+            <Input
+              value={o.trigger}
+              placeholder="дорого"
+              onChange={(e) => {
+                const next = [...data.sales_objections];
+                next[i] = { ...next[i], trigger: e.target.value };
+                patch({ sales_objections: next });
+              }}
+            />
+            <Textarea
+              rows={2}
+              value={o.answer}
+              placeholder="В цену входит уход и укладка, повторно приходить не нужно. Есть вариант подешевле — у наших младших мастеров."
+              onChange={(e) => {
+                const next = [...data.sales_objections];
+                next[i] = { ...next[i], answer: e.target.value };
+                patch({ sales_objections: next });
+              }}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                patch({ sales_objections: data.sales_objections.filter((_, j) => j !== i) })
+              }
+            >
+              Удалить
+            </Button>
+          </div>
+        ))}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() =>
+            patch({ sales_objections: [...data.sales_objections, { trigger: "", answer: "" }] })
+          }
+        >
+          + Добавить возражение
+        </Button>
+      </div>
+
+      {/* Promos */}
+      <div className="space-y-2">
+        <Label className="text-sm">Действующие акции</Label>
+        <p className="text-xs text-muted-foreground">
+          Ассистент сам расскажет об акции, если она подходит к услуге, о которой спрашивает
+          клиент. После даты окончания акция перестаёт упоминаться автоматически.
+        </p>
+        {data.sales_promos.map((p, i) => (
+          <div key={i} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto_auto]">
+            <Input
+              value={p.title}
+              placeholder="Кератин + стрижка"
+              onChange={(e) => {
+                const next = [...data.sales_promos];
+                next[i] = { ...next[i], title: e.target.value };
+                patch({ sales_promos: next });
+              }}
+            />
+            <Input
+              value={p.details}
+              placeholder="стрижка кончиков в подарок при любом кератине"
+              onChange={(e) => {
+                const next = [...data.sales_promos];
+                next[i] = { ...next[i], details: e.target.value };
+                patch({ sales_promos: next });
+              }}
+            />
+            <Input
+              type="date"
+              value={p.until}
+              onChange={(e) => {
+                const next = [...data.sales_promos];
+                next[i] = { ...next[i], until: e.target.value };
+                patch({ sales_promos: next });
+              }}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => patch({ sales_promos: data.sales_promos.filter((_, j) => j !== i) })}
+            >
+              Удалить
+            </Button>
+          </div>
+        ))}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() =>
+            patch({
+              sales_promos: [...data.sales_promos, { title: "", details: "", until: "" }],
+            })
+          }
+        >
+          + Добавить акцию
+        </Button>
+      </div>
+
+      {/* Booking-link policy */}
+      <div className="space-y-2">
+        <Label className="text-sm">Ссылка на онлайн-запись</Label>
+        <div className="flex flex-wrap gap-2">
+          {(
+            [
+              { code: "off", label: "Не отправлять" },
+              { code: "auto", label: "По ситуации" },
+              { code: "eager", label: "Предлагать активно" },
+            ] as const
+          ).map((m) => (
+            <Button
+              key={m.code}
+              type="button"
+              size="sm"
+              variant={data.booking_link_mode === m.code ? "default" : "outline"}
+              onClick={() => patch({ booking_link_mode: m.code })}
+            >
+              {m.label}
+            </Button>
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          «По ситуации» — ассистент пришлёт ссылку, только если клиент сам её попросил, долго не
+          может выбрать время или расписание не отвечает. В остальных случаях он записывает прямо в
+          переписке: так конверсия выше. Ссылка берётся из адреса вашей страницы записи
+          автоматически.
+        </p>
+      </div>
+    </div>
+  );
+}
 
 function normalizePhone(input: string): string {
   // digits only, no leading '+'. Matches normalizeChatIdToPhone in wa-agent.server.ts.

@@ -23,10 +23,18 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
   igFetchProfile,
+  igSendCommentReply,
+  igSendImage,
   igSendMessage,
+  igSendPrivateReply,
   igSendTypingOn,
   igVerifySignature,
+  commentWithinPrivateReplyWindow,
+  matchCommentTrigger,
+  parseIgCommentWebhook,
   parseIgWebhook,
+  type IgCommentEvent,
+  type IgCommentTrigger,
   type IgCreds,
   type IgInboundEvent,
 } from "@/lib/ig-api.server";
@@ -137,15 +145,16 @@ export const Route = createFileRoute("/api/public/ig/$salonId")({
           supabaseAdmin
             .from("salons")
             .select(
-              "id, name, timezone, ai_assistant_enabled, instagram_enabled, working_hours, address",
+              "id, name, timezone, ai_assistant_enabled, instagram_enabled, working_hours, address, slug, custom_domain",
             )
             .eq("id", salonId)
             .maybeSingle(),
           supabaseAdmin
+            // select("*") — see the same note in the WhatsApp webhook: this row keeps gaining
+            // columns, and naming one a not-yet-migrated database lacks would fail the whole
+            // query and silence the assistant for that salon.
             .from("salon_ai_assistant")
-            .select(
-              "enabled, greeting, tone_instructions, pricing_rules, languages, manage_cutoff_hours, knowledge_base, ai_rules, client_addressing, industry, knowledge_answers, sales_mode, assistant_branch_id",
-            )
+            .select("*")
             .eq("salon_id", salonId)
             .maybeSingle(),
         ]);
@@ -192,8 +201,13 @@ export const Route = createFileRoute("/api/public/ig/$salonId")({
         }
         if (payload?.object && payload.object !== "instagram") return ack();
 
-        const { igUserId, events } = parseIgWebhook(payload);
-        if (events.length === 0) return ack();
+        const { igUserId: msgIgUserId, events } = parseIgWebhook(payload);
+        // Comments ride the SAME webhook URL but a different envelope (entry[].changes with
+        // field="comments"), so both parsers run over every payload and either may come back
+        // empty. Only a delivery carrying neither is nothing to us.
+        const { igUserId: commentIgUserId, comments } = parseIgCommentWebhook(payload);
+        const igUserId = msgIgUserId ?? commentIgUserId;
+        if (events.length === 0 && comments.length === 0) return ack();
 
         // One Instagram account legitimately has TWO ids, and they are not interchangeable:
         //   17841…  the professional account id shown in the Meta dashboard, and what Meta puts in
@@ -223,6 +237,29 @@ export const Route = createFileRoute("/api/public/ig/$salonId")({
           // expects on the send endpoint.
           igUserId: igUserId || configuredIgUser,
         };
+
+        // Comment → DM. Handled before the assistant gate below on purpose: the private reply is
+        // a message the OWNER wrote, not something the AI generates, so it stays useful even for
+        // a salon that has the assistant switched off and answers manually. It only needs the
+        // channel to be on and a token to send with.
+        if (comments.length && ((salon as any).instagram_enabled ?? false) && creds.token) {
+          for (const c of comments) {
+            try {
+              await handleCommentTrigger({
+                db: supabaseAdmin,
+                salonId,
+                creds,
+                comment: c,
+                log,
+                record,
+              });
+            } catch (e: any) {
+              await record(`Не удалось обработать комментарий: ${e?.message ?? e}`, {
+                commentId: c.commentId,
+              });
+            }
+          }
+        }
 
         // Ingest EVERY event first (so the admin panel and the audit log stay complete even when
         // the assistant is off or paused), then run at most one agent turn per conversation.
@@ -276,6 +313,10 @@ export const Route = createFileRoute("/api/public/ig/$salonId")({
           industry: (assistant as any)?.industry ?? null,
           knowledge_answers: (assistant as any)?.knowledge_answers ?? null,
           sales_mode: (assistant as any)?.sales_mode ?? false,
+          sales_usp: (assistant as any)?.sales_usp ?? null,
+          sales_objections: (assistant as any)?.sales_objections ?? null,
+          sales_promos: (assistant as any)?.sales_promos ?? null,
+          booking_link_mode: (assistant as any)?.booking_link_mode ?? "auto",
         };
 
         for (const convId of conversationsToProcess) {
@@ -311,6 +352,213 @@ export const Route = createFileRoute("/api/public/ig/$salonId")({
 // ---------------------------------------------------------------------------
 // Ingestion: webhook event → conversation + stored message
 // ---------------------------------------------------------------------------
+
+/**
+ * Comment under a post → private DM, the "напиши ХОЧУ в комментариях" mechanic.
+ *
+ * Runs entirely on Meta's officially supported Private Replies flow: the recipient of the send
+ * is the COMMENT id, which is the only sanctioned way to open a thread with someone who has
+ * never messaged the account. Everything the API constrains is enforced here rather than
+ * discovered as a rejected call:
+ *
+ *   * ONE private reply per comment, ever → the dedup ledger below is the gate, and it is
+ *     written BEFORE the send. Meta redelivers a batch on any non-200, and the naive ordering
+ *     (send, then record) turns every redelivery into a rejected second attempt.
+ *   * 7-day window → checked locally; an older comment is recorded and skipped.
+ *   * no follow-up until the person answers → we send exactly the owner's one message. The
+ *     assistant does NOT get a turn here; it takes over when the person replies in the DM,
+ *     through the normal message webhook.
+ *
+ * The conversation row is seeded now, carrying `entry_context`, so that when the reply does
+ * arrive the assistant already knows this person came from a specific post and keyword instead
+ * of greeting them as a cold contact.
+ */
+async function handleCommentTrigger(opts: {
+  db: any;
+  salonId: string;
+  creds: IgCreds;
+  comment: IgCommentEvent;
+  log: (m: string, ...r: unknown[]) => void;
+  record: (m: string, ctx?: Record<string, unknown>) => Promise<void>;
+}): Promise<void> {
+  const { db, salonId, creds, comment, log, record } = opts;
+
+  // Claim the comment first. The PK is the comment id, so a redelivery (or two Workers racing
+  // on the same batch) loses here and sends nothing.
+  const { error: claimErr } = await db.from("instagram_comment_events").insert({
+    comment_id: comment.commentId,
+    salon_id: salonId,
+    commenter_id: comment.fromId,
+    media_id: comment.mediaId,
+    outcome: "processing",
+  });
+  if (claimErr) {
+    // 23505 = already claimed. Anything else means the ledger is unusable, and without a
+    // working ledger a private reply is not safe to attempt at all.
+    if (!/duplicate key|23505/i.test(claimErr.message ?? "")) {
+      await record(`Не удалось записать событие комментария: ${claimErr.message}`, {
+        commentId: comment.commentId,
+      });
+    }
+    return;
+  }
+
+  const finish = async (outcome: string, error?: string, triggerId?: string | null) => {
+    await db
+      .from("instagram_comment_events")
+      .update({ outcome, error: error ?? null, trigger_id: triggerId ?? null })
+      .eq("comment_id", comment.commentId);
+  };
+
+  if (!comment.fromId) return void (await finish("skipped_no_sender"));
+  if (!commentWithinPrivateReplyWindow(comment.timestampMs)) {
+    return void (await finish("skipped_too_old"));
+  }
+
+  const { data: rows } = await db
+    .from("instagram_comment_triggers")
+    .select("id, keyword, match_mode, media_id, reply_text, public_reply, ai_context, enabled")
+    .eq("salon_id", salonId)
+    .eq("enabled", true);
+  const trigger = matchCommentTrigger((rows ?? []) as IgCommentTrigger[], {
+    text: comment.text,
+    mediaId: comment.mediaId,
+  });
+  if (!trigger) return void (await finish("skipped_no_match"));
+
+  // Respect the exclusion list the owner already maintains for DMs — a staff account commenting
+  // on the salon's own post must not be pulled into an automated sales conversation.
+  const convPhone = igConversationPhone(comment.fromId);
+  const { data: excluded } = await db
+    .from("excluded_contacts")
+    .select("id")
+    .eq("salon_id", salonId)
+    .eq("phone", convPhone)
+    .maybeSingle();
+  if (excluded) return void (await finish("skipped_excluded", undefined, trigger.id));
+
+  // One person, two posts, same keyword. Each comment is a distinct comment_id, so the dedup
+  // ledger above happily lets both through — but Meta's rule is per PERSON, not per comment:
+  // after one private reply we may not send again until they answer. Firing twice would be
+  // rejected by the API and, worse, would read to the client as a bot spamming them.
+  const { data: priorSends } = await db
+    .from("instagram_comment_events")
+    .select("created_at")
+    .eq("salon_id", salonId)
+    .eq("commenter_id", comment.fromId)
+    .eq("outcome", "sent")
+    .gte("created_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+    .order("created_at", { ascending: false })
+    .limit(1);
+  const lastSentAt = (priorSends ?? [])[0]?.created_at as string | undefined;
+  if (lastSentAt) {
+    // They may have replied since — an inbound message reopens the normal 24-hour window and
+    // makes another message perfectly legitimate.
+    const { data: replied } = await db
+      .from("wa_conversations")
+      .select("id")
+      .eq("salon_id", salonId)
+      .eq("client_phone", convPhone)
+      .maybeSingle();
+    let hasReplied = false;
+    if (replied?.id) {
+      const { data: inbound } = await db
+        .from("wa_messages")
+        .select("id")
+        .eq("conversation_id", replied.id)
+        .eq("direction", "in")
+        .gte("created_at", lastSentAt)
+        .limit(1);
+      hasReplied = (inbound ?? []).length > 0;
+    }
+    if (!hasReplied) {
+      log(`comment trigger skipped: already DMed ${comment.fromId} and they have not replied yet`);
+      return void (await finish("skipped_awaiting_reply", undefined, trigger.id));
+    }
+  }
+
+  const sent = await igSendPrivateReply(creds, comment.commentId, trigger.reply_text);
+  if (!sent.ok) {
+    await record(`Instagram отклонил приватный ответ на комментарий: ${sent.error}`, {
+      commentId: comment.commentId,
+      triggerId: trigger.id,
+    });
+    return void (await finish("failed", sent.error, trigger.id));
+  }
+  log(`comment trigger «${trigger.keyword}» → private reply sent (comment=${comment.commentId})`);
+
+  // Public acknowledgement, if the owner wrote one. Purely cosmetic and never allowed to turn a
+  // successful DM into a failure.
+  if (trigger.public_reply?.trim()) {
+    const pub = await igSendCommentReply(creds, comment.commentId, trigger.public_reply.trim());
+    if (!pub.ok) log(`public comment reply failed: ${pub.error}`);
+  }
+
+  // Seed the conversation so the assistant has context the moment the person answers. Not an
+  // upsert of the whole row: a client who already has a live conversation must not have their
+  // session, state or booking progress reset by commenting on a post.
+  const nowIso = new Date().toISOString();
+  const entryContext = [
+    trigger.ai_context?.trim(),
+    `Клиент написал «${comment.text.slice(0, 120)}» под постом в Instagram и получил от нас сообщение в директ.`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const { data: existing } = await db
+    .from("wa_conversations")
+    .select("id")
+    .eq("salon_id", salonId)
+    .eq("client_phone", convPhone)
+    .maybeSingle();
+
+  let convId: string | null = existing?.id ?? null;
+  if (!convId) {
+    const { data: created, error: convErr } = await db
+      .from("wa_conversations")
+      .insert({
+        salon_id: salonId,
+        client_phone: convPhone,
+        channel: "instagram",
+        external_id: comment.fromId,
+        client_name: comment.fromUsername,
+        status: "active",
+        session_started_at: nowIso,
+        last_message_at: nowIso,
+        last_message_preview: comment.text.slice(0, 200),
+        state: "collecting",
+        state_data: { entry_context: entryContext },
+      })
+      .select("id")
+      .single();
+    if (convErr) {
+      // The DM is already out; failing to seed the conversation only costs context on the
+      // client's first reply, which the normal ingest path will create anyway.
+      log(`comment trigger: conversation seed failed: ${convErr.message}`);
+    }
+    convId = created?.id ?? null;
+  }
+
+  // Record the outbound message so the admin panel shows the same thread the client sees, and
+  // so a later human takeover knows what was already promised.
+  if (convId) {
+    await db.from("wa_messages").insert({
+      conversation_id: convId,
+      salon_id: salonId,
+      direction: "out",
+      kind: "text",
+      text_body: trigger.reply_text,
+      green_api_message_id: sent.messageId ?? null,
+      processed_at: nowIso,
+      meta: {
+        commentTrigger: trigger.keyword,
+        commentId: comment.commentId,
+        mediaId: comment.mediaId,
+      },
+    });
+  }
+
+  await finish("sent", undefined, trigger.id);
+}
 
 /**
  * Persist one webhook event. Returns the conversation id when an agent turn should follow,
@@ -885,6 +1133,8 @@ async function runConversationTurn(opts: {
           salonId,
           salonName: salon.name,
           timezone: salon.timezone ?? "UTC",
+          slug: salon.slug ?? null,
+          customDomain: salon.custom_domain ?? null,
         },
         config: assistantConfig,
         channel: "instagram",
@@ -995,6 +1245,32 @@ async function runConversationTurn(opts: {
           duplicateSuppressed: isDuplicateReply || undefined,
         },
       });
+
+      // Payment QR after the text, same ordering rationale as WhatsApp: the client should read
+      // the amount and the deadline before the image lands. Instagram fetches the URL from its
+      // own servers, which is why the QR lives in a public bucket rather than behind a signed
+      // URL that would expire mid-fetch. Best-effort — the text already carries the requisites.
+      if (result.sendMedia?.url) {
+        const qrRes = await igSendImage(creds, recipientId, result.sendMedia.url);
+        if (!qrRes.ok) {
+          await record(`Instagram отклонил отправку QR-кода оплаты: ${qrRes.error}`, { convId });
+        }
+        // Instagram sends the image and its caption as two separate messages — an attachment
+        // payload carries no text. The caption goes first-class as its own bubble so the client
+        // still learns what to do with the QR.
+        if (result.sendMedia.caption) {
+          await igSendMessage(creds, recipientId, result.sendMedia.caption);
+        }
+        await db.from("wa_messages").insert({
+          conversation_id: convId,
+          salon_id: salonId,
+          direction: "out",
+          kind: "image",
+          text_body: result.sendMedia.caption ?? null,
+          green_api_message_id: qrRes.ok ? (qrRes.messageId ?? null) : null,
+          meta: { paymentQr: true, sendError: qrRes.ok ? undefined : qrRes.error },
+        });
+      }
 
       // Escalation: alert the salon, and pause the assistant so a human can step in. De-duplicated
       // over 4 h so a client who keeps writing can't spam the owner with the same alert.

@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/select";
 import { AlertCircle, Wallet } from "lucide-react";
 import { getPrepaymentSettings, upsertPrepaymentSettings } from "@/lib/prepayment.functions";
+import { supabase } from "@/integrations/supabase/client";
 
 type AmountType = "fixed" | "percent";
 type VerifyMode = "auto" | "auto_under_amount" | "manual_after_verify" | "manual_always";
@@ -48,6 +49,8 @@ type FormState = {
   phone: string;
   card: string;
   instructionRu: string;
+  qrPath: string | null;
+  qrUrl: string | null;
 };
 
 const EMPTY: FormState = {
@@ -65,6 +68,8 @@ const EMPTY: FormState = {
   phone: "",
   card: "",
   instructionRu: "",
+  qrPath: null,
+  qrUrl: null,
 };
 
 function num(v: string): number | null {
@@ -104,6 +109,8 @@ export function PrepaymentTab({ salonId }: { salonId: string }) {
           phone: d.phone ?? "",
           card: d.card ?? "",
           instructionRu: row.instruction_ru ?? "",
+          qrPath: row.qr_path ?? null,
+          qrUrl: row.qr_url ?? null,
         });
       } catch (e: any) {
         if (!cancelled) toast.error(e.message ?? "Не удалось загрузить настройки предоплаты");
@@ -118,6 +125,53 @@ export function PrepaymentTab({ salonId }: { salonId: string }) {
 
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
+
+  // ── QR upload ─────────────────────────────────────────────────────────────
+  // Straight to storage from the browser rather than base64 through a server function: the
+  // bucket's RLS policies already scope writes to <salon_id>/… , and a 2 MB image round-tripped
+  // as base64 through a server fn is 33% larger for no benefit.
+  const [qrBusy, setQrBusy] = useState(false);
+  const MAX_QR_BYTES = 3 * 1024 * 1024;
+
+  async function uploadQr(file: File) {
+    if (!file.type.startsWith("image/")) {
+      toast.error("QR должен быть картинкой (PNG, JPG или WEBP)");
+      return;
+    }
+    if (file.size > MAX_QR_BYTES) {
+      toast.error("Файл слишком большой — до 3 МБ");
+      return;
+    }
+    setQrBusy(true);
+    try {
+      const ext = (file.name.split(".").pop() ?? "png").toLowerCase().replace(/[^a-z0-9]/g, "");
+      // The salon id MUST be the first path segment: it is what both the storage policy and the
+      // agent's pre-send check use to prove the QR belongs to this salon.
+      const path = `${salonId}/${crypto.randomUUID()}.${ext || "png"}`;
+      const { error } = await supabase.storage
+        .from("payment-qr")
+        .upload(path, file, { contentType: file.type, upsert: false });
+      if (error) throw new Error(error.message);
+      const { data: pub } = supabase.storage.from("payment-qr").getPublicUrl(path);
+      const oldPath = form.qrPath;
+      setForm((f) => ({ ...f, qrPath: path, qrUrl: pub.publicUrl }));
+      // Best-effort cleanup of the replaced image; an orphan costs a few KB, a failed delete
+      // must not lose the new QR the owner just uploaded.
+      if (oldPath) await supabase.storage.from("payment-qr").remove([oldPath]);
+      toast.success("QR загружен — не забудьте сохранить настройки");
+    } catch (e: any) {
+      toast.error(e?.message ?? "Не удалось загрузить QR");
+    } finally {
+      setQrBusy(false);
+    }
+  }
+
+  async function removeQr() {
+    const path = form.qrPath;
+    setForm((f) => ({ ...f, qrPath: null, qrUrl: null }));
+    if (path) await supabase.storage.from("payment-qr").remove([path]);
+    toast.success("QR удалён — не забудьте сохранить настройки");
+  }
 
   // Enabling with no requisites would produce bookings nobody can pay, so it is refused outright
   // rather than saved and quietly broken.
@@ -161,6 +215,8 @@ export function PrepaymentTab({ salonId }: { salonId: string }) {
           instructionRu: form.instructionRu.trim() || null,
           instructionKy: null,
           instructionEn: null,
+          qrPath: form.qrPath,
+          qrUrl: form.qrUrl,
         },
       });
       toast.success("Сохранено");
@@ -370,6 +426,41 @@ export function PrepaymentTab({ salonId }: { salonId: string }) {
               onChange={(e) => set("instructionRu", e.target.value)}
               placeholder="Например: в комментарии к переводу укажите своё имя."
             />
+          </div>
+
+          {/* QR. Sent as an image right after the assistant names the amount — a client who can
+              scan instead of retyping a card number pays noticeably more often. */}
+          <div className="space-y-2">
+            <Label>QR-код для оплаты (необязательно)</Label>
+            <p className="text-xs text-muted-foreground">
+              Скриншот QR из вашего банковского приложения. Ассистент отправит его клиенту сразу
+              после того, как назовёт сумму — и в WhatsApp, и в Instagram. Реквизиты текстом всё
+              равно останутся: если картинка не дойдёт, клиент сможет перевести по номеру.
+            </p>
+            {form.qrUrl && (
+              <div className="flex items-center gap-3">
+                <img
+                  src={form.qrUrl}
+                  alt="QR для оплаты"
+                  className="h-28 w-28 rounded border object-contain"
+                />
+                <Button type="button" variant="ghost" size="sm" onClick={removeQr} disabled={qrBusy}>
+                  Удалить QR
+                </Button>
+              </div>
+            )}
+            <Input
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              disabled={qrBusy}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                // Reset the input so re-picking the SAME file after a failed upload still fires.
+                e.target.value = "";
+                if (file) void uploadQr(file);
+              }}
+            />
+            {qrBusy && <p className="text-xs text-muted-foreground">Загрузка…</p>}
           </div>
         </div>
       </Card>

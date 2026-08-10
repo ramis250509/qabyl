@@ -5,6 +5,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import {
   greenApiSendMessage,
   greenApiSendFileByUrl,
+  greenApiSendTyping,
   greenApiDownloadFile,
   isLikelyNativeGreetingRace,
   normalizeChatIdToPhone,
@@ -73,6 +74,13 @@ export function resolveAssistantRuntimeConfig(salon: any, assistant: any, secret
       industry: assistant?.industry ?? null,
       knowledge_answers: assistant?.knowledge_answers ?? null,
       sales_mode: assistant?.sales_mode ?? false,
+      // Sales playbook (migration 20260810120000). `?? null` rather than `?? []` so a salon
+      // whose row predates the migration is indistinguishable from one with an empty
+      // playbook — parseSalesPlaybook treats both as "no playbook" and renders nothing.
+      sales_usp: (assistant as any)?.sales_usp ?? null,
+      sales_objections: (assistant as any)?.sales_objections ?? null,
+      sales_promos: (assistant as any)?.sales_promos ?? null,
+      booking_link_mode: (assistant as any)?.booking_link_mode ?? "auto",
     },
   };
 }
@@ -121,14 +129,18 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
             .maybeSingle(),
           supabaseAdmin
             .from("salons")
-            .select("id, name, timezone, ai_assistant_enabled, working_hours, address")
+            .select(
+              "id, name, timezone, ai_assistant_enabled, working_hours, address, slug, custom_domain",
+            )
             .eq("id", salonId)
             .maybeSingle(),
           supabaseAdmin
+            // select("*") rather than a column list on purpose: this row gains columns with
+            // almost every feature (knowledge_answers, ai_rules, sales_*…), and naming a column
+            // that a not-yet-migrated database doesn't have makes PostgREST fail the WHOLE
+            // query — which would take every WhatsApp reply for that salon down with it.
             .from("salon_ai_assistant")
-            .select(
-              "enabled, greeting, tone_instructions, pricing_rules, languages, manage_cutoff_hours, engine, knowledge_base, ai_rules, client_addressing, industry, knowledge_answers, sales_mode, assistant_branch_id",
-            )
+            .select("*")
             .eq("salon_id", salonId)
             .maybeSingle(),
         ]);
@@ -921,6 +933,8 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
                 salonId,
                 salonName: (salon as any).name,
                 timezone: (salon as any).timezone ?? "UTC",
+                slug: (salon as any).slug ?? null,
+                customDomain: (salon as any).custom_domain ?? null,
               },
               config: runtime.assistantConfig,
               client: { phone, name: senderName },
@@ -936,6 +950,14 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
               },
               ...(handoffContext.length ? { handoffContext } : {}),
             };
+
+            // «печатает…» in WhatsApp, the mirror of what Instagram already showed. Fired here,
+            // immediately before the agent turn, because the turn itself is the 5–15 s of silence
+            // this is meant to fill — the indicator rides on latency that already exists instead
+            // of adding any. Green-API caps the notification at 20 s; a longer turn simply lets it
+            // lapse, which is better than a second request. Deliberately not awaited: a cosmetic
+            // call must never be able to delay the reply it is announcing.
+            void greenApiSendTyping(creds, chatId, 15_000);
 
             let result;
             const tPreAgent = ms();
@@ -1031,6 +1053,34 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
                 duplicateSuppressed: isDuplicateReply || undefined,
               } as any,
             });
+
+            // 5a) Media the agent wants delivered to the CLIENT right after the text — today
+            // only the salon's payment QR when a prepayment hold was just created. Sent after
+            // the text so the client reads WHAT to pay before seeing the QR, and after the
+            // wa_messages insert so the transcript keeps the real order. Best-effort: the text
+            // reply already carries the bank requisites, so a failed image still leaves the
+            // client able to pay — it must never abort the turn.
+            if (result.sendMedia?.url) {
+              const qrRes = await greenApiSendFileByUrl(
+                creds,
+                chatId,
+                result.sendMedia.url,
+                result.sendMedia.fileName ?? "payment-qr.png",
+                result.sendMedia.caption,
+              );
+              if (!qrRes.ok) {
+                errLog(`payment QR send failed: ${qrRes.error ?? "unknown"}`);
+              }
+              await supabaseAdmin.from("wa_messages").insert({
+                conversation_id: convId,
+                salon_id: salonId,
+                direction: "out",
+                kind: "image",
+                text_body: result.sendMedia.caption ?? null,
+                green_api_message_id: qrRes.ok ? (qrRes.idMessage ?? null) : null,
+                meta: { paymentQr: true, sendError: qrRes.ok ? undefined : qrRes.error } as any,
+              });
+            }
 
             // 5b) Relay the client's photo to the salon admin when the agent flagged low-
             // confidence pricing twice in a row. Reuses the same ai_paused mechanism as a

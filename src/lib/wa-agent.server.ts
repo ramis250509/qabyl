@@ -97,12 +97,24 @@ export type WaAssistantConfig = {
   // booking (assumptive close, objection handling) instead of only answering. Off by default;
   // medical/safety boundaries always outrank it. Only affects the V4 ("живой диалог") engine.
   sales_mode?: boolean | null;
+  // V5 sales playbook (salon_ai_assistant.sales_* columns, migration 20260810120000).
+  // Raw JSONB as it comes out of the DB — parseSalesPlaybook() in sales-playbook.server.ts
+  // normalises it. Kept raw here so a malformed value can never break the transport layer.
+  sales_usp?: unknown;
+  sales_objections?: unknown;
+  sales_promos?: unknown;
+  // off | auto | eager — how freely the assistant may hand out the online-booking link.
+  booking_link_mode?: string | null;
 };
 
 export type WaSalonContext = {
   salonId: string;
   salonName: string;
   timezone: string;
+  // Public-booking identity. Only needed by the send_booking_link tool, hence optional:
+  // every existing caller that doesn't pass it simply has no link to send.
+  slug?: string | null;
+  customDomain?: string | null;
 };
 
 export type WaBranchInfo = {
@@ -164,6 +176,22 @@ export type WaAgentStateData = {
   prepayment_amount?: number;
   prepayment_currency?: string;
   prepayment_hold_expires_at?: string; // ISO
+  // The payment QR was already delivered for this hold — never send the same image twice
+  // in one conversation (a second QR reads as "the first one didn't work").
+  prepayment_qr_sent_for?: string; // appointment id
+  // Where this client came from, when it wasn't a cold DM — today set by the Instagram
+  // comment→DM trigger ("написал ЦЕНА под постом про кератин"). Rendered into the system
+  // prompt so the assistant continues that thread instead of greeting a stranger.
+  entry_context?: string;
+  // Sales governor (see sales-playbook.server.ts → SalesTurnState). Counts how many times
+  // we pushed for a booking without the client advancing, which objections were already
+  // handled, and when the online-booking link was last sent.
+  sales?: {
+    closeAttempts: number;
+    handled: string[];
+    slotRounds: number;
+    bookingLinkSentAt?: string | null;
+  };
 };
 
 export type WaSalonInfo = {
@@ -226,6 +254,11 @@ export type WaAgentResult = {
   // V4: a plain-text alert the webhook forwards to the salon admin (owner_notify_phone) — set
   // when the agent escalates a conversation to a live human. The webhook performs the send.
   notifyAdminText?: string;
+  // V5: an image the transport must send to the CLIENT right after the text reply — today
+  // only the salon's payment QR when a prepayment hold is created. Deliberately a result
+  // field rather than a send inside the agent: the agent has no transport credentials and
+  // must stay channel-agnostic (same pattern as notifyAdmin above).
+  sendMedia?: { url: string; caption?: string; fileName?: string };
 };
 
 export type GreenApiCreds = { instance: string; token: string };
@@ -275,6 +308,38 @@ export async function greenApiSendMessage(
     return { ok: true, idMessage: json?.idMessage };
   } catch (e: any) {
     return { ok: false, error: e?.message ?? String(e) };
+  }
+}
+
+/**
+ * WhatsApp "печатает…" indicator, the Green-API equivalent of igSendTypingOn.
+ *
+ * Why it matters here specifically: an agent turn is 5–15 s of Gemini + tool calls, and a
+ * silent thread for that long reads as "никто не отвечает" — the single most common reason a
+ * client re-sends or leaves. So this fills latency that ALREADY EXISTS; it deliberately adds
+ * no artificial delay of its own. Slowing a fast reply down to look human would trade a real
+ * metric (time-to-answer) for a cosmetic one.
+ *
+ * Fire-and-forget by design: `typingTime` is clamped to Green-API's documented 1000–20000 ms
+ * window, the request gets a short timeout, and every failure is swallowed — a cosmetic call
+ * must never be able to delay or break the actual reply.
+ */
+export async function greenApiSendTyping(
+  creds: GreenApiCreds,
+  chatId: string,
+  typingTimeMs = 10_000,
+): Promise<void> {
+  try {
+    const typingTime = Math.min(20_000, Math.max(1000, Math.round(typingTimeMs)));
+    const url = `https://api.green-api.com/waInstance${creds.instance}/sendTyping/${creds.token}`;
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chatId, typingTime }),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch {
+    /* cosmetic only — never let this affect the reply */
   }
 }
 

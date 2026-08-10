@@ -33,6 +33,16 @@ import {
 } from "@/lib/wa-agent.server";
 import { INDUSTRY_EXPERT } from "@/lib/wa-industries.server";
 import { INDUSTRIES_META, normalizeIndustry, type IndustryKey } from "@/lib/industries";
+import { bookingUrl } from "@/lib/booking-link";
+import {
+  classifyReadiness,
+  detectObjections,
+  hasSchedulingSignal,
+  nextSalesState,
+  parseSalesPlaybook,
+  readSalesState,
+  renderSalesBlock,
+} from "@/lib/sales-playbook.server";
 
 type AdminClient = Awaited<ReturnType<typeof getAdmin>>;
 async function getAdmin() {
@@ -154,6 +164,10 @@ export function buildSystemPromptV4(
   mastersRoster = "",
   language: "ru" | "ky" | "en" = "ru",
   servicesRoster = "",
+  // Rendered by sales-playbook.server.ts for THIS turn only: the objection play that
+  // actually fired, the owner's own answers/USP/promos, and the anti-nag stop rule.
+  // Empty string when there is nothing to say — costs zero tokens then.
+  salesBlock = "",
 ): string {
   const { salon, config, branches, salonInfo } = input;
   const { isoLocalDate, humanDate, hour, minute } = nowInTz(salon.timezone);
@@ -251,6 +265,13 @@ ${servicesRoster}
     // knowledgeBook / knowledge_base moved to the final "ПРАВИЛА ЭТОГО САЛОНА" block below.
     config.client_addressing?.trim()
       ? `КАК К ТЕБЕ ОБРАЩАЮТСЯ КЛИЕНТЫ: ${config.client_addressing.trim().replace(/\s*\n\s*/g, ", ")}. Если клиент пишет одно из этих слов или похожее обращение (в т.ч. в начале сообщения перед вопросом, напр. «Айгерим, кандайсыз?», «Айгерим, канча болот?») — он обращается ИМЕННО К ТЕБЕ, администратору, а НЕ представляется своим именем. КРИТИЧНО: НИКОГДА не считай это слово именем клиента, НИКОГДА не отвечай «Здравствуйте, <это слово>!» и НИКОГДА не записывай его в client_name. Это может совпадать с именем ${sn.genSg} — не путай: клиент просто зовёт администратора так, как привык. Не переспрашивай «к кому вы обращаетесь?» — просто ответь на суть вопроса. Имя клиента ты всё равно спросишь отдельно перед записью (см. правило про имя). Сам эти слова в ответах использовать не обязан.`
+      : "",
+    // Where the client came from. Set by the Instagram comment→DM trigger: this person did not
+    // start a cold chat, they answered a message we sent them after they commented under a post.
+    // Without this the assistant opens with "Здравствуйте! Чем могу помочь?" to someone who has
+    // already been told what the post was about — the single most obvious "это бот" tell.
+    (input.stateData as any)?.entry_context
+      ? `ОТКУДА ПРИШЁЛ ЭТОТ КЛИЕНТ: ${String((input.stateData as any).entry_context).slice(0, 400)} Продолжай этот разговор естественно, с учётом того, что он уже знает. НЕ здоровайся так, будто видишь его впервые, и НЕ переспрашивай то, о чём он уже написал в комментарии.`
       : "",
     // Live-admin handoff: the human salon admin already wrote to this client in this session. The
     // client sees ONE seamless conversation, so the AI must continue it as the same "administrator"
@@ -414,6 +435,14 @@ ${servicesRoster}
     `- Не обещай «перезвонить»/«написать позже» — у тебя один ответ за ход.`,
     `- ЭСКАЛАЦИЯ: если клиент жалуется, конфликтует, просит живого человека, ситуация нестандартная или ты НЕ уверен в ответе — вызови escalate_to_human (в reason кратко опиши суть) и вежливо скажи, что передаёшь диалог администратору салона, он скоро ответит. Не придумывай ответ вместо этого.`,
     `- НО обычные вопросы о процедурах, ценах, времени и записи решай сам — уверенно, по базе знаний и инструментам. Эскалация только для действительно сложных/спорных случаев, не по мелочам.`,
+    // ────────────────────────────────────────────────────────────────
+    // Sales layer, computed per turn (see sales-playbook.server.ts).
+    // ────────────────────────────────────────────────────────────────
+    // Placed here — below the generic rules, above the owner's overrides — on purpose.
+    // It needs the recency advantage over the generic "ПРОДАЖИ БЕЗ НАВЯЗЧИВОСТИ" lines
+    // it refines (especially the anti-nag stop rule, which must beat every close
+    // instruction above it), while still yielding to whatever the owner wrote below.
+    ...(salesBlock ? [``, salesBlock] : []),
     // ────────────────────────────────────────────────────────────────
     // ПРАВИЛА ЭТОГО САЛОНА (highest-priority overrides block)
     // ────────────────────────────────────────────────────────────────
@@ -628,6 +657,22 @@ const V4_TOOL_DECLARATIONS = [
     },
   },
   {
+    name: "send_booking_link",
+    description:
+      "Отправить клиенту ссылку на страницу онлайн-записи салона. Вызывай ТОЛЬКО когда запись в чате не лучший путь: клиент сам попросил ссылку/сайт (reason=client_asked); он уже несколько раз перебирает время и хочет посмотреть расписание сам (reason=slot_fatigue); календарь не отвечает и показать окошки не получается (reason=tool_failure); клиент говорит, что запишется позже сам (reason=self_serve). Сервер проверит, что причина обоснована, и вернёт ссылку в поле url — вставь её в ответ ДОСЛОВНО. Если сервер вернул allowed:false — ссылку НЕ упоминай и продолжай запись в чате. Второй раз в одном диалоге не вызывай, если клиент не попросил ссылку снова.",
+    parameters: {
+      type: "object",
+      properties: {
+        reason: {
+          type: "string",
+          enum: ["client_asked", "slot_fatigue", "tool_failure", "self_serve"],
+          description: "Почему ссылка уместна именно сейчас",
+        },
+      },
+      required: ["reason"],
+    },
+  },
+  {
     name: "estimate_price_from_photo",
     description:
       "Детерминистичная оценка стоимости услуги с price_type=range по фото клиента. Инструмент сам берёт ПОСЛЕДНЕЕ фото из этого хода, вызывает vision-модель с фиксированным seed и правилами салона, и возвращает УЗКИЙ диапазон {price_low, price_high, explanation, confidence}, кратный 500 сомам. Одинаковое фото + одна услуга → всегда один и тот же диапазон. Используй ТОЛЬКО этот инструмент для цен по фото — сам price_band не выдумывай. Если фото в этом ходу нет — инструмент вернёт error, тогда попроси прислать фото.",
@@ -721,7 +766,17 @@ type V4RunFlags = {
     amount: number;
     currency: string;
     holdExpiresAt: string;
+    /** Public URL of the salon's payment QR, when one is configured. */
+    qrUrl?: string | null;
   } | null;
+  // Set when send_booking_link passed the gate this turn. The final reply appends the URL
+  // deterministically (same treatment as justBookedManageUrl) — a model that paraphrases a
+  // URL produces a dead link, and a dead link is worse than no link.
+  bookingLinkSent?: string | null;
+  // Set by tools that failed in a way that legitimises falling back to the booking page.
+  calendarToolFailed?: boolean;
+  // How many times a slot-listing tool ran this turn — feeds the sales governor.
+  slotToolCalls?: number;
 };
 
 /**
@@ -1719,9 +1774,13 @@ export async function executeV4Tool(
       // prepayment at all.
       let prepayCfg: any = null;
       try {
+        // select("*") deliberately: qr_url / qr_path arrive in a later migration than the rest
+        // of this table, and naming a missing column would fail the whole query — which the
+        // catch below would then read as "prepayment off", silently letting a salon that
+        // requires a deposit book without one. Selecting everything cannot regress that way.
         const { data } = await db
           .from("prepayment_settings")
-          .select("enabled, recipient_name, recipient_details, instruction_ru, hold_minutes")
+          .select("*")
           .eq("salon_id", input.salon.salonId)
           .maybeSingle();
         prepayCfg = data ?? null;
@@ -1778,14 +1837,32 @@ export async function executeV4Tool(
         }
         const h = held as any;
         flags.appointmentId = h.appointment_id as string;
+        const cfgAny = prepayCfg as any;
+        // Multi-tenant guard on the QR. prepayCfg was fetched by salon_id so a mismatch is
+        // not reachable through normal code — but this image is about to be sent to a paying
+        // client, and sending salon A's payment QR to salon B's client is the one bug in this
+        // feature that costs real money. The bucket layout is <salon_id>/<uuid>.<ext>, so the
+        // path itself proves ownership; a row whose path disagrees is dropped, and the client
+        // still gets the text requisites below.
+        const qrPath = typeof cfgAny?.qr_path === "string" ? cfgAny.qr_path : "";
+        const qrBelongsToSalon = qrPath.startsWith(`${input.salon.salonId}/`);
+        const qrUrl =
+          typeof cfgAny?.qr_url === "string" && cfgAny.qr_url && qrBelongsToSalon
+            ? (cfgAny.qr_url as string)
+            : null;
+        if (cfgAny?.qr_url && !qrBelongsToSalon) {
+          console.error(
+            `[wa-v4] prepayment QR path does not belong to salon ${input.salon.salonId} (path=${qrPath}) — QR NOT sent`,
+          );
+        }
         flags.prepayment = {
           appointmentId: h.appointment_id as string,
           amount: Number(h.amount),
           currency: String(h.currency),
           holdExpiresAt: String(h.hold_expires_at),
+          qrUrl,
         };
         if (args.branch_id) flags.selectedBranchId = args.branch_id as string;
-        const cfgAny = prepayCfg as any;
         const details = cfgAny?.recipient_details ?? {};
         const requisites = [
           details.bank ? `банк: ${details.bank}` : null,
@@ -1808,7 +1885,12 @@ export async function executeV4Tool(
           hold_until: deadline,
           requisites: requisites || null,
           instruction: cfgAny?.instruction_ru ?? null,
-          note: `Слот ЗАБРОНИРОВАН, но запись ЕЩЁ НЕ подтверждена — нужна предоплата ${h.amount} ${h.currency}. НЕ говори «записал(а) вас» и «ждём вас». Скажи, что держишь слот до ${deadline}, назови сумму и реквизиты (${requisites || "реквизиты не заданы — передай администратору"}), и попроси прислать скриншот чека СЮДА, в этот чат. Предупреди, что без оплаты до ${deadline} слот освободится. Подтвердить запись можно будет только после проверки чека.`,
+          qr_will_be_sent: Boolean(qrUrl),
+          note:
+            `Слот ЗАБРОНИРОВАН, но запись ЕЩЁ НЕ подтверждена — нужна предоплата ${h.amount} ${h.currency}. НЕ говори «записал(а) вас» и «ждём вас». Скажи, что держишь слот до ${deadline}, назови сумму и реквизиты (${requisites || "реквизиты не заданы — передай администратору"}), и попроси прислать скриншот чека СЮДА, в этот чат. Предупреди, что без оплаты до ${deadline} слот освободится. Подтвердить запись можно будет только после проверки чека.` +
+            (qrUrl
+              ? ` QR-код для оплаты отправится клиенту СЛЕДУЮЩИМ сообщением автоматически — напиши, что сейчас пришлёшь QR для оплаты, и НЕ вставляй в текст никаких ссылок на картинку.`
+              : ``),
         };
       }
 
@@ -2072,6 +2154,60 @@ export async function executeV4Tool(
       flags.needsHuman = true;
       flags.escalateReason = (args.reason as string) || "клиенту нужна помощь администратора";
       return { success: true, note: "Диалог помечен для живого администратора." };
+    }
+
+    // The online-booking page is a real conversion path, not a way for the assistant to
+    // stop working. So the DECISION of whether a link is appropriate is not left to the
+    // model's judgement alone — the model proposes a reason, and this gate checks the
+    // reason against facts the server actually knows. Without the gate, "вот ссылка,
+    // запишитесь сами" becomes the model's escape hatch from every hard turn, which is
+    // strictly worse than an assistant that books in the chat.
+    case "send_booking_link": {
+      const mode = (input.config.booking_link_mode ?? "auto") as string;
+      const url = bookingUrl({
+        slug: input.salon.slug ?? null,
+        custom_domain: input.salon.customDomain ?? null,
+      });
+      if (!url || mode === "off") {
+        return {
+          allowed: false,
+          reason: "disabled",
+          note: "У этого салона онлайн-запись по ссылке недоступна. НЕ упоминай ссылку и НЕ обещай её — записывай клиента здесь, в чате.",
+        };
+      }
+      const sales = readSalesState((input.stateData as any)?.sales);
+      const reason = String(args.reason ?? "");
+      // Already sent once in this session. A second link is not "helpful again", it reads
+      // as the assistant giving up — so only an explicit new request reopens it.
+      if (sales.bookingLinkSentAt && reason !== "client_asked") {
+        return {
+          allowed: false,
+          reason: "already_sent",
+          note: "Ссылку ты уже отправлял в этом диалоге. Повторно её не присылай — продолжай запись в чате.",
+        };
+      }
+      const justified =
+        reason === "client_asked" ||
+        reason === "self_serve" ||
+        (reason === "slot_fatigue" && sales.slotRounds >= 2) ||
+        (reason === "tool_failure" && flags.calendarToolFailed === true) ||
+        mode === "eager";
+      if (!justified) {
+        return {
+          allowed: false,
+          reason: "not_justified",
+          note:
+            reason === "slot_fatigue"
+              ? "Клиент ещё не перебирал время достаточно, чтобы отправлять ссылку. Покажи ему конкретные свободные окошки здесь, в чате."
+              : "Оснований отправлять ссылку сейчас нет. Продолжай запись в диалоге — это удобнее для клиента.",
+        };
+      }
+      flags.bookingLinkSent = url;
+      return {
+        allowed: true,
+        url,
+        note: `Ссылка будет добавлена в конец твоего ответа автоматически — НЕ пиши URL сам и не переписывай его. Просто объясни одним предложением, что по ней можно выбрать время самому, и добавь, что здесь, в чате, ты тоже запишешь в любой момент.`,
+      };
     }
 
     case "remember_photo": {
@@ -2434,12 +2570,44 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   debug.actions.push(
     `services_roster:${servicesRoster ? `len=${servicesRoster.length}:lines=${servicesRoster.split("\n").length}` : "EMPTY"}`,
   );
+  // ── Sales layer for THIS turn ────────────────────────────────────────────────
+  // Detection runs on the client's raw text (not on the model's interpretation of it),
+  // so the objection play is chosen from what the person actually wrote. Everything
+  // here is pure and synchronous — it costs no round-trip and no tokens when nothing
+  // fires, which is the point of computing it instead of prompting for it.
+  const playbook = parseSalesPlaybook({
+    sales_usp: input.config.sales_usp,
+    sales_objections: input.config.sales_objections,
+    sales_promos: input.config.sales_promos,
+    booking_link_mode: input.config.booking_link_mode,
+    sales_mode: input.config.sales_mode ?? false,
+  });
+  const priorSales = readSalesState((input.stateData as any)?.sales);
+  const turnObjections = detectObjections(lastText);
+  const readiness = classifyReadiness(lastText, turnObjections);
+  const industryForSales = normalizeIndustry(input.config.industry);
+  const salesBlock = renderSalesBlock({
+    playbook,
+    objections: turnObjections,
+    readiness,
+    state: priorSales,
+    sn: INDUSTRY_EXPERT[industryForSales].specialistNoun,
+    todayIso: nowInTz(input.salon.timezone).isoLocalDate,
+    hasBookingLink: Boolean(
+      bookingUrl({ slug: input.salon.slug ?? null, custom_domain: input.salon.customDomain ?? null }),
+    ),
+    clientText: lastText,
+  });
+  if (turnObjections.length) debug.actions.push(`objections:${turnObjections.join(",")}`);
+  if (priorSales.closeAttempts >= 2) debug.actions.push(`sales:close_blocked`);
+
   const systemPrompt = buildSystemPromptV4(
     input,
     closedDates,
     mastersRoster,
     language,
     servicesRoster,
+    salesBlock,
   );
   const contents: GeminiV2Content[] = [...v4History, { role: "user", parts: clientParts }];
 
@@ -2574,6 +2742,10 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
               // loop. Only slot-bearing tools count; get_services/get_masters carry no times.
               if (name === "get_available_slots" || name === "check_time") {
                 slotToolRanThisTurn = true;
+                // Feeds the sales governor (how many rounds of "вот свободные окошки" the
+                // client has already sat through) and the send_booking_link gate.
+                flags.slotToolCalls = (flags.slotToolCalls ?? 0) + 1;
+                if (r.error) flags.calendarToolFailed = true;
                 for (const t of (r.free_times ?? []) as string[]) verifiedFreeTimes.add(t);
                 for (const t of (r.nearby_free_times ?? []) as string[]) verifiedFreeTimes.add(t);
                 // check_time's own hit: the asked time is confirmed free.
@@ -2619,6 +2791,11 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
               return { functionResponse: { name, response: result } };
             } catch (e2: any) {
               debug.errors.push(`tool_${name}_2: ${e2?.message ?? String(e2)}`);
+              // A calendar tool that died twice is exactly the situation where handing the
+              // client the self-service booking page beats another apology — unlock the gate.
+              if (name === "get_available_slots" || name === "check_time") {
+                flags.calendarToolFailed = true;
+              }
               // Hard tool failure — surface the exception to /admin/errors, not just Worker logs.
               try {
                 const { logError } = await import("./error-log.server");
@@ -2895,6 +3072,19 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     reply = `${reply}\n\n${manageIntro}\n🔗 ${flags.justBookedManageUrl}`;
   }
 
+  // Online-booking link, appended deterministically for the same reason the manage link is:
+  // a model that retypes a URL eventually mistypes one, and a dead booking link costs a
+  // client. The tool already decided WHETHER to send; this only decides HOW it is rendered.
+  if (flags.bookingLinkSent && !reply.includes(flags.bookingLinkSent)) {
+    const linkIntro =
+      language === "ky"
+        ? "Убакытты өзүңүз тандагыңыз келсе — ушул шилтеме аркылуу онлайн жазыла аласыз:"
+        : language === "en"
+          ? "If you'd rather pick a time yourself, you can book online here:"
+          : "Если удобнее выбрать время самостоятельно — можно записаться онлайн здесь:";
+    reply = `${reply}\n\n${linkIntro}\n🔗 ${flags.bookingLinkSent}`;
+  }
+
   // Persist Gemini history without inline images (keep the DB row small). Sanitize AFTER the
   // cap slice so a stored history never begins on an orphaned functionResponse / model turn
   // (which would 400 the next request — see sanitizeGeminiHistory).
@@ -2913,6 +3103,16 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     : flags.appointmentId
       ? "done"
       : "collecting";
+
+  // The payment QR goes out as a separate image right after the text. Guarded against a
+  // repeat for the same hold: if the client re-confirms and the agent re-enters the
+  // prepayment path for an appointment we already sent a QR for, a second identical image
+  // would read as "the first one was wrong".
+  const alreadySentQrFor = (input.stateData as any)?.prepayment_qr_sent_for as string | undefined;
+  const qrToSend =
+    flags.prepayment?.qrUrl && alreadySentQrFor !== flags.prepayment.appointmentId
+      ? flags.prepayment.qrUrl
+      : null;
   // Persist the Gemini prompt-cache handle across turns. Reused as long as it hasn't expired
   // (checked at turn start). Cleared on cache-miss so we recreate next turn.
   // Await the concurrent creation promise — by now it has almost always resolved (the tool loop
@@ -2948,8 +3148,27 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
           prepayment_amount: flags.prepayment.amount,
           prepayment_currency: flags.prepayment.currency,
           prepayment_hold_expires_at: flags.prepayment.holdExpiresAt,
+          ...(qrToSend ? { prepayment_qr_sent_for: flags.prepayment.appointmentId } : {}),
         } as any)
       : {}),
+    // Sales governor. `progressed` is what stops the counter from punishing a working
+    // conversation: a booking, a reschedule, or the client naming a day/time all mean the
+    // push landed. It only climbs when we asked and got a deflection — the nagging pattern.
+    sales: nextSalesState(priorSales, {
+      objections: turnObjections,
+      // hasSchedulingSignal is what keeps the governor from punishing a client who is
+      // actively picking a time («а в пятницу?», «а вечером?»). Without it, browsing days
+      // looks exactly like deflecting, and the stop rule would gag the assistant right when
+      // the client wants slots.
+      progressed:
+        Boolean(flags.appointmentId) ||
+        readiness === "ready" ||
+        hasSchedulingSignal(lastText) ||
+        debug.actions.includes("tool:reschedule_appointment"),
+      pushedToClose: slotToolRanThisTurn || Boolean(flags.appointmentId),
+      showedSlots: (flags.slotToolCalls ?? 0) > 0,
+      bookingLinkSentAt: flags.bookingLinkSent ? new Date().toISOString() : null,
+    }),
   };
 
   // On escalation, hand the webhook a plain-text alert for the salon admin's own WhatsApp
@@ -3002,5 +3221,19 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     selectedBranchId: flags.selectedBranchId,
     debug,
     ...(notifyAdminText ? { notifyAdminText } : {}),
+    ...(qrToSend
+      ? {
+          sendMedia: {
+            url: qrToSend,
+            fileName: "payment-qr.png",
+            caption:
+              language === "ky"
+                ? `Төлөм үчүн QR-код: ${flags.prepayment!.amount} ${flags.prepayment!.currency}. Төлөгөндөн кийин чектин скриншотун ушул жерге жөнөтүңүз.`
+                : language === "en"
+                  ? `Payment QR: ${flags.prepayment!.amount} ${flags.prepayment!.currency}. After paying, please send the receipt screenshot right here.`
+                  : `QR-код для оплаты: ${flags.prepayment!.amount} ${flags.prepayment!.currency}. После оплаты пришлите, пожалуйста, скриншот чека сюда, в этот чат.`,
+          },
+        }
+      : {}),
   };
 }
