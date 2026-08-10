@@ -1,6 +1,6 @@
 -- =============================================================================
 -- Миграции для ручного применения через Supabase SQL Editor
--- Обновлено 2026-08-07 — приём чека предоплаты прямо в переписке Instagram
+-- Обновлено 2026-08-10 — книга продаж, QR предоплаты, кодовые слова в Instagram
 -- =============================================================================
 --
 -- ВНИМАНИЕ: этот файл — «пачка что применить сейчас», а не replay истории.
@@ -18,6 +18,18 @@
 --   7) 20260805120000_instagram_channel.sql                       (Instagram Direct)
 --   8) 20260807120000_prepayment_hold_in_create_appointment.sql   (НОВОЕ — удержание слота)
 --   9) 20260807130000_notify_client_on_hold_expiry.sql            (НОВОЕ — «слот освободился»)
+--  10) 20260810120000_sales_playbook_qr_comment_triggers.sql      (НОВОЕ — продажи + QR + Instagram-комментарии)
+--
+-- ПРО (10): три независимые вещи в одной миграции, все аддитивные.
+--   * salon_ai_assistant получает sales_usp / sales_objections / sales_promos /
+--     booking_link_mode — «книгу продаж», которую владелец заполняет во вкладке
+--     «Ассистент». Пустая книга = поведение ассистента прежнее.
+--   * prepayment_settings получает qr_path / qr_url + публичный бакет payment-qr.
+--     Требует (4): без prepayment_settings ALTER TABLE упадёт. Салон без QR
+--     работает как раньше — реквизиты уходят текстом.
+--   * instagram_comment_triggers / instagram_comment_events — кодовое слово под
+--     постом → сообщение в директ. Требует (7).
+--   Порядок: (10) применять ПОСЛЕ (4) и (7).
 --
 -- Все — идемпотентны (IF NOT EXISTS / OR REPLACE / DROP POLICY IF EXISTS
 -- везде). Повторный прогон не ломает данные.
@@ -112,6 +124,16 @@
 --          to_regclass('public.appointment_prepayments')    AS prepayment_appt_ok,
 --          to_regclass('public.prepayment_receipt_hashes')  AS receipt_hashes_ok,
 --          to_regclass('public.rbac_audit')                 AS rbac_audit_ok,
+--          to_regclass('public.instagram_comment_triggers') AS ig_triggers_ok,
+--          to_regclass('public.instagram_comment_events')   AS ig_comment_events_ok,
+--          EXISTS (SELECT 1 FROM information_schema.columns
+--                   WHERE table_name = 'salon_ai_assistant' AND column_name = 'sales_usp')
+--                                                           AS sales_playbook_ok,
+--          EXISTS (SELECT 1 FROM information_schema.columns
+--                   WHERE table_name = 'prepayment_settings' AND column_name = 'qr_url')
+--                                                           AS prepayment_qr_ok,
+--          EXISTS (SELECT 1 FROM storage.buckets WHERE id = 'payment-qr')
+--                                                           AS payment_qr_bucket_ok,
 --          to_regproc('public.create_appointment_with_prepayment(uuid,uuid,uuid,timestamptz,text,text,text,uuid)')
 --                                                           AS prepay_rpc_ok,
 --          to_regproc('public.prepayment_expire_holds()')   AS expire_fn_ok,
@@ -171,3 +193,31 @@
 --      после записи проверь, что запись появилась в календаре с этим номером.
 --   6) Ответь клиенту вручную из приложения Instagram — ассистент должен замолчать
 --      на 5 минут (ai_paused = true у диалога).
+
+-- РУЧНАЯ ПРОВЕРКА КОДОВЫХ СЛОВ В КОММЕНТАРИЯХ (после миграции 10):
+--   0) В Meta App Dashboard дополнительно подпишись на поле `comments` (там же, где
+--      уже подписано `messages`) и выдай разрешение instagram_business_manage_comments.
+--      Без этого вебхук про комментарии просто не придёт — ошибок в логах не будет.
+--   1) Админка → вкладка «Instagram» → «Кодовое слово в комментариях»: добавь слово
+--      (например ХОЧУ) и текст сообщения, обязательно с вопросом в конце.
+--   2) С ЛИЧНОГО аккаунта напиши «ХОЧУ» под любым постом салона → в течение нескольких
+--      секунд должно прийти сообщение в директ.
+--   3) Напиши то же слово ещё раз под ТЕМ ЖЕ постом → второго сообщения быть НЕ должно
+--      (Instagram разрешает один приватный ответ на комментарий).
+--   4) Напиши «ХОЧУ» под ДРУГИМ постом, не отвечая на первое сообщение → тоже НЕ должно
+--      прийти: правило Meta «одно сообщение, пока человек не ответил» действует на
+--      человека, а не на комментарий. В instagram_comment_events будет
+--      outcome = skipped_awaiting_reply.
+--   5) Ответь в директе → дальше разговор ведёт ассистент, и он НЕ здоровается заново
+--      (в state_data диалога лежит entry_context).
+--   6) Комментарий без кодового слова → ничего не происходит, outcome = skipped_no_match.
+
+-- РУЧНАЯ ПРОВЕРКА QR ПРЕДОПЛАТЫ (после миграции 10):
+--   1) Админка → «Предоплата» → загрузи QR из банковского приложения, сохрани.
+--   2) Дойди до записи в WhatsApp: после текста с суммой должен прийти QR картинкой.
+--   3) То же в Instagram: QR приходит картинкой, подпись с суммой — отдельным сообщением
+--      (в Instagram у картинки не бывает подписи).
+--   4) Подтверди запись ещё раз в том же диалоге → второй QR прийти НЕ должен.
+--   5) Проверка изоляции: в prepayment_settings.qr_path путь ОБЯЗАН начинаться с id
+--      этого салона. Строку с чужим путём ассистент проигнорирует и отправит только
+--      текстовые реквизиты (в логах: «prepayment QR path does not belong to salon»).
