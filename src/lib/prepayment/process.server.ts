@@ -54,44 +54,54 @@ export interface ProcessReceiptResult {
   confidence?: number;
 }
 
-// Magic-byte guard — never trust the declared Content-Type alone. An .html file
-// with a .png extension and image/png Content-Type would otherwise reach
-// storage. Applies to every channel: Meta's CDN is not a trusted source either.
-export function isMimeContentPlausible(mime: string, bytes: Uint8Array): boolean {
-  if (bytes.length < 4) return false;
-  if (mime === "application/pdf")
-    return bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46; // %PDF
-  if (mime === "image/png")
-    return bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47;
-  if (mime === "image/jpeg") return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
-  if (mime === "image/webp") {
-    const s = new TextDecoder("latin1").decode(bytes.subarray(0, 12));
-    return s.startsWith("RIFF") && s.slice(8, 12) === "WEBP";
-  }
-  if (mime === "image/heic" || mime === "image/heif") {
-    const s = new TextDecoder("latin1").decode(bytes.subarray(4, 12));
-    return s.startsWith("ftyphe") || s.startsWith("ftypmif") || s.startsWith("ftypheic");
-  }
-  return false;
+// What the file ACTUALLY is, read from its leading bytes. Returns null when the
+// content is nothing we accept.
+//
+// The declared type is not usable as the decision: Meta's CDN commonly serves
+// both photos and voice notes as application/octet-stream, that type is what
+// gets stored on the media object, and rejecting on it turned a perfectly good
+// MBANK screenshot into "Файл такого типа не поддерживается". Sniffing also
+// subsumes the old plausibility check — an .html file renamed to .png cannot
+// pass, because nothing but a real PNG has a PNG header.
+export function sniffMime(bytes: Uint8Array): string | null {
+  if (bytes.length < 12) return null;
+  if (bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46)
+    return "application/pdf"; // %PDF
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47)
+    return "image/png";
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  const riff = new TextDecoder("latin1").decode(bytes.subarray(0, 12));
+  if (riff.startsWith("RIFF") && riff.slice(8, 12) === "WEBP") return "image/webp";
+  const ftyp = new TextDecoder("latin1").decode(bytes.subarray(4, 12));
+  if (ftyp.startsWith("ftyphe") || ftyp.startsWith("ftypmif") || ftyp.startsWith("ftypheic"))
+    return "image/heic";
+  return null;
 }
 
 export async function processReceipt(input: ProcessReceiptInput): Promise<ProcessReceiptResult> {
-  const { appointmentId, bytes, mime, actorKind } = input;
+  const { appointmentId, bytes, actorKind } = input;
 
   // ── 1) File sanity, before anything touches the DB or costs a Vision call ──
-  if (!ALLOWED_MIME.has(mime)) {
-    return { ok: false, verdict: null, reasons: [], error: "Файл такого типа не поддерживается" };
-  }
   if (bytes.length > MAX_BYTES) {
     return { ok: false, verdict: null, reasons: [], error: "Файл больше 10 МБ" };
   }
-  if (!isMimeContentPlausible(mime, bytes)) {
+  // The content decides, not the declared type — see sniffMime. The declared one
+  // is only kept for the log, so a future refusal can be traced to what arrived.
+  const mime = sniffMime(bytes);
+  if (!mime) {
+    console.warn(
+      `[prepayment] unrecognised receipt content (declared=${input.mime}, bytes=${bytes.length})`,
+    );
     return {
       ok: false,
       verdict: null,
       reasons: [],
-      error: "Содержимое файла не совпадает с заявленным типом",
+      error:
+        "Не получилось открыть файл. Пришлите, пожалуйста, скриншот чека картинкой (JPG или PNG) либо PDF",
     };
+  }
+  if (!ALLOWED_MIME.has(mime)) {
+    return { ok: false, verdict: null, reasons: [], error: "Файл такого типа не поддерживается" };
   }
 
   const mod = await import("@/integrations/supabase/client.server");
