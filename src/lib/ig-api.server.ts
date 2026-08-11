@@ -248,6 +248,46 @@ export async function igFetchProfile(
 }
 
 /**
+ * Ask the Graph API for a message's attachments and return the first usable media URL.
+ *
+ * The URL Meta puts in the webhook is a signed lookaside CDN link, and in production it has been
+ * answering with an HTML login page instead of the file — with HTTP 200, so nothing about the
+ * response says it failed. Every photo and voice note a client sent over Instagram was lost that
+ * way. Re-reading the message through the API mints a fresh link against our own access token,
+ * which is the supported route when the webhook link will not serve.
+ *
+ * Returns null on any failure: this is a fallback, and the caller already has a plain-fetch path.
+ */
+export async function igFetchAttachmentUrl(
+  creds: IgCreds,
+  messageId: string,
+): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `${IG_GRAPH}/${encodeURIComponent(messageId)}?fields=attachments`,
+      {
+        headers: { Authorization: `Bearer ${creds.token}` },
+        signal: AbortSignal.timeout(8000),
+      },
+    );
+    if (!res.ok) return null;
+    const body: any = await res.json();
+    // Shape: { attachments: { data: [ { image_data: { url }, video_data: { url }, file_url } ] } }
+    const first = body?.attachments?.data?.[0];
+    if (!first) return null;
+    return (
+      first?.image_data?.url ??
+      first?.video_data?.url ??
+      first?.file_url ??
+      first?.payload?.url ??
+      null
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Verify Meta's X-Hub-Signature-256 over the RAW request body.
  *
  * Our webhook URL is public and its path is guessable (it contains only the salon id), so without

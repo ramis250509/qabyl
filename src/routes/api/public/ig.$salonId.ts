@@ -22,6 +22,7 @@
 //      so we are inside the window by construction.
 import { createFileRoute } from "@tanstack/react-router";
 import {
+  igFetchAttachmentUrl,
   igFetchProfile,
   igSendCommentReply,
   igSendImage,
@@ -749,7 +750,8 @@ async function ingestEvent(opts: {
       salonId,
       convId,
       url: ev.imageUrl,
-      token: creds.token,
+      creds,
+      mid: ev.mid,
       errLog,
     });
 
@@ -784,13 +786,14 @@ async function ingestEvent(opts: {
   // voice message behaves like any other message from here on (history, agent, admin panel).
   let textBody = ev.text;
   if (!textBody && ev.audioUrl) {
-    const audio = await fetchMediaBytes(
-      ev.audioUrl,
-      MAX_AUDIO_BYTES,
-      creds.token,
+    const audio = await fetchMediaBytes({
+      url: ev.audioUrl,
+      maxBytes: MAX_AUDIO_BYTES,
+      creds,
+      mid: ev.mid,
       errLog,
-      "voice",
-    );
+      what: "voice",
+    });
     // Meta's CDN often serves voice notes as application/octet-stream, and Gemini rejects a
     // mime type it does not recognise — the transcription then fails for a reason that has
     // nothing to do with the recording. Instagram voice notes are MPEG-4 audio, so anything
@@ -879,22 +882,30 @@ function looksLikeHtml(bytes: Uint8Array, contentType: string): boolean {
   return head.startsWith("<!doctype") || head.startsWith("<html") || head.startsWith("<?xml");
 }
 
-async function fetchMediaBytes(
-  url: string,
-  maxBytes: number,
-  token: string | null | undefined,
-  errLog: (m: string, ...r: unknown[]) => void,
-  what: string,
-): Promise<{ bytes: Uint8Array; mime: string } | null> {
-  const attempt = async (withToken: boolean) => {
-    const r = await fetch(url, {
-      signal: AbortSignal.timeout(20000),
-      ...(withToken && token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
-    });
-    if (!r.ok) {
-      errLog(`${what} fetch HTTP ${r.status}${withToken ? " (with token)" : ""}`);
-      return null;
-    }
+// Four ways to get the same file, tried in order until one yields something that is not a web
+// page. The webhook's own link is first because when it works it is free and instant; the Graph
+// lookup is last because it costs an API call, but it is the one that mints a link against our
+// access token rather than replaying a signed URL that Meta may no longer honour.
+//
+// Which strategy won is logged on success. That line is the whole point: the next real photo tells
+// us which path Instagram actually serves, instead of us guessing again.
+async function fetchMediaBytes(opts: {
+  url: string;
+  maxBytes: number;
+  creds: IgCreds;
+  mid: string | null;
+  errLog: (m: string, ...r: unknown[]) => void;
+  what: string;
+}): Promise<{ bytes: Uint8Array; mime: string } | null> {
+  const { url, maxBytes, creds, mid, errLog, what } = opts;
+  const token = creds.token;
+
+  const download = async (
+    target: string,
+    init: RequestInit,
+  ): Promise<{ bytes: Uint8Array; mime: string } | null> => {
+    const r = await fetch(target, { ...init, signal: AbortSignal.timeout(20000) });
+    if (!r.ok) return null;
     const ab = await r.arrayBuffer();
     if (ab.byteLength > maxBytes) {
       errLog(`${what} too large (${ab.byteLength} bytes) — rejected`);
@@ -903,21 +914,51 @@ async function fetchMediaBytes(
     return { bytes: new Uint8Array(ab), mime: r.headers.get("content-type") ?? "" };
   };
 
-  try {
-    let got = await attempt(false);
-    if (got && looksLikeHtml(got.bytes, got.mime)) {
-      errLog(`${what}: CDN returned HTML (${got.mime}, ${got.bytes.length} bytes) — retrying with token`);
-      got = token ? await attempt(true) : null;
-      if (got && looksLikeHtml(got.bytes, got.mime)) {
-        errLog(`${what}: still HTML with token — giving up, nothing usable was downloaded`);
-        return null;
+  const withQueryToken = (u: string) =>
+    token ? `${u}${u.includes("?") ? "&" : "?"}access_token=${encodeURIComponent(token)}` : u;
+
+  const strategies: { name: string; run: () => Promise<{ bytes: Uint8Array; mime: string } | null> }[] =
+    [
+      { name: "webhook-url", run: () => download(url, {}) },
+      {
+        name: "webhook-url+bearer",
+        run: () =>
+          token
+            ? download(url, { headers: { Authorization: `Bearer ${token}` } })
+            : Promise.resolve(null),
+      },
+      { name: "webhook-url+access_token", run: () => download(withQueryToken(url), {}) },
+      {
+        name: "graph-attachment",
+        run: async () => {
+          if (!mid || !token) return null;
+          const fresh = await igFetchAttachmentUrl(creds, mid);
+          if (!fresh) return null;
+          return (await download(fresh, {})) ?? (await download(withQueryToken(fresh), {}));
+        },
+      },
+    ];
+
+  const rejected: string[] = [];
+  for (const s of strategies) {
+    try {
+      const got = await s.run();
+      if (!got) {
+        rejected.push(`${s.name}:none`);
+        continue;
       }
+      if (looksLikeHtml(got.bytes, got.mime)) {
+        rejected.push(`${s.name}:html`);
+        continue;
+      }
+      if (rejected.length) errLog(`${what}: recovered via ${s.name} after ${rejected.join(", ")}`);
+      return got;
+    } catch (e: any) {
+      rejected.push(`${s.name}:${e?.message ?? "threw"}`);
     }
-    return got;
-  } catch (e: any) {
-    errLog(`${what} download failed`, e?.message ?? e);
-    return null;
   }
+  errLog(`${what}: every download strategy failed — ${rejected.join(", ")}`);
+  return null;
 }
 
 async function storeRemoteImage(opts: {
@@ -925,11 +966,19 @@ async function storeRemoteImage(opts: {
   salonId: string;
   convId: string;
   url: string;
-  token: string | null | undefined;
+  creds: IgCreds;
+  mid: string | null;
   errLog: (m: string, ...r: unknown[]) => void;
 }): Promise<string | null> {
-  const { db, salonId, convId, url, token, errLog } = opts;
-  const got = await fetchMediaBytes(url, MAX_MEDIA_BYTES, token, errLog, "image");
+  const { db, salonId, convId, url, creds, mid, errLog } = opts;
+  const got = await fetchMediaBytes({
+    url,
+    maxBytes: MAX_MEDIA_BYTES,
+    creds,
+    mid,
+    errLog,
+    what: "image",
+  });
   if (!got) return null;
 
   // Store under the type the bytes actually are. Trusting the header put files named
