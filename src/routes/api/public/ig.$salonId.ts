@@ -313,6 +313,7 @@ export const Route = createFileRoute("/api/public/ig/$salonId")({
           industry: (assistant as any)?.industry ?? null,
           knowledge_answers: (assistant as any)?.knowledge_answers ?? null,
           sales_mode: (assistant as any)?.sales_mode ?? false,
+          start_language: (assistant as any)?.start_language ?? null,
           sales_usp: (assistant as any)?.sales_usp ?? null,
           sales_objections: (assistant as any)?.sales_objections ?? null,
           sales_promos: (assistant as any)?.sales_promos ?? null,
@@ -751,6 +752,32 @@ async function ingestEvent(opts: {
       token: creds.token,
       errLog,
     });
+
+    // The client sent a picture and we could not fetch it. Letting the turn continue hands the
+    // model a bare caption — "Вот скриншот" — with no image attached, and it has been observed
+    // answering that with "Ваша запись подтверждена" for a payment nobody verified. A picture we
+    // failed to download must therefore end the turn honestly instead of reaching the model at
+    // all, exactly as a failed voice note already does.
+    if (!mediaPath) {
+      await db.from("wa_messages").insert({
+        conversation_id: convId,
+        salon_id: salonId,
+        direction: "in",
+        kind: "text",
+        text_body: ev.text,
+        green_api_message_id: ev.mid,
+        processed_at: new Date().toISOString(),
+        meta: { image_download_failed: true },
+      });
+      if (creds.token) {
+        await igSendMessage(
+          creds,
+          ev.clientId,
+          "Не получилось загрузить изображение 🙏 Пришлите, пожалуйста, ещё раз — обычным фото из галереи.",
+        );
+      }
+      return null;
+    }
   }
 
   // ---- Voice note → text. Transcribed with the same Gemini helper the WhatsApp path uses, so a
@@ -1272,11 +1299,32 @@ async function runConversationTurn(opts: {
           )
         : result.reply;
 
-      const isDuplicateReply = sentText.trim() === (lastSentReply ?? "").trim();
+      // ---- Never announce a booking that money has not been verified for.
+      //
+      // A prepayment id survives in state_data only while the payment is still outstanding: a
+      // verified receipt clears it and moves the conversation to "done". So its presence here
+      // means nothing has been confirmed — and the model has been observed replying to a photo it
+      // could not see with "Ваша запись подтверждена. Ждём вас!", for an appointment sitting in
+      // pending_payment that the salon's calendar does not even show. Prompt rules did not hold;
+      // this is the server refusing to let the sentence out.
+      const outstandingPrepayment =
+        !result.nextStateData?.prepayment_appointment_id &&
+        (stateData as any)?.prepayment_appointment_id &&
+        state === "awaiting_receipt";
+      const CLAIMS_CONFIRMED =
+        /\b(подтвержден|подтверждена|подтверждено|запис(ал|ала)\s+вас|вы\s+записаны|ждём\s+вас|ждем\s+вас|оплата\s+(принята|получена|подтверждена))/i;
+      let guardedText = sentText;
+      if (outstandingPrepayment && CLAIMS_CONFIRMED.test(sentText)) {
+        errLog(`blocked a false confirmation while prepayment is unverified (conv=${convId})`);
+        guardedText =
+          "Оплату пока не вижу 🙏 Пришлите, пожалуйста, скриншот чека сюда — я проверю его и сразу подтвержу запись.";
+      }
+
+      const isDuplicateReply = guardedText.trim() === (lastSentReply ?? "").trim();
       let sentMessageId: string | undefined;
       const tAgentDone = ms();
       if (!isDuplicateReply) {
-        const res = await igSendMessage(creds, recipientId, sentText);
+        const res = await igSendMessage(creds, recipientId, guardedText);
         if (!res.ok) {
           // THE failure that matters: the assistant did its work and Instagram refused to deliver
           // it. Meta's own code and wording are carried through verbatim — code 190 means the
@@ -1285,7 +1333,7 @@ async function runConversationTurn(opts: {
           await record(`Instagram отклонил отправку ответа: ${res.error}`, { convId });
         }
         sentMessageId = res.ok ? res.messageId : undefined;
-        lastSentReply = sentText;
+        lastSentReply = guardedText;
       }
       log(
         `TIMING preAgent=${tPreAgent}ms agent=${tAgentDone - tPreAgent}ms send=${ms() - tAgentDone}ms total=${ms()}ms actions=${(result.debug.actions || []).join(",")}`,
@@ -1296,7 +1344,7 @@ async function runConversationTurn(opts: {
         salon_id: salonId,
         direction: "out",
         kind: "text",
-        text_body: sentText,
+        text_body: guardedText,
         green_api_message_id: sentMessageId ?? null,
         meta: {
           intent: result.debug.intent ?? null,
@@ -1363,7 +1411,7 @@ async function runConversationTurn(opts: {
 
       const updates: Record<string, any> = {
         last_message_at: new Date().toISOString(),
-        last_message_preview: result.reply.slice(0, 200),
+        last_message_preview: guardedText.slice(0, 200),
         state: result.nextState,
         state_data: result.nextStateData ?? {},
       };
