@@ -743,14 +743,27 @@ async function ingestEvent(opts: {
   // later) finds a dead link.
   let mediaPath: string | null = null;
   if (ev.imageUrl) {
-    mediaPath = await storeRemoteImage({ db, salonId, convId, url: ev.imageUrl, errLog });
+    mediaPath = await storeRemoteImage({
+      db,
+      salonId,
+      convId,
+      url: ev.imageUrl,
+      token: creds.token,
+      errLog,
+    });
   }
 
   // ---- Voice note → text. Transcribed with the same Gemini helper the WhatsApp path uses, so a
   // voice message behaves like any other message from here on (history, agent, admin panel).
   let textBody = ev.text;
   if (!textBody && ev.audioUrl) {
-    const audio = await fetchAsBase64(ev.audioUrl, MAX_AUDIO_BYTES);
+    const audio = await fetchMediaBytes(
+      ev.audioUrl,
+      MAX_AUDIO_BYTES,
+      creds.token,
+      errLog,
+      "voice",
+    );
     // Meta's CDN often serves voice notes as application/octet-stream, and Gemini rejects a
     // mime type it does not recognise — the transcription then fails for a reason that has
     // nothing to do with the recording. Instagram voice notes are MPEG-4 audio, so anything
@@ -760,7 +773,7 @@ async function ingestEvent(opts: {
     const tr = audio
       ? await transcribeAudio({
           apiKey: process.env.GEMINI_API_KEY ?? "",
-          audioBase64: audio.base64,
+          audioBase64: Buffer.from(audio.bytes).toString("base64"),
           mime: audioMime,
         })
       : ({ ok: false, error: "audio download failed" } as const);
@@ -825,20 +838,57 @@ async function ingestEvent(opts: {
   return convId;
 }
 
-async function fetchAsBase64(
+// Meta answers an attachment URL with an HTML page — a login or error screen, served with HTTP
+// 200 — whenever the request is not accepted as authenticated. Nothing about the status code says
+// so, which is how 147 KB of HTML ended up in the media bucket labelled as a client's photo, and
+// how a voice note reached Gemini as a web page and came back "неразборчиво".
+//
+// Both media paths therefore check what actually arrived, and retry once with the access token
+// before giving up. The token is not sent on the first attempt because plain CDN links do work and
+// are the common case.
+function looksLikeHtml(bytes: Uint8Array, contentType: string): boolean {
+  if (/text\/html/i.test(contentType)) return true;
+  const head = new TextDecoder("latin1").decode(bytes.subarray(0, 64)).trimStart().toLowerCase();
+  return head.startsWith("<!doctype") || head.startsWith("<html") || head.startsWith("<?xml");
+}
+
+async function fetchMediaBytes(
   url: string,
   maxBytes: number,
-): Promise<{ base64: string; mime: string } | null> {
-  try {
-    const r = await fetch(url, { signal: AbortSignal.timeout(20000) });
-    if (!r.ok) return null;
+  token: string | null | undefined,
+  errLog: (m: string, ...r: unknown[]) => void,
+  what: string,
+): Promise<{ bytes: Uint8Array; mime: string } | null> {
+  const attempt = async (withToken: boolean) => {
+    const r = await fetch(url, {
+      signal: AbortSignal.timeout(20000),
+      ...(withToken && token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
+    });
+    if (!r.ok) {
+      errLog(`${what} fetch HTTP ${r.status}${withToken ? " (with token)" : ""}`);
+      return null;
+    }
     const ab = await r.arrayBuffer();
-    if (ab.byteLength > maxBytes) return null;
-    return {
-      base64: Buffer.from(ab).toString("base64"),
-      mime: r.headers.get("content-type") ?? "application/octet-stream",
-    };
-  } catch {
+    if (ab.byteLength > maxBytes) {
+      errLog(`${what} too large (${ab.byteLength} bytes) — rejected`);
+      return null;
+    }
+    return { bytes: new Uint8Array(ab), mime: r.headers.get("content-type") ?? "" };
+  };
+
+  try {
+    let got = await attempt(false);
+    if (got && looksLikeHtml(got.bytes, got.mime)) {
+      errLog(`${what}: CDN returned HTML (${got.mime}, ${got.bytes.length} bytes) — retrying with token`);
+      got = token ? await attempt(true) : null;
+      if (got && looksLikeHtml(got.bytes, got.mime)) {
+        errLog(`${what}: still HTML with token — giving up, nothing usable was downloaded`);
+        return null;
+      }
+    }
+    return got;
+  } catch (e: any) {
+    errLog(`${what} download failed`, e?.message ?? e);
     return null;
   }
 }
@@ -848,35 +898,46 @@ async function storeRemoteImage(opts: {
   salonId: string;
   convId: string;
   url: string;
+  token: string | null | undefined;
   errLog: (m: string, ...r: unknown[]) => void;
 }): Promise<string | null> {
-  const { db, salonId, convId, url, errLog } = opts;
-  try {
-    const r = await fetch(url, { signal: AbortSignal.timeout(20000) });
-    if (!r.ok) {
-      errLog(`media fetch HTTP ${r.status}`);
-      return null;
-    }
-    const ab = await r.arrayBuffer();
-    if (ab.byteLength > MAX_MEDIA_BYTES) {
-      errLog(`media too large (${ab.byteLength} bytes) — rejected`);
-      return null;
-    }
-    const mime = r.headers.get("content-type") ?? "image/jpeg";
-    const ext = (mime.split("/")[1] || "jpg").replace(/[^a-z0-9]/gi, "") || "jpg";
-    const path = `${salonId}/${convId}/${Date.now()}.${ext}`;
-    const { error } = await db.storage
-      .from("wa-media")
-      .upload(path, new Uint8Array(ab), { contentType: mime, upsert: false });
-    if (error) {
-      errLog("media upload failed", error.message);
-      return null;
-    }
-    return path;
-  } catch (e: any) {
-    errLog("media download failed", e?.message ?? e);
+  const { db, salonId, convId, url, token, errLog } = opts;
+  const got = await fetchMediaBytes(url, MAX_MEDIA_BYTES, token, errLog, "image");
+  if (!got) return null;
+
+  // Store under the type the bytes actually are. Trusting the header put files named
+  // ".htmlcharsetutf8" in the bucket and made every later reader — the agent's photo pricing, the
+  // receipt verifier — fail on a file that was never an image in the first place.
+  const sniffed = sniffImageMime(got.bytes);
+  if (!sniffed) {
+    errLog(`image: unrecognised content (served=${got.mime || "none"}, ${got.bytes.length} bytes)`);
     return null;
   }
+  const ext = sniffed.split("/")[1] ?? "jpg";
+  const path = `${salonId}/${convId}/${Date.now()}.${ext}`;
+  const { error } = await db.storage
+    .from("wa-media")
+    .upload(path, got.bytes, { contentType: sniffed, upsert: false });
+  if (error) {
+    errLog("media upload failed", error.message);
+    return null;
+  }
+  return path;
+}
+
+// Minimal image sniffer for the media pipeline. Deliberately local rather than imported from the
+// prepayment module: this runs on every inbound photo and has no business pulling the receipt
+// verifier into the hot path.
+function sniffImageMime(b: Uint8Array): string | null {
+  if (b.length < 12) return null;
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return "image/png";
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
+  const riff = new TextDecoder("latin1").decode(b.subarray(0, 12));
+  if (riff.startsWith("RIFF") && riff.slice(8, 12) === "WEBP") return "image/webp";
+  const ftyp = new TextDecoder("latin1").decode(b.subarray(4, 12));
+  if (ftyp.startsWith("ftyphe") || ftyp.startsWith("ftypmif") || ftyp.startsWith("ftypheic"))
+    return "image/heic";
+  return null;
 }
 
 // ---------------------------------------------------------------------------
