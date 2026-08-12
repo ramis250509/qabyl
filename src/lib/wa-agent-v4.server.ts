@@ -34,7 +34,9 @@ import {
 import { INDUSTRY_EXPERT } from "@/lib/wa-industries.server";
 import { INDUSTRIES_META, normalizeIndustry, type IndustryKey } from "@/lib/industries";
 import { bookingUrl } from "@/lib/booking-link";
+import { languageStyleBlock } from "@/lib/wa-language-style";
 import {
+  classifyFunnelStage,
   classifyReadiness,
   detectObjections,
   hasSchedulingSignal,
@@ -210,6 +212,9 @@ export function buildSystemPromptV4(
     `ЕСЛИ ИНСТРУМЕНТ ВЕРНУЛ ОШИБКУ (обязательно, железное правило): НЕ извиняйся дважды за одно и то же. Первый раз — попробуй перевызвать инструмент по-другому (другая дата, без master_id, другой филиал). Если и второй вызов не дал результата — ОБЯЗАТЕЛЬНО вызови escalate_to_human (в reason опиши, что запрашивал клиент и какой инструмент упал) и вежливо скажи клиенту, что передаёшь диалог администратору. НЕЛЬЗЯ отвечать «сейчас не получилось получить данные, попробуйте через минуту» два раза подряд — это выглядит как сломанный бот и злит клиента.`,
     `ЯЗЫК ЭТОГО ДИАЛОГА (СТРОГО, ЖЁСТКОЕ ПРАВИЛО, НУЛЕВАЯ ТЕРПИМОСТЬ К СМЕШЕНИЮ): отвечай ТОЛЬКО на ${langName} языке (языки салона: ${langs}). Этот язык уже определён системой по всей истории диалога — доверяй ему, а не только последнему сообщению. НА ${langName} ЯЗЫКЕ должно быть АБСОЛЮТНО ВСЁ в твоём сообщении БЕЗ ЕДИНОГО ИСКЛЮЧЕНИЯ: сам текст, пояснения, инструкции, подписи, сводка подтверждения записи, сообщения после записи/переноса/отмены, любые шаблоны и подписи к ссылкам. Ни одного слова, фразы или строки на другом языке в одном сообщении быть НЕ ДОЛЖНО — даже служебной подписи вроде «reschedule or cancel». Если не знаешь слово на ${langName} — перефразируй, но НЕ вставляй иноязычный фрагмент. КОРОТКИЕ и НЕЯЗЫКОВЫЕ реплики клиента (цифра варианта, название филиала или ${sn.genSg}, «да»/«ок»/«макул», имя, дата, время) НЕ являются сигналом смены языка — отвечай НА ЭТОМ ЖЕ языке. Переключайся на другой язык, ТОЛЬКО когда клиент явно и уверенно пишет РАЗВЁРНУТОЕ сообщение на другом языке (не одно слово/цифра/имя) — и тогда ВЕСЬ следующий ответ полностью на новом языке.`,
     `ОБРАЩЕНИЕ: всегда на «Вы», даже если клиент пишет на «ты» — это вежливый стиль администратора. В кыргызском используй вежливые формы (сиз, -ңыз/-ңиз/-ыңыз), в других языках — аналогичную вежливую форму, если она есть в языке.`,
+    // Only the guide for THIS language is rendered (see wa-language-style.ts). Russian returns
+    // "" and is filtered out below, so the common path pays nothing for this.
+    ...(languageStyleBlock(language) ? [``, languageStyleBlock(language)] : []),
     // Instagram Direct carries no phone number. Every appointment needs one (мастер должен иметь
     // возможность позвонить, плюс серверная валидация требует 10–15 цифр), so on this channel the
     // assistant has to collect it — and must not blurt the request out at "здравствуйте", which
@@ -1909,9 +1914,11 @@ export async function executeV4Tool(
             .select("id, starts_at, masters(name)")
             .eq("salon_id", input.salon.salonId)
             .eq("client_phone", bookingPhone)
-            .eq("service_id", args.service_id)
-            .eq("master_id", args.master_id)
-            .eq("starts_at", resolved.slotStart)
+            // Both fields are typed optional in the tool schema but are exactly what the RPC
+            // above was called with, and the dedup index keys on them — hence the coercion.
+            .eq("service_id", String(args.service_id ?? ""))
+            .eq("master_id", String(args.master_id ?? ""))
+            .eq("starts_at", String(resolved.slotStart ?? ""))
             .eq("status", "confirmed")
             .maybeSingle();
           if (dup) {
@@ -2401,11 +2408,32 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   // English fragments into fully-Russian replies (seen in prod: manage-link intro in EN under
   // an RU booking confirmation). Cyrillic → recompute language from the current text.
   const hasCyrillic = /[а-яёңүөҢҮӨ]/i.test(lastText);
+
+  // The owner's chosen OPENING language, used only when nothing else has spoken yet.
+  //
+  // detectLanguage() returns "ru" for any plain-Cyrillic text with no Kyrgyz markers, which
+  // is the correct default for a Russian-speaking salon and the wrong one for a practice
+  // whose audience writes Kyrgyz in Russian-looking words ("салам", "жакшы" catch; "Здрасте
+  // канча турат" does not). Because that first reply sets the sticky language for the whole
+  // conversation, one wrong guess used to colour every message that followed. The owner now
+  // decides the opening, and the client's first CONFIDENT signal still overrides it — so this
+  // changes the default, never the adaptation.
+  const configuredStart = input.config.start_language;
+  const startLang: "ru" | "ky" | "en" =
+    configuredStart === "ky" || configuredStart === "en" || configuredStart === "ru"
+      ? configuredStart
+      : "ru";
+
   const language: "ru" | "ky" | "en" = confidentLanguage(lastText)
     ? detectLanguage(lastText)
     : hasCyrillic && stickyLang === "en"
       ? detectLanguage(lastText)
-      : (stickyLang ?? detectLanguage(lastText));
+      : stickyLang
+        ? stickyLang
+        : // No confident signal AND no history to fall back on → this is the opening move.
+          isFirstTurn
+          ? startLang
+          : detectLanguage(lastText);
 
   // ---- Build user parts (text + inline images). Fetch every image IN PARALLEL — a 3-photo
   // burst used to pay 3× ~800 ms sequentially before the model even received the turn.
@@ -2557,12 +2585,40 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
       return "";
     }
   })();
-  // All three prompt-context queries are independent — run them concurrently to cut round-trips
+  // Does this person ALREADY have a confirmed visit ahead of them?
+  //
+  // This is the one fact that most changes what a good administrator says next, and the model
+  // has no way to know it: the conversation may have been booked days ago in another session,
+  // or by hand in the calendar. Without it the assistant cheerfully asks "на какой день вам
+  // удобно?" of someone who is already in the book — which reads as having lost their booking.
+  // A phone-less Instagram conversation simply skips the check (nothing to match on).
+  const upcomingApptP = (async (): Promise<boolean> => {
+    const phone = (input.client.phone ?? "").replace(/\D/g, "");
+    if (phone.length < 10) return false;
+    try {
+      const { data } = await db
+        .from("appointments")
+        .select("id")
+        .eq("salon_id", input.salon.salonId)
+        .eq("status", "confirmed")
+        .gte("starts_at", new Date().toISOString())
+        .ilike("client_phone", `%${phone.slice(-9)}`)
+        .limit(1);
+      return Boolean(data?.length);
+    } catch {
+      // Fail open: pretending nobody is booked is the pre-existing behaviour, and a lookup
+      // hiccup must never cost the client a reply.
+      return false;
+    }
+  })();
+
+  // All four prompt-context queries are independent — run them concurrently to cut round-trips
   // off the latency before the first Gemini call.
-  const [closedDates, mastersRoster, servicesRoster] = await Promise.all([
+  const [closedDates, mastersRoster, servicesRoster, hasUpcomingAppointment] = await Promise.all([
     closedDatesP,
     mastersRosterP,
     servicesRosterP,
+    upcomingApptP,
   ]);
   // Observability: prove in prod logs whether the closed-list block actually rendered this turn.
   // If servicesRoster is empty here despite the salon having services in the admin, the fault is
@@ -2586,11 +2642,36 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   const turnObjections = detectObjections(lastText);
   const readiness = classifyReadiness(lastText, turnObjections);
   const industryForSales = normalizeIndustry(input.config.industry);
+
+  // Funnel stage from facts only — see classifyFunnelStage for why each fact is server-side.
+  const stage = classifyFunnelStage(
+    {
+      hasUpcomingAppointment,
+      awaitingPrepayment: Boolean((input.stateData as any)?.prepayment_appointment_id),
+      serviceChosen: Boolean(input.stateData.service_id || input.stateData.service_name),
+      turnCount: v4History.filter((m) => m.role === "model").length,
+    },
+    turnObjections,
+    readiness,
+    hasSchedulingSignal(lastText),
+  );
+
+  // The assistant's own previous reply, for the anti-repetition rule.
+  const lastAssistantReply =
+    [...v4History]
+      .reverse()
+      .find((m) => m.role === "model")
+      ?.parts?.map((p: any) => p?.text ?? "")
+      .join(" ")
+      .trim() || null;
+
   const salesBlock = renderSalesBlock({
     playbook,
     objections: turnObjections,
     readiness,
     state: priorSales,
+    stage,
+    lastAssistantReply,
     sn: INDUSTRY_EXPERT[industryForSales].specialistNoun,
     todayIso: nowInTz(input.salon.timezone).isoLocalDate,
     hasBookingLink: Boolean(
@@ -2598,6 +2679,7 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     ),
     clientText: lastText,
   });
+  debug.actions.push(`stage:${stage}`);
   if (turnObjections.length) debug.actions.push(`objections:${turnObjections.join(",")}`);
   if (priorSales.closeAttempts >= 2) debug.actions.push(`sales:close_blocked`);
 

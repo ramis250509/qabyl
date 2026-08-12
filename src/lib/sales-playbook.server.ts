@@ -342,6 +342,145 @@ export function nextSalesState(
 }
 
 // ---------------------------------------------------------------------------
+// The funnel
+// ---------------------------------------------------------------------------
+//
+// WHY A STAGE MACHINE ON TOP OF THE OBJECTION PLAYS
+// -------------------------------------------------
+// The plays above answer "what do I say about THIS objection". They say nothing about "where
+// is this conversation, and what is the single next step". Without that, the model picks a
+// next step from the whole menu every turn — which is how you get a greeting that also
+// quotes a price, asks about the client's goal, offers three slots and mentions a promo. Each
+// sentence is defensible; together they are a wall of text nobody answers.
+//
+// The stage is computed from FACTS THE SERVER ALREADY HAS (does this person have an upcoming
+// appointment? is a prepayment hold open? has a service been chosen? is an objection on the
+// table?) — never inferred by the model. That is what makes it trustworthy enough to
+// constrain the reply, and it costs zero extra tokens and zero extra round-trips.
+
+export type FunnelStage =
+  | "new_lead" // first contact, nothing known yet
+  | "discovery" // talking, but the real need is not established
+  | "consulting" // service is on the table, explaining and pricing
+  | "objection" // a doubt is blocking progress
+  | "offer_booking" // doubt cleared / client engaged with WHEN
+  | "prepayment" // slot held, waiting on the receipt
+  | "booked"; // has a confirmed upcoming visit
+
+export type FunnelFacts = {
+  /** Client already has a confirmed appointment in the future. */
+  hasUpcomingAppointment: boolean;
+  /** A prepayment hold is open and unpaid. */
+  awaitingPrepayment: boolean;
+  /** A service has been settled on in this conversation. */
+  serviceChosen: boolean;
+  /** Assistant turns so far in this session. 0 = we have not spoken yet. */
+  turnCount: number;
+};
+
+/**
+ * Order of checks is the priority order, and it is deliberate.
+ *
+ * `booked` and `prepayment` come FIRST, above objections and everything else, because they
+ * are the two states where the wrong move is most expensive: pitching a booking to someone
+ * who already has one reads as "you don't know who I am", and pitching anything to someone
+ * mid-payment interrupts money that is already moving.
+ */
+export function classifyFunnelStage(
+  facts: FunnelFacts,
+  objections: ObjectionKind[],
+  readiness: Readiness,
+  schedulingSignal: boolean,
+): FunnelStage {
+  if (facts.awaitingPrepayment) return "prepayment";
+  if (facts.hasUpcomingAppointment) return "booked";
+  if (objections.length) return "objection";
+  if (readiness === "ready" || schedulingSignal) return "offer_booking";
+  if (facts.serviceChosen) return "consulting";
+  if (facts.turnCount === 0) return "new_lead";
+  return "discovery";
+}
+
+/**
+ * One short block per stage, each ending in the ONE next step for this turn.
+ *
+ * Kept to a handful of lines on purpose. The system prompt is already ~12k tokens; the value
+ * here is not more instruction, it is *narrowing* — telling the model which single move is on
+ * the table so it stops choosing from all of them at once.
+ */
+export function renderStageBlock(
+  stage: FunnelStage,
+  sn: { nomSg: string; genSg: string },
+  opts: { salesMode: boolean },
+): string {
+  const head = `━━━ ЭТАП РАЗГОВОРА: ${STAGE_LABEL[stage]} ━━━`;
+  switch (stage) {
+    case "new_lead":
+      return [
+        head,
+        `Это первое сообщение. Коротко поздоровайся и ответь ровно на то, что человек спросил. НЕ вываливай прайс, преимущества и предложение записаться сразу — сначала пойми, зачем он написал.`,
+        `СЛЕДУЮЩИЙ ШАГ: один короткий вопрос о его запросе (что беспокоит / что хочет решить). Одно сообщение — один вопрос.`,
+      ].join("\n");
+
+    case "discovery":
+      return [
+        head,
+        `Настоящая потребность ещё не ясна. Твоя задача сейчас — понять её, а не продать. Слушай, что человек называет проблемой ЕГО словами, и опирайся дальше именно на эти слова.`,
+        `СЛЕДУЮЩИЙ ШАГ: один уточняющий вопрос по сути. Предлагать запись на этом этапе рано.`,
+      ].join("\n");
+
+    case "consulting":
+      return [
+        head,
+        `Услуга уже обсуждается. Отвечай по существу фактами из прайса и книги знаний, связывая ответ с тем, что человек назвал своей проблемой.`,
+        `СЛЕДУЮЩИЙ ШАГ: закрой текущий вопрос${
+          opts.salesMode
+            ? `, и если он закрыт — мягко предложи записаться к ${sn.genSg} одной фразой`
+            : ""
+        }. Не задавай нового вопроса, пока не ответили на прошлый.`,
+      ].join("\n");
+
+    case "objection":
+      return [
+        head,
+        `У человека сомнение. Пока оно не снято, любое предложение записаться воспринимается как давление.`,
+        `СЛЕДУЮЩИЙ ШАГ: отработать возражение по схеме ниже. Ничего больше в этом сообщении.`,
+      ].join("\n");
+
+    case "offer_booking":
+      return [
+        head,
+        `Человек готов говорить о времени. Не начинай консультацию заново и не пересказывай уже сказанное.`,
+        `СЛЕДУЮЩИЙ ШАГ: получить день и время. Спрашивай день, потом время — по одному, а не всё сразу.`,
+      ].join("\n");
+
+    case "prepayment":
+      return [
+        head,
+        `Слот держится за клиентом, ждём подтверждение оплаты. Ничего не продавай и не предлагай — это собьёт человека посреди оплаты.`,
+        `СЛЕДУЮЩИЙ ШАГ: спокойно ответь на его вопрос и подскажи, что делать с оплатой. Второй раз реквизиты и QR не отправляй, если он не попросил.`,
+      ].join("\n");
+
+    case "booked":
+      return [
+        head,
+        `У этого человека УЖЕ ЕСТЬ подтверждённая запись впереди. Предлагать записаться снова, спрашивать «на какой день вам удобно» и подбирать время — ЗАПРЕЩЕНО: он подумает, что его запись потеряли.`,
+        `СЛЕДУЮЩИЙ ШАГ: ответь на его вопрос. Если он хочет ДРУГУЮ услугу или ВТОРУЮ запись — сначала прямо уточни, что это дополнительно к уже существующей записи, и только потом подбирай время. Если он хочет перенести или отменить — используй нужный инструмент.`,
+      ].join("\n");
+  }
+}
+
+const STAGE_LABEL: Record<FunnelStage, string> = {
+  new_lead: "новый обращение",
+  discovery: "выясняем потребность",
+  consulting: "консультируем",
+  objection: "работаем с возражением",
+  offer_booking: "предлагаем запись",
+  prepayment: "ждём предоплату",
+  booked: "клиент уже записан",
+};
+
+// ---------------------------------------------------------------------------
 // The plays
 // ---------------------------------------------------------------------------
 
@@ -444,6 +583,14 @@ export type SalesBlockInput = {
   hasBookingLink: boolean;
   /** The client's raw message this turn — owner-defined triggers are matched against it. */
   clientText: string;
+  /** Where this conversation is in the funnel. Computed server-side, never by the model. */
+  stage: FunnelStage;
+  /**
+   * The assistant's previous reply. Injected only when the governor says we are at risk of
+   * nagging or of re-asking — that is the only situation where paying ~40 tokens to say
+   * "don't repeat yourself" earns its keep.
+   */
+  lastAssistantReply?: string | null;
 };
 
 /**
@@ -452,8 +599,13 @@ export type SalesBlockInput = {
  * with no playbook and a client with no objection pays zero tokens for any of this.
  */
 export function renderSalesBlock(input: SalesBlockInput): string {
-  const { playbook, objections, readiness, state, sn, todayIso, hasBookingLink } = input;
+  const { playbook, objections, readiness, state, sn, todayIso, hasBookingLink, stage } = input;
   const parts: string[] = [];
+
+  // ── Where we are, and the one move that belongs here. First in the block so everything
+  // below is read as detail on a decision that is already made.
+  parts.push(renderStageBlock(stage, sn, { salesMode: playbook.salesMode }));
+  parts.push(``);
 
   // ── Doctrine. Short on purpose: the long-form guidance lives in the plays, and
   // only the play that fired gets injected.
@@ -546,6 +698,22 @@ export function renderSalesBlock(input: SalesBlockInput): string {
       ``,
       `ССЫЛКА НА ОНЛАЙН-ЗАПИСЬ (инструмент send_booking_link): у салона есть страница самостоятельной записи. Отправляй её НЕ всем подряд, а только в четырёх случаях: (1) клиент сам попросил ссылку или сайт; (2) он уже несколько раз перебирает время и явно хочет посмотреть расписание сам; (3) календарь не отвечает и ты не можешь показать окошки; (4) клиент прямо говорит, что запишется позже сам.${playbook.bookingLinkMode === "eager" ? " Владелец разрешил предлагать ссылку активнее: можно один раз предложить её как удобную альтернативу, когда услуга уже выбрана." : ""}`,
       `Отправив ссылку, НЕ бросай клиента: скажи, что здесь, в чате, тоже запишешь в любой момент. Второй раз ссылку в этом диалоге не отправляй, если клиент не попросит снова.`,
+    );
+  }
+
+  // ── Anti-repetition. The previous reply IS already in the conversation history, but history
+  // is context, not instruction — the model happily rephrases its own last message when it has
+  // nothing new to add. Naming the text and forbidding it explicitly is what changes the
+  // behaviour. Gated on the two states where repetition actually shows up (a stalled close, or
+  // an unresolved objection) so the ordinary path pays nothing for it.
+  const repetitionRisk = state.closeAttempts > 0 || objections.length > 0;
+  const prev = (input.lastAssistantReply ?? "").trim();
+  if (repetitionRisk && prev) {
+    parts.push(
+      ``,
+      `━━━ НЕ ПОВТОРЯЙСЯ ━━━`,
+      `Твоё предыдущее сообщение было: «${prev.slice(0, 320)}»`,
+      `Не пересказывай его другими словами и не задавай тот же вопрос второй раз. Если добавить по существу нечего — ответь коротко на заданный вопрос и остановись.`,
     );
   }
 

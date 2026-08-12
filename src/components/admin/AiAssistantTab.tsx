@@ -45,6 +45,8 @@ type Assistant = {
   industry: IndustryKey;
   knowledge_answers: Record<string, string>;
   sales_mode: boolean;
+  /** Language the assistant OPENS in, before the client shows their own. */
+  start_language: "ru" | "ky";
   assistant_branch_id: string | null;
   // Sales playbook. Structured rather than free text so the assistant can inject ONLY the
   // objection that actually fired into a given reply — see src/lib/sales-playbook.server.ts.
@@ -122,6 +124,7 @@ export function AiAssistantTab({
     industry: DEFAULT_INDUSTRY,
     knowledge_answers: {},
     sales_mode: false,
+    start_language: "ru",
     assistant_branch_id: null,
     sales_usp: [],
     sales_objections: [],
@@ -166,6 +169,7 @@ export function AiAssistantTab({
           industry: normalizeIndustry((row as any).industry),
           knowledge_answers: ((row as any).knowledge_answers as Record<string, string>) ?? {},
           sales_mode: !!(row as any).sales_mode,
+          start_language: (row as any).start_language === "ky" ? "ky" : "ru",
           assistant_branch_id: (row as any).assistant_branch_id ?? null,
           // Tolerant reads: a salon whose row predates the sales migration has these as
           // undefined, and a hand-edited value could be anything. Never let the settings
@@ -256,6 +260,7 @@ export function AiAssistantTab({
         industry: data.industry,
         knowledge_answers: data.knowledge_answers ?? {},
         sales_mode: data.sales_mode,
+        start_language: data.start_language,
         assistant_branch_id: data.assistant_branch_id,
         // Blank rows are dropped rather than stored: an empty USP or a trigger with no answer
         // would render as a dangling bullet in the assistant's prompt.
@@ -517,6 +522,33 @@ export function AiAssistantTab({
             «Живой диалог» — ассистент общается свободным текстом, как человек: понимает голосовые
             сообщения, отвечает на вопросы о салоне и записывает без нумерованных меню. Переключение
             действует сразу, откат — в один клик.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <Label>Язык первого сообщения</Label>
+          <div className="flex flex-wrap gap-2">
+            {(
+              [
+                { code: "ru", label: "Русский" },
+                { code: "ky", label: "Кыргызча" },
+              ] as const
+            ).map((l) => (
+              <Button
+                key={l.code}
+                type="button"
+                variant={data.start_language === l.code ? "default" : "outline"}
+                size="sm"
+                onClick={() => setData({ ...data, start_language: l.code })}
+              >
+                {l.label}
+              </Button>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            На каком языке ассистент здоровается и отвечает, пока клиент не показал свой. Дальше он
+            подстраивается сам: клиент написал по-русски — перейдёт на русский, и наоборот. Влияет
+            только на первое сообщение.
           </p>
         </div>
 

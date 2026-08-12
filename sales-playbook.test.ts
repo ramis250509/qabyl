@@ -6,6 +6,7 @@
 import { test, expect, describe } from "bun:test";
 import {
   activePromos,
+  classifyFunnelStage,
   classifyReadiness,
   CLOSE_ATTEMPT_LIMIT,
   detectObjections,
@@ -40,6 +41,7 @@ function block(over: Partial<Parameters<typeof renderSalesBlock>[0]> = {}) {
     todayIso: "2026-08-10",
     hasBookingLink: true,
     clientText: "",
+    stage: "consulting",
     ...over,
   });
 }
@@ -389,5 +391,125 @@ describe("system prompt integration", () => {
     );
     expect(prompt).toContain("ОТКУДА ПРИШЁЛ ЭТОТ КЛИЕНТ");
     expect(prompt).toContain("Пришёл с поста про кератин");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The funnel
+// ---------------------------------------------------------------------------
+
+const FACTS = {
+  hasUpcomingAppointment: false,
+  awaitingPrepayment: false,
+  serviceChosen: false,
+  turnCount: 3,
+};
+
+describe("funnel stage", () => {
+  test("first contact is a new lead", () => {
+    expect(classifyFunnelStage({ ...FACTS, turnCount: 0 }, [], "exploring", false)).toBe(
+      "new_lead",
+    );
+  });
+
+  test("talking but no service settled is discovery", () => {
+    expect(classifyFunnelStage(FACTS, [], "exploring", false)).toBe("discovery");
+  });
+
+  test("a chosen service moves us to consulting", () => {
+    expect(classifyFunnelStage({ ...FACTS, serviceChosen: true }, [], "exploring", false)).toBe(
+      "consulting",
+    );
+  });
+
+  test("an objection outranks a chosen service", () => {
+    expect(
+      classifyFunnelStage({ ...FACTS, serviceChosen: true }, ["price"], "objecting", false),
+    ).toBe("objection");
+  });
+
+  test("engaging with WHEN moves us to offering a booking, even without the word «запись»", () => {
+    expect(classifyFunnelStage(FACTS, [], "exploring", true)).toBe("offer_booking");
+    expect(classifyFunnelStage(FACTS, [], "ready", false)).toBe("offer_booking");
+  });
+
+  test("an open prepayment hold outranks everything, including a live objection", () => {
+    // Interrupting a payment in flight to argue about price is the worst possible move.
+    expect(
+      classifyFunnelStage({ ...FACTS, awaitingPrepayment: true }, ["price"], "objecting", true),
+    ).toBe("prepayment");
+  });
+
+  test("an existing upcoming appointment outranks a booking signal", () => {
+    // The regression this guards: asking «на какой день вам удобно?» of someone already booked.
+    expect(
+      classifyFunnelStage({ ...FACTS, hasUpcomingAppointment: true }, [], "ready", true),
+    ).toBe("booked");
+  });
+});
+
+describe("stage block in the rendered prompt", () => {
+  test("a booked client gets an explicit ban on re-offering a booking", () => {
+    const p = block({ stage: "booked" });
+    expect(p).toContain("УЖЕ ЕСТЬ подтверждённая запись");
+    expect(p).toContain("ЗАПРЕЩЕНО");
+  });
+
+  test("a new lead is told not to dump the price list", () => {
+    const p = block({ stage: "new_lead" });
+    expect(p).toContain("НЕ вываливай прайс");
+  });
+
+  test("every stage ends on exactly one next step", () => {
+    const stages = [
+      "new_lead",
+      "discovery",
+      "consulting",
+      "objection",
+      "offer_booking",
+      "prepayment",
+      "booked",
+    ] as const;
+    for (const stage of stages) {
+      const p = block({ stage });
+      expect(p).toContain("СЛЕДУЮЩИЙ ШАГ:");
+      expect(p.split("СЛЕДУЮЩИЙ ШАГ:").length - 1).toBe(1);
+    }
+  });
+
+  test("the stage block leads the sales section", () => {
+    const p = block({ stage: "objection", objections: ["price"] });
+    expect(p.indexOf("ЭТАП РАЗГОВОРА")).toBeLessThan(p.indexOf("ВОЗРАЖЕНИЕ «ДОРОГО»"));
+  });
+});
+
+describe("anti-repetition", () => {
+  const prev = "Подскажите, на какой день вам удобно записаться?";
+
+  test("is injected once the assistant has already pushed and stalled", () => {
+    const p = block({
+      stage: "consulting",
+      state: { ...EMPTY_SALES_STATE, closeAttempts: 1 },
+      lastAssistantReply: prev,
+    });
+    expect(p).toContain("НЕ ПОВТОРЯЙСЯ");
+    expect(p).toContain(prev);
+  });
+
+  test("is injected while an objection is on the table", () => {
+    const p = block({ stage: "objection", objections: ["think"], lastAssistantReply: prev });
+    expect(p).toContain("НЕ ПОВТОРЯЙСЯ");
+  });
+
+  test("costs nothing on a healthy conversation", () => {
+    // No stalled close, no objection → not worth the tokens.
+    const p = block({ stage: "consulting", lastAssistantReply: prev });
+    expect(p).not.toContain("НЕ ПОВТОРЯЙСЯ");
+  });
+
+  test("truncates a long previous reply rather than doubling the prompt", () => {
+    const long = "а".repeat(2000);
+    const p = block({ stage: "objection", objections: ["price"], lastAssistantReply: long });
+    expect(p).not.toContain("а".repeat(400));
   });
 });

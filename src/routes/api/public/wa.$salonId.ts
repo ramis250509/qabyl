@@ -74,6 +74,7 @@ export function resolveAssistantRuntimeConfig(salon: any, assistant: any, secret
       industry: assistant?.industry ?? null,
       knowledge_answers: assistant?.knowledge_answers ?? null,
       sales_mode: assistant?.sales_mode ?? false,
+      start_language: (assistant as any)?.start_language ?? null,
       // Sales playbook (migration 20260810120000). `?? null` rather than `?? []` so a salon
       // whose row predates the migration is indistinguishable from one with an empty
       // playbook — parseSalesPlaybook treats both as "no playbook" and renders nothing.

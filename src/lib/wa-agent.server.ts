@@ -105,6 +105,10 @@ export type WaAssistantConfig = {
   sales_promos?: unknown;
   // off | auto | eager — how freely the assistant may hand out the online-booking link.
   booking_link_mode?: string | null;
+  // Language the assistant OPENS a conversation in, before the client has produced a
+  // confident language signal (migration 20260811120000). Only decides the first move —
+  // the agent still adapts to whatever the client actually writes, exactly as before.
+  start_language?: string | null;
 };
 
 export type WaSalonContext = {
