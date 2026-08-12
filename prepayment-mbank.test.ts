@@ -151,3 +151,49 @@ describe("verifyReceipt — MBANK happy path", () => {
     expect(res.reasonCodes).toContain("unsupported_type");
   });
 });
+
+// ---------------------------------------------------------------------------
+// The in-app transaction screen — what a client actually screenshots after
+// paying. It shares almost no labels with the PDF receipt the parser was built
+// from, and it never prints the bank's name, so requiring "mbank" rejected the
+// most common real-world receipt outright ("Не удалось определить банк").
+// ---------------------------------------------------------------------------
+const IN_APP_SCREEN = `12:35
+Транзакция успешно проведена
+- 10,00 С
+Перевод между своими счетами
+Детали транзакции
+Дата и время 12.08.2026, 12:35
+Номер квитанции P081206354498
+Оплачено со счета 103012072745890
+Получатель Рамис А.
+Итого 10,00 С
+Назначение платежа Перевод между своими счетами
+Посмотреть квитанцию
+Повторить платеж
+На главную`;
+
+test("in-app screen: detected as MBANK even though the word never appears", () => {
+  expect(IN_APP_SCREEN.toLowerCase().includes("mbank")).toBe(false);
+  expect(mbankAdapter.detect({ text: IN_APP_SCREEN, mime: "image/jpeg" })).toBe(true);
+});
+
+test("in-app screen: amount, receipt number, time and recipient are read", () => {
+  const r = mbankAdapter.parse({ text: IN_APP_SCREEN, mime: "image/jpeg" });
+  expect(r.amount).toBe(10);
+  expect(r.txnId).toBe("P081206354498");
+  expect(r.recipientName).toContain("Рамис");
+  expect(r.txnAt?.getFullYear()).toBe(2026);
+  expect(r.txnAt?.getMonth()).toBe(7); // August
+  expect(r.txnAt?.getDate()).toBe(12);
+});
+
+test("in-app screen: the payer's own account is not mistaken for the recipient's", () => {
+  const r = mbankAdapter.parse({ text: IN_APP_SCREEN, mime: "image/jpeg" });
+  expect(r.recipientAccount ?? "").not.toContain("103012072745890");
+});
+
+test("an unrelated receipt is still not claimed as MBANK", () => {
+  const other = "Оплата картой\nСумма 500 KGS\nСпасибо за покупку";
+  expect(mbankAdapter.detect({ text: other, mime: "image/jpeg" })).toBe(false);
+});

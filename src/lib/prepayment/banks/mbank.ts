@@ -17,22 +17,37 @@
 import type { BankAdapter, ExtractContext, ExtractedReceipt } from "./registry";
 import { normalizePhone, parseAmount, normalizeCurrency, parseReceiptDateTime } from "../normalize";
 
-// Detect: the word "mbank" (case-insensitive) has to appear somewhere — the
-// logo/stamp text always shows "Mbank" — and at least ONE of the marker
-// phrases below has to match, so an incidental mention of "mbank" in a note
-// doesn't hijack detection.
+// MBANK receipts arrive in two shapes and they share almost no labels:
+//
+//   * the PDF/shared receipt — "Детали операции", "Квитанция №P…", and the word
+//     Mbank in the logo line;
+//   * the in-app transaction screen a client screenshots straight after paying —
+//     "Транзакция успешно проведена", "Детали транзакции", "Номер квитанции",
+//     "Оплачено со счета", "Получатель", "Назначение платежа". This one does not
+//     print the bank's name anywhere.
+//
+// Requiring the literal "mbank" therefore rejected the most common thing a real
+// client sends: their own payment screen. Detection now works on the label
+// vocabulary instead, and demands TWO independent markers so a stray phrase in
+// some other bank's receipt cannot claim the parse. The brand word, when
+// present, counts as one of them.
 const MBANK_MARKERS: RegExp[] = [
-  /квитанция\s*№\s*P\d{10,}/i,
-  /Детали\s+операции/i,
+  /mbank/i,
+  /квитанц[а-яё]*\s*(?:№|N|#)?\s*P\d{6,}/i,
+  /Номер\s+квитанции/i,
+  /Детали\s+(?:операции|транзакции)/i,
   /Дата\s+и\s+время/i,
+  /Оплачено\s+со\s+счет/i,
+  /Назначение\s+платежа/i,
+  /Транзакция\s+успешно\s+проведена/i,
 ];
 
 // Regex bank. Each is anchored loosely to survive OCR noise.
-const RE_TXN = /Квитанция\s*№\s*([A-Z0-9]{6,})/i;
+const RE_TXN = /(?:Номер\s+квитанции|Квитанц[а-яё]*)\s*(?:№|N|#)?\s*:?\s*([A-Z0-9]{6,})/i;
 const RE_AMOUNT_KGS = /Сумма\s+([\d\s.,]+)\s*(KGS|USD|RUB|KZT|EUR|сом|С|с)/i;
 const RE_TOTAL = /Итого\s+([\d\s.,]+)\s*(с|С|KGS|USD|₽|RUB|₸|KZT|€|EUR)?/i;
 const RE_DATETIME =
-  /Дата\s+и\s+время\s+(\d{2}[./]\d{2}[./]\d{4}(?:[\sT]+\d{1,2}:\d{2}(?::\d{2})?)?)/i;
+  /Дата\s+и\s+время\s*:?\s*(\d{2}[./]\d{2}[./]\d{4}(?:\s*,?[\sT]*\d{1,2}:\d{2}(?::\d{2})?)?)/i;
 // Recipient line looks like:  "996704669575/ Бекжан Э./ /"   (phone / name / masked-card / )
 // The tokens are split by " / " with irregular spacing. We accept 2..4 tokens.
 const RE_RECIPIENT = /(\d{9,15})\s*\/\s*([^\/\n]+?)\s*\/(?:\s*([^\/\n]*)\s*\/)?/;
@@ -43,9 +58,9 @@ export const mbankAdapter: BankAdapter = {
   bank: "MBANK",
   displayName: "MBank",
   detect(ctx: ExtractContext): boolean {
-    const t = (ctx.text ?? "").toLowerCase();
-    if (!t.includes("mbank")) return false;
-    return MBANK_MARKERS.some((re) => re.test(ctx.text ?? ""));
+    const text = ctx.text ?? "";
+    const hits = MBANK_MARKERS.filter((re) => re.test(text)).length;
+    return hits >= 2;
   },
   parse(ctx: ExtractContext): ExtractedReceipt {
     const text = ctx.text ?? "";
@@ -87,6 +102,23 @@ export const mbankAdapter: BankAdapter = {
       const m2 = text.match(/номер\w*\s+телефона[^\d]*(\d{9,15})/i);
       if (m2) recipientPhone = normalizePhone(m2[1]);
     }
+
+    // The in-app screen puts the recipient on its own labelled line — "Получатель
+    // Рамис А." — with no phone next to it, and the account it debited under
+    // "Оплачено со счета". Neither matches the PDF's "phone / name / /" row, so
+    // without this a screenshot yields no recipient at all and the verifier can
+    // only send it to a human.
+    if (!recipientName) {
+      const mName = text.match(/Получател[а-яё]*\s*:?\s*([^\r\n]{2,60})/i);
+      if (mName) recipientName = mName[1].trim() || null;
+    }
+    if (!recipientPhone) {
+      const mPhone = text.match(/Получател[а-яё]*[^\r\n]*?(\d{9,15})/i);
+      if (mPhone) recipientPhone = normalizePhone(mPhone[1]);
+    }
+    // Deliberately NOT reading "Оплачено со счета": that is the account the money
+    // left, i.e. the client's own. Putting it in recipientAccount would compare
+    // the payer against the salon's card.
 
     const mOp = text.match(RE_OPERATION);
     const operationType = mOp ? mOp[1].trim() : null;
