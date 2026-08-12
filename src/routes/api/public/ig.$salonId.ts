@@ -46,6 +46,7 @@ import {
   releaseConversationLock,
   stillHoldingConversationLock,
 } from "@/lib/chat-lock.server";
+import { echoIsOurs } from "@/lib/ig-echo";
 import { runWaAgentV4 } from "@/lib/wa-agent-v4.server";
 import {
   greenApiSendMessage,
@@ -543,7 +544,7 @@ async function handleCommentTrigger(opts: {
   // Record the outbound message so the admin panel shows the same thread the client sees, and
   // so a later human takeover knows what was already promised.
   if (convId) {
-    await db.from("wa_messages").insert({
+    const { error: msgErr } = await db.from("wa_messages").insert({
       conversation_id: convId,
       salon_id: salonId,
       direction: "out",
@@ -557,6 +558,12 @@ async function handleCommentTrigger(opts: {
         mediaId: comment.mediaId,
       },
     });
+    // This row went missing once in production and nobody could tell, because the failure was
+    // swallowed. Its absence is not cosmetic: the echo classifier matches against it, so losing
+    // it is what let the assistant mistake its own DM for a human takeover.
+    if (msgErr) log(`comment trigger: outbound row NOT recorded: ${msgErr.message}`);
+  } else {
+    log(`comment trigger: no conversation id — outbound row NOT recorded for ${convPhone}`);
   }
 
   await finish("sent", undefined, trigger.id);
@@ -624,30 +631,55 @@ async function ingestEvent(opts: {
   if (ev.isEcho) {
     if (!existingConv) return null;
 
-    let ours = ev.echoAppId != null;
-    if (!ours && ev.mid) {
-      const { data: sent } = await db
-        .from("wa_messages")
-        .select("id")
-        .eq("conversation_id", existingConv.id)
-        .eq("direction", "out")
-        .eq("green_api_message_id", ev.mid)
-        .maybeSingle();
-      ours = Boolean(sent);
-    }
-    if (!ours && ev.text) {
-      const { data: recent } = await db
-        .from("wa_messages")
-        .select("id")
-        .eq("conversation_id", existingConv.id)
-        .eq("direction", "out")
-        .eq("text_body", ev.text)
-        .gte("created_at", new Date(Date.now() - 120_000).toISOString())
-        .limit(1);
-      ours = (recent ?? []).length > 0;
-    }
+    // The decision itself lives in src/lib/ig-echo.ts, where it is pure enough to test; this
+    // block only supplies the four lookups. They are functions rather than values so the cheap
+    // signals can short-circuit before any of them costs a round-trip.
+    const ours = await echoIsOurs({
+      echoAppId: ev.echoAppId,
+      mid: ev.mid,
+      text: ev.text,
+      findOutboundByMid: async (mid) => {
+        const { data } = await db
+          .from("wa_messages")
+          .select("id")
+          .eq("conversation_id", existingConv.id)
+          .eq("direction", "out")
+          .eq("green_api_message_id", mid)
+          .maybeSingle();
+        return Boolean(data);
+      },
+      findRecentOutboundByText: async (text) => {
+        const { data } = await db
+          .from("wa_messages")
+          .select("id")
+          .eq("conversation_id", existingConv.id)
+          .eq("direction", "out")
+          .eq("text_body", text)
+          .gte("created_at", new Date(Date.now() - 120_000).toISOString())
+          .limit(1);
+        return (data ?? []).length > 0;
+      },
+      // Deliberately NOT filtered on outcome: that column is only set to 'sent' after the send
+      // returns, which is the very race this check exists to close.
+      recentlyDmedFromComment: async () => {
+        const { data } = await db
+          .from("instagram_comment_events")
+          .select("comment_id")
+          .eq("salon_id", salonId)
+          .eq("commenter_id", ev.clientId)
+          .gte("created_at", new Date(Date.now() - 5 * 60_000).toISOString())
+          .limit(1);
+        return (data ?? []).length > 0;
+      },
+    });
 
     if (ours) return null; // our own reply coming back — not a takeover, do not pause
+
+    // Pausing the assistant is invisible from the outside — the client simply stops getting
+    // answers — so the one thing that must never be silent is the decision itself.
+    errLog(
+      `human takeover detected (echo with no app_id, no matching mid, text or recent comment DM) → AI paused for conv=${existingConv.id}`,
+    );
 
     await db
       .from("wa_conversations")
