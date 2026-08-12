@@ -45,6 +45,26 @@ describe("KB priority — salon overrides block at prompt tail", () => {
     expect(p).toMatch(/markdown ЗАПРЕЩ/i);
   });
 
+  // The services roster is rendered after the overrides block, which cost the owner the tail
+  // slot — and the tail is what the model actually obeys. ai_rules must be restored to the very
+  // end, after the roster, or weak-but-explicit rules (message length) get overruled again.
+  test("ai_rules are repeated as the very last thing in the prompt, after the services roster", () => {
+    const p = buildSystemPromptV4(inputFor({ ai_rules: "Не длиннее 3 предложений." }));
+    const tail = p.slice(-900);
+    expect(tail).toContain("Не длиннее 3 предложений.");
+    expect(tail).toMatch(/перечитай эти правила/i);
+    // …and it really is last: the roster reminder must come BEFORE this block.
+    const rosterAt = p.lastIndexOf("ПОСЛЕДНЕЕ НАПОМИНАНИЕ ПЕРЕД ОТВЕТОМ");
+    const ownerAt = p.lastIndexOf("САМОЕ ПОСЛЕДНЕЕ — ЛИЧНЫЕ ПРАВИЛА ВЛАДЕЛЬЦА");
+    expect(ownerAt).toBeGreaterThan(-1);
+    if (rosterAt > -1) expect(ownerAt).toBeGreaterThan(rosterAt);
+  });
+
+  test("no tail block when the salon set no ai_rules", () => {
+    const p = buildSystemPromptV4(inputFor({ knowledge_base: "Парковка бесплатная." }));
+    expect(p).not.toContain("САМОЕ ПОСЛЕДНЕЕ — ЛИЧНЫЕ ПРАВИЛА ВЛАДЕЛЬЦА");
+  });
+
   test("knowledge_base appears with [ФАКТ] marker inside the salon block", () => {
     const p = buildSystemPromptV4(
       inputFor({ knowledge_base: "Парковка бесплатная. Работаем без выходных." }),
@@ -87,7 +107,9 @@ describe("KB priority — salon overrides block at prompt tail", () => {
   // it is literally the last thing Gemini reads before producing tokens.
   test("final-line reminder present when rules exist", () => {
     const p = buildSystemPromptV4(inputFor({ ai_rules: "Всегда сразу называй цену." }));
-    const tail = p.slice(-500);
+    // The precedence reminder closes the overrides block; the ai_rules tail block (see below)
+    // is what actually ends the prompt, so widen the window past it.
+    const tail = p.slice(-1200);
     expect(tail).toMatch(/Напоминание перед ответом/);
     expect(tail).toMatch(/сильнее всех общих правил/);
   });

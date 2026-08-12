@@ -516,6 +516,23 @@ ${servicesRoster}
           `Если ты сейчас собираешься назвать клиенту какие-то услуги или цены — они ОБЯЗАНЫ быть строго из списка выше. Дословно. Названия «Классика», «1D», «2D», «3D», «объём», «Мокрый эффект», «Лучики», «Снятие ресниц» и любые другие, которых нет в списке выше — ЗАПРЕЩЕНЫ, даже как примеры. Если клиент спросил про то, чего в списке нет — так и скажи «У нас такого нет, вот что мы делаем: ...» с реальным списком. НЕ ПРИДУМЫВАЙ.`,
         ]
       : []),
+    // The owner's rules were the last thing in the prompt until the services roster was added
+    // below them, and the tail slot is the one that actually decides behaviour. Rules that are
+    // easy to overrule by the ~150 lines above (message length above all) started slipping.
+    // So the very last line belongs to the owner again: ai_rules verbatim, plus an explicit
+    // "check yourself against these before sending". Only ai_rules is repeated — tone_instructions
+    // and pricing_rules can run to thousands of characters, and a wall of repeated text at the
+    // tail dilutes exactly the recency effect this block exists to exploit.
+    ...(config.ai_rules?.trim()
+      ? [
+          ``,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          `⚠️ САМОЕ ПОСЛЕДНЕЕ — ЛИЧНЫЕ ПРАВИЛА ВЛАДЕЛЬЦА. Они сильнее ВСЕГО, что написано выше, включая правила формата, длины и продаж:`,
+          config.ai_rules.trim(),
+          `Перед тем как отправить сообщение — перечитай эти правила и проверь по ним свой ответ. Если ответ им не соответствует (слишком длинный, нет того, что владелец требует) — перепиши его, а не отправляй как есть.`,
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+        ]
+      : []),
   ];
   return lines.filter(Boolean).join("\n");
 }
