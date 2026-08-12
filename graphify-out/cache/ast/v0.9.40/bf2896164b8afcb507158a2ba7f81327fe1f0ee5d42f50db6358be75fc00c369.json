@@ -1,1 +1,0 @@
-{"nodes": [{"id": "$graphify-root$_supabase_migrations_20260811090000_drop_stale_create_appointment_overload_sql", "label": "20260811090000_drop_stale_create_appointment_overload.sql", "file_type": "code", "source_file": "supabase/migrations/20260811090000_drop_stale_create_appointment_overload.sql", "source_location": null}], "edges": []}

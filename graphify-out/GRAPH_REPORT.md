@@ -1,321 +1,191 @@
-# Graph Report - qabyl  (2026-08-12)
+# Graph Report - Qabyl  (2026-08-12)
 
 ## Corpus Check
-- 338 files · ~320,318 words
+- 341 files · ~326,072 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 2348 nodes · 4244 edges · 320 communities (184 shown, 136 thin omitted)
-- Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 38 edges (avg confidence: 0.66)
+- 1807 nodes · 3393 edges · 126 communities (104 shown, 22 thin omitted)
+- Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 45 edges (avg confidence: 0.83)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `855b583e`
+- Built from commit: `0d95b55d`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
 ## Community Hubs (Navigation)
-- admin/calendar.tsx
-- dependencies
-- routeTree.gen.ts
-- wa-agent.server.ts
-- WA Agent Architecture Plan (Lovable plan.md)
-- Graphify Full Pipeline Skill
-- wa-agent-v4.server.ts
-- devDependencies
-- sidebar.tsx
-- telegram.ts
-- chart.tsx
-- ig.$salonId.ts
-- wa-agent.scenarios.test.ts
-- admin.tsx
-- client.server.ts
-- ops.tsx
-- compilerOptions
-- components.json
-- salons/index.tsx
-- sections.tsx
-- 20260730120000_ops_agents_foundation.sql
-- cn
-- ServiceExportDialog.tsx
-- PublicBooking.tsx
-- wa-v4-booking.test.ts
-- verify.ts
-- button.tsx
-- Что необходимо проверить
-- $salonId.tsx
-- wa-config.functions.ts
-- Architecture
-- sales-playbook.server.ts
-- AiAssistantTab.tsx
-- menubar.tsx
-- SalonSite.tsx
-- phone-input.tsx
-- plan.md
-- schedule-import.functions.ts
-- server.ts
-- industries.ts
-- 20260622064548_cc2a4ca7-185a-4c98-98f4-23f7373a4551.sql
-- Changes Made
-- wa-agent-v4.scenarios.test.ts
-- FileRoutesByPath
-- frankfurt-migrate.ts
-- AI-admin test matrix — 2026-07-30
-- Findings
-- Qabyl App Icon (512px)
-- 20260801130000_prepayment_schema.sql
-- Qabyl App Icon (192px PWA)
-- 20260801120000_rbac_manager_role_and_staff_isolation.sql
-- Qabyl Brand Identity
-- sw.js
-- 20260811120000_schedule_import_and_start_language.sql
-- Graphify Explain (plain-language node explanation)
-- Graphify Path (shortest path between concepts)
-- i18n.tsx
-- 20260622062841_802b0245-0a7e-4487-a286-15e1183fcca0.sql
-- Deployment report — 2026-07-30
-- formatPrice
-- /graphify
-- What You Must Do When Invoked
-- graphify reference: extra exports and benchmark
-- wa-agent-v3.scenarios.test.ts
-- graphify reference: query, path, explain
-- prepayment-booking.test.ts
-- Extraction Subagent Prompt Spec
-- Step 3 - Extract entities and relationships
-- graphify reference: add a URL and watch a folder
-- graphify reference: commit hook and native CLAUDE.md integration
-- BFS Graph Traversal (Query Mode)
-- graphify reference: incremental update and cluster-only
-- graphify reference: GitHub clone and cross-repo merge
-- graphify reference: transcribe video and audio
-- Routes
-- .claude/CLAUDE.md
-- Graphify Skill Reference (Claude CLAUDE.md)
-- prepayment-qr.test.ts
-- Neo4j Export (--neo4j flag)
-- extraction-spec.md
-- GitHub Clone Flow (graphify clone)
-- manage.$token.tsx
-- Qabyl technical + security audit — 2026-07-30
-- frankfurt-fn-secrets.ts
-- pagination.tsx
-- book.$slug.tsx
-- wa-language-style.test.ts
-- public.create_appointment
-- navigation-menu.tsx
-- send-push/index.ts
-- accordion.tsx
-- carousel.tsx
-- 20260613171854_186781b2-fac1-4883-a16c-b347020f4ea7.sql
-- 20260625190944_cb6b949e-6629-496c-bd07-11291a4324ee.sql
-- public.dispatch_whatsapp_confirmation
-- send-whatsapp/index.ts
-- public.wa_run_reconciliation
-- form.tsx
-- Vertical readiness — 2026-07-30
-- alert.tsx
-- avatar.tsx
-- public.create_appointment
-- router.tsx
-- public.get_available_slots
-- utils.ts
-- 20260615035807_e5d9992c-f70a-4102-8397-8419f288836b.sql
-- example.functions.ts
-- public.get_appointment_by_token
-- sitemap[.]xml.ts
-- test-supabase.mjs
-- public.prepayment_expire_holds
-- privacy.tsx
-- public.alert_silent_salons
-- clsx
-- cmdk
-- date-fns
-- @dnd-kit/core
-- @dnd-kit/sortable
-- @dnd-kit/utilities
-- class-variance-authority
-- @hookform/resolvers
-- input-otp
-- isomorphic-dompurify
-- lucide-react
-- @radix-ui/react-alert-dialog
-- @radix-ui/react-aspect-ratio
-- session-start.sh
-- @radix-ui/react-checkbox
-- @radix-ui/react-collapsible
-- @radix-ui/react-dialog
-- @radix-ui/react-dropdown-menu
-- @radix-ui/react-hover-card
-- @radix-ui/react-label
-- @radix-ui/react-menubar
-- @radix-ui/react-navigation-menu
-- @radix-ui/react-popover
-- @radix-ui/react-progress
-- @radix-ui/react-radio-group
-- @radix-ui/react-scroll-area
-- @radix-ui/react-select
-- @radix-ui/react-separator
-- @radix-ui/react-slider
-- @radix-ui/react-slot
-- @radix-ui/react-switch
-- @radix-ui/react-tabs
-- @radix-ui/react-toggle
-- @radix-ui/react-toggle-group
-- @radix-ui/react-tooltip
-- react-day-picker
-- react-dom
-- react-hook-form
-- react-resizable-panels
-- recharts
-- sonner
-- @supabase/supabase-js
-- tailwind-merge
-- tailwindcss
-- @tailwindcss/vite
-- @tanstack/react-query
-- @tanstack/react-router
-- @tanstack/react-start
-- @tanstack/router-plugin
-- dompurify
-- vite-tsconfig-paths
-- qrcode.react
-- frankfurt-check.ts
-- frankfurt-dedup-roles.ts
-- frankfurt-rest-probe.ts
-- cleanup-wa-media/index.ts
-- send-reminders/index.ts
-- @radix-ui/react-context-menu
-- wa.$salonId.ts
-- 20260528053951_6f0c83d2-9946-4e32-b151-b182a34d120c.sql
-- 20260611032416_8c46538f-9cf0-46ce-afda-6dc454d4f93f.sql
-- public.get_available_slots
-- public.reschedule_appointment_v2
-- 20260611172833_2fa873f0-fdd4-4e01-a59d-3bfc0107ac9f.sql
-- public.masters
-- 20260612103214_4ae558eb-2995-4dd6-bf4f-6b600b4db728.sql
-- 20260613160451_bccfe2e9-ca19-43e1-9572-b633e3dd039f.sql
-- 20260617183801_a359ceb0-695a-4ff2-98fe-4fa12fe077fe.sql
-- 20260528055337_0749ba36-8f5f-4f2e-8a95-fcfa055778cc.sql
-- 20260719120000_validate_appointment_phone.sql
-- react
-- 20260528064525_c1bd4f1d-6c4d-4271-b9fe-1de9a54b0948.sql
-- 20260610074904_109b5e86-c97c-4ab3-bd70-53de844fbfd2.sql
-- 20260612043450_16b940a6-df03-433a-901f-6c5d8993317e.sql
-- public.notify_appointment_event
-- 20260613181731_6fdcab5e-cf7d-4d2d-bcfe-e8173f455f77.sql
-- 20260614033421_7fdda53c-82d1-416f-9e4e-f0372c35994d.sql
-- public.notify_appointment_event
-- public.notify_appointment_event
-- public.notify_appointment_event
-- 20260619064833_e3e6484a-d43c-450c-aead-40af417e714e.sql
-- public.ai_service_overrides
-- public.ops_salon_overview
-- 20260727120000_v4_default_and_error_logs.sql
-- public.salons_public
-- public.has_salon_access
-- public.get_salon_by_host
-- public.internal_get_cron_secret
-- tw-animate-css
-- public.appointment_addons
-- public.salon_reviews
-- realtime.messages
-- public.salons
-- public.salons
-- public.salons
-- public.services
-- public.services
-- public.notifications
-- public.salons
-- public.salons
-- public.branches
-- public.notifications
-- public.salons
-- public.salons
-- public.appointments
-- public.master_day_overrides
-- public.user_roles
-- public.salon_secrets
-- public.wa_conversations
-- public.wa_messages
-- public.wa_conversations
-- public.appointments
-- public.wa_conversations
-- public.wa_messages
-- public.wa_conversations
-- public.salon_ai_assistant
-- public.salon_ai_assistant
-- public.salon_ai_assistant
-- public.salon_ai_assistant
-- public.salon_ai_assistant
-- public.salon_ai_assistant
-- public.salon_ai_assistant
-- public.services
-- public.appointments
-- public.salon_ai_assistant
-- public.salon_ai_assistant
-- public.masters
-- public.salon_ai_assistant
-- public.salon_ai_assistant
-- public.salon_secrets
-- public.salons
-- public.wa_conversations
-- public.prepayment_settings
-- public.salon_ai_assistant
-- public.appointments
-- public.salon_ai_assistant
+- [[_COMMUNITY_admincalendar.tsx|admin/calendar.tsx]]
+- [[_COMMUNITY_dependencies|dependencies]]
+- [[_COMMUNITY_routeTree.gen.ts|routeTree.gen.ts]]
+- [[_COMMUNITY_wa-agent.server.ts|wa-agent.server.ts]]
+- [[_COMMUNITY_WA Agent Architecture Plan (Lovable plan.md)|WA Agent Architecture Plan (Lovable plan.md)]]
+- [[_COMMUNITY_Graphify Full Pipeline Skill|Graphify Full Pipeline Skill]]
+- [[_COMMUNITY_wa-agent-v4.server.ts|wa-agent-v4.server.ts]]
+- [[_COMMUNITY_devDependencies|devDependencies]]
+- [[_COMMUNITY_sidebar.tsx|sidebar.tsx]]
+- [[_COMMUNITY_telegram.ts|telegram.ts]]
+- [[_COMMUNITY_chart.tsx|chart.tsx]]
+- [[_COMMUNITY_ig.$salonId.ts|ig.$salonId.ts]]
+- [[_COMMUNITY_wa-agent.scenarios.test.ts|wa-agent.scenarios.test.ts]]
+- [[_COMMUNITY_admin.tsx|admin.tsx]]
+- [[_COMMUNITY_client.server.ts|client.server.ts]]
+- [[_COMMUNITY_ops.tsx|ops.tsx]]
+- [[_COMMUNITY_compilerOptions|compilerOptions]]
+- [[_COMMUNITY_components.json|components.json]]
+- [[_COMMUNITY_salonsindex.tsx|salons/index.tsx]]
+- [[_COMMUNITY_sections.tsx|sections.tsx]]
+- [[_COMMUNITY_20260730120000_ops_agents_foundation.sql|20260730120000_ops_agents_foundation.sql]]
+- [[_COMMUNITY_cn|cn]]
+- [[_COMMUNITY_ServiceExportDialog.tsx|ServiceExportDialog.tsx]]
+- [[_COMMUNITY_PublicBooking.tsx|PublicBooking.tsx]]
+- [[_COMMUNITY_wa-v4-booking.test.ts|wa-v4-booking.test.ts]]
+- [[_COMMUNITY_verify.ts|verify.ts]]
+- [[_COMMUNITY_button.tsx|button.tsx]]
+- [[_COMMUNITY_Что необходимо проверить|Что необходимо проверить]]
+- [[_COMMUNITY_$salonId.tsx|$salonId.tsx]]
+- [[_COMMUNITY_wa-config.functions.ts|wa-config.functions.ts]]
+- [[_COMMUNITY_Architecture|Architecture]]
+- [[_COMMUNITY_sales-playbook.server.ts|sales-playbook.server.ts]]
+- [[_COMMUNITY_AiAssistantTab.tsx|AiAssistantTab.tsx]]
+- [[_COMMUNITY_menubar.tsx|menubar.tsx]]
+- [[_COMMUNITY_SalonSite.tsx|SalonSite.tsx]]
+- [[_COMMUNITY_phone-input.tsx|phone-input.tsx]]
+- [[_COMMUNITY_plan|plan.md]]
+- [[_COMMUNITY_schedule-import.functions.ts|schedule-import.functions.ts]]
+- [[_COMMUNITY_server.ts|server.ts]]
+- [[_COMMUNITY_industries.ts|industries.ts]]
+- [[_COMMUNITY_20260622064548_cc2a4ca7-185a-4c98-98f4-23f7373a4551.sql|20260622064548_cc2a4ca7-185a-4c98-98f4-23f7373a4551.sql]]
+- [[_COMMUNITY_Changes Made|Changes Made]]
+- [[_COMMUNITY_wa-agent-v4.scenarios.test.ts|wa-agent-v4.scenarios.test.ts]]
+- [[_COMMUNITY_FileRoutesByPath|FileRoutesByPath]]
+- [[_COMMUNITY_frankfurt-migrate.ts|frankfurt-migrate.ts]]
+- [[_COMMUNITY_AI-admin test matrix — 2026-07-30|AI-admin test matrix — 2026-07-30]]
+- [[_COMMUNITY_Findings|Findings]]
+- [[_COMMUNITY_Qabyl App Icon (512px)|Qabyl App Icon (512px)]]
+- [[_COMMUNITY_20260801130000_prepayment_schema.sql|20260801130000_prepayment_schema.sql]]
+- [[_COMMUNITY_Qabyl App Icon (192px PWA)|Qabyl App Icon (192px PWA)]]
+- [[_COMMUNITY_20260801120000_rbac_manager_role_and_staff_isolation.sql|20260801120000_rbac_manager_role_and_staff_isolation.sql]]
+- [[_COMMUNITY_Qabyl Brand Identity|Qabyl Brand Identity]]
+- [[_COMMUNITY_20260811120000_schedule_import_and_start_language.sql|20260811120000_schedule_import_and_start_language.sql]]
+- [[_COMMUNITY_Graphify Explain (plain-language node explanation)|Graphify Explain (plain-language node explanation)]]
+- [[_COMMUNITY_Graphify Path (shortest path between concepts)|Graphify Path (shortest path between concepts)]]
+- [[_COMMUNITY_i18n.tsx|i18n.tsx]]
+- [[_COMMUNITY_20260622062841_802b0245-0a7e-4487-a286-15e1183fcca0.sql|20260622062841_802b0245-0a7e-4487-a286-15e1183fcca0.sql]]
+- [[_COMMUNITY_Deployment report — 2026-07-30|Deployment report — 2026-07-30]]
+- [[_COMMUNITY_formatPrice|formatPrice]]
+- [[_COMMUNITY_graphify|/graphify]]
+- [[_COMMUNITY_What You Must Do When Invoked|What You Must Do When Invoked]]
+- [[_COMMUNITY_graphify reference extra exports and benchmark|graphify reference: extra exports and benchmark]]
+- [[_COMMUNITY_wa-agent-v3.scenarios.test.ts|wa-agent-v3.scenarios.test.ts]]
+- [[_COMMUNITY_graphify reference query, path, explain|graphify reference: query, path, explain]]
+- [[_COMMUNITY_prepayment-booking.test.ts|prepayment-booking.test.ts]]
+- [[_COMMUNITY_Extraction Subagent Prompt Spec|Extraction Subagent Prompt Spec]]
+- [[_COMMUNITY_Step 3 - Extract entities and relationships|Step 3 - Extract entities and relationships]]
+- [[_COMMUNITY_graphify reference add a URL and watch a folder|graphify reference: add a URL and watch a folder]]
+- [[_COMMUNITY_graphify reference commit hook and native CLAUDE.md integration|graphify reference: commit hook and native CLAUDE.md integration]]
+- [[_COMMUNITY_BFS Graph Traversal (Query Mode)|BFS Graph Traversal (Query Mode)]]
+- [[_COMMUNITY_graphify reference incremental update and cluster-only|graphify reference: incremental update and cluster-only]]
+- [[_COMMUNITY_graphify reference GitHub clone and cross-repo merge|graphify reference: GitHub clone and cross-repo merge]]
+- [[_COMMUNITY_graphify reference transcribe video and audio|graphify reference: transcribe video and audio]]
+- [[_COMMUNITY_Routes|Routes]]
+- [[_COMMUNITY_.claudeCLAUDE|.claude/CLAUDE.md]]
+- [[_COMMUNITY_Graphify Skill Reference (Claude CLAUDE.md)|Graphify Skill Reference (Claude CLAUDE.md)]]
+- [[_COMMUNITY_prepayment-qr.test.ts|prepayment-qr.test.ts]]
+- [[_COMMUNITY_Neo4j Export (--neo4j flag)|Neo4j Export (--neo4j flag)]]
+- [[_COMMUNITY_extraction-spec|extraction-spec.md]]
+- [[_COMMUNITY_GitHub Clone Flow (graphify clone)|GitHub Clone Flow (graphify clone)]]
+- [[_COMMUNITY_manage.$token.tsx|manage.$token.tsx]]
+- [[_COMMUNITY_Qabyl technical + security audit — 2026-07-30|Qabyl technical + security audit — 2026-07-30]]
+- [[_COMMUNITY_frankfurt-fn-secrets.ts|frankfurt-fn-secrets.ts]]
+- [[_COMMUNITY_pagination.tsx|pagination.tsx]]
+- [[_COMMUNITY_book.$slug.tsx|book.$slug.tsx]]
+- [[_COMMUNITY_wa-language-style.test.ts|wa-language-style.test.ts]]
+- [[_COMMUNITY_public.create_appointment|public.create_appointment]]
+- [[_COMMUNITY_navigation-menu.tsx|navigation-menu.tsx]]
+- [[_COMMUNITY_phone-input-render.test.tsx|phone-input-render.test.tsx]]
+- [[_COMMUNITY_send-pushindex.ts|send-push/index.ts]]
+- [[_COMMUNITY_accordion.tsx|accordion.tsx]]
+- [[_COMMUNITY_carousel.tsx|carousel.tsx]]
+- [[_COMMUNITY_20260613171854_186781b2-fac1-4883-a16c-b347020f4ea7.sql|20260613171854_186781b2-fac1-4883-a16c-b347020f4ea7.sql]]
+- [[_COMMUNITY_20260625190944_cb6b949e-6629-496c-bd07-11291a4324ee.sql|20260625190944_cb6b949e-6629-496c-bd07-11291a4324ee.sql]]
+- [[_COMMUNITY_public.dispatch_whatsapp_confirmation|public.dispatch_whatsapp_confirmation]]
+- [[_COMMUNITY_send-whatsappindex.ts|send-whatsapp/index.ts]]
+- [[_COMMUNITY_public.wa_run_reconciliation|public.wa_run_reconciliation]]
+- [[_COMMUNITY_form.tsx|form.tsx]]
+- [[_COMMUNITY_Vertical readiness — 2026-07-30|Vertical readiness — 2026-07-30]]
+- [[_COMMUNITY_alert.tsx|alert.tsx]]
+- [[_COMMUNITY_avatar.tsx|avatar.tsx]]
+- [[_COMMUNITY_public.create_appointment|public.create_appointment]]
+- [[_COMMUNITY_router.tsx|router.tsx]]
+- [[_COMMUNITY_public.get_available_slots|public.get_available_slots]]
+- [[_COMMUNITY_utils.ts|utils.ts]]
+- [[_COMMUNITY_20260615035807_e5d9992c-f70a-4102-8397-8419f288836b.sql|20260615035807_e5d9992c-f70a-4102-8397-8419f288836b.sql]]
+- [[_COMMUNITY_example.functions.ts|example.functions.ts]]
+- [[_COMMUNITY_public.get_appointment_by_token|public.get_appointment_by_token]]
+- [[_COMMUNITY_sitemap.xml.ts|sitemap[.]xml.ts]]
+- [[_COMMUNITY_test-supabase.mjs|test-supabase.mjs]]
+- [[_COMMUNITY_public.prepayment_expire_holds|public.prepayment_expire_holds]]
+- [[_COMMUNITY_privacy.tsx|privacy.tsx]]
+- [[_COMMUNITY_public.alert_silent_salons|public.alert_silent_salons]]
+- [[_COMMUNITY_clsx|clsx]]
+- [[_COMMUNITY_cmdk|cmdk]]
+- [[_COMMUNITY_frankfurt-burst.ts|frankfurt-burst.ts]]
+- [[_COMMUNITY_frankfurt-check.ts|frankfurt-check.ts]]
+- [[_COMMUNITY_frankfurt-dedup-roles.ts|frankfurt-dedup-roles.ts]]
+- [[_COMMUNITY_frankfurt-rest-probe.ts|frankfurt-rest-probe.ts]]
 
 ## God Nodes (most connected - your core abstractions)
-1. `cn()` - 224 edges
-2. `runWaAgentV3()` - 44 edges
+1. `cn()` - 72 edges
+2. `runWaAgentV3()` - 39 edges
 3. `supabase` - 32 edges
-4. `Button` - 31 edges
-5. `runWaAgentV4()` - 29 edges
-6. `Card` - 27 edges
-7. `executeV4Tool()` - 26 edges
-8. `useAuth()` - 25 edges
-9. `runWaAgent()` - 25 edges
-10. `FileRoutesByPath` - 25 edges
+4. `Button` - 30 edges
+5. `fetch()` - 28 edges
+6. `Card` - 26 edges
+7. `executeV4Tool()` - 25 edges
+8. `runWaAgentV4()` - 25 edges
+9. `FileRoutesByPath` - 25 edges
+10. `useAuth()` - 24 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `WA State Machine Design` --rationale_for--> `WhatsApp AI Assistant (wa-agent.server.ts)`  [INFERRED]
-  .lovable/plan.md → CLAUDE.md
+- `one()` --calls--> `fetch()`  [INFERRED]
+  scripts/frankfurt-burst.ts → src/server.ts
+- `sendGreenApi()` --calls--> `fetch()`  [INFERRED]
+  supabase/functions/send-whatsapp/index.ts → src/server.ts
 - `create_appointment RPC (extended with _price_override)` --shares_data_with--> `Supabase (Auth + Postgres + Storage)`  [INFERRED]
+  .lovable/plan.md → CLAUDE.md
+- `WA State Machine Design` --rationale_for--> `WhatsApp AI Assistant (wa-agent.server.ts)`  [INFERRED]
   .lovable/plan.md → CLAUDE.md
 - `fullDigits()` --calls--> `maxDigitsOf()`  [EXTRACTED]
   phone-input.test.ts → src/lib/phone-countries.ts
-- `block()` --calls--> `renderSalesBlock()`  [EXTRACTED]
-  sales-playbook.test.ts → src/lib/sales-playbook.server.ts
-- `call()` --calls--> `executeV4Tool()`  [EXTRACTED]
-  wa-v4-booking-link.test.ts → src/lib/wa-agent-v4.server.ts
 
 ## Import Cycles
-- 3-file cycle: `src/components/site/SalonSite.tsx -> src/components/site/templates/MinimalTemplate.tsx -> src/components/site/sections.tsx -> src/components/site/SalonSite.tsx`
-- 3-file cycle: `src/components/site/SalonSite.tsx -> src/components/site/templates/PremiumTemplate.tsx -> src/components/site/sections.tsx -> src/components/site/SalonSite.tsx`
 - 3-file cycle: `src/components/site/SalonSite.tsx -> src/components/site/templates/VividTemplate.tsx -> src/components/site/sections.tsx -> src/components/site/SalonSite.tsx`
+- 3-file cycle: `src/components/site/SalonSite.tsx -> src/components/site/templates/PremiumTemplate.tsx -> src/components/site/sections.tsx -> src/components/site/SalonSite.tsx`
+- 3-file cycle: `src/components/site/SalonSite.tsx -> src/components/site/templates/MinimalTemplate.tsx -> src/components/site/sections.tsx -> src/components/site/SalonSite.tsx`
 
 ## Hyperedges (group relationships)
 - **WA Agent Core Architecture (state machine + lock + Gemini classifier)** — lovable_plan_state_machine, lovable_plan_advisory_lock, lovable_plan_gemini_intent_classifier [EXTRACTED 0.95]
 - **Graphify Extraction Pipeline (AST + semantic + merge)** — claude_skills_graphify_skill_ast_extraction, claude_skills_graphify_skill_semantic_extraction, claude_skills_graphify_skill_extraction_cache [EXTRACTED 1.00]
 - **WA Agent NLP Improvements (fuzzy + intent + yes/no detection)** — wa_agent_improvements_fuzzy_matching, wa_agent_improvements_intent_promotion, wa_agent_improvements_yes_no_detection, wa_agent_improvements_master_name_matching [EXTRACTED 1.00]
 
-## Communities (320 total, 136 thin omitted)
+## Communities (126 total, 22 thin omitted)
 
 ### Community 0 - "admin/calendar.tsx"
-Cohesion: 0.09
-Nodes (48): CreateAppointmentDialog(), DateQuickPicker(), FreeSlotPicker(), Master, MoveAppointmentDialog(), Service, TIME_OPTIONS, BranchFilterBar() (+40 more)
+Cohesion: 0.06
+Nodes (67): addDaysISO(), AdminClient, appBaseUrl(), availablePartsToday(), backRow(), buildBranchListMsg(), buildCategoryListMsg(), buildConfirmMsg() (+59 more)
 
 ### Community 1 - "dependencies"
-Cohesion: 0.13
-Nodes (15): ai, @ai-sdk/openai-compatible, embla-carousel-react, dependencies, ai, @ai-sdk/openai-compatible, embla-carousel-react, @radix-ui/react-accordion (+7 more)
+Cohesion: 0.03
+Nodes (62): dependencies, ai, @ai-sdk/openai-compatible, class-variance-authority, clsx, cmdk, date-fns, @dnd-kit/core (+54 more)
 
 ### Community 2 - "routeTree.gen.ts"
 Cohesion: 0.06
-Nodes (31): AdminAccountRoute, AdminCalendarRoute, AdminErrorsRoute, AdminIndexRoute, AdminNotificationsRoute, AdminOpsRoute, AdminRoute, AdminRouteChildren (+23 more)
+Nodes (30): Route, AdminAccountRoute, AdminCalendarRoute, AdminErrorsRoute, AdminIndexRoute, AdminNotificationsRoute, AdminOpsRoute, AdminRoute (+22 more)
 
 ### Community 3 - "wa-agent.server.ts"
 Cohesion: 0.06
-Nodes (77): addDaysISO(), AdminClient, appBaseUrl(), availablePartsToday(), backRow(), buildBranchListMsg(), buildCategoryListMsg(), buildConfirmMsg() (+69 more)
+Nodes (47): BranchContactsBar(), FaqSection(), ServicesList(), SlotPicker(), Stepper(), Ctx, DictKey, Entry (+39 more)
 
 ### Community 4 - "WA Agent Architecture Plan (Lovable plan.md)"
 Cohesion: 0.07
@@ -327,143 +197,143 @@ Nodes (20): Graphify Add URL (ingest), Graphify Watch Mode (auto-rebuild), MCP S
 
 ### Community 6 - "wa-agent-v4.server.ts"
 Cohesion: 0.07
-Nodes (40): RFC-4122, DbMaster, downloadImageAsBase64(), fetchMergedSlots(), formatDateInTz(), GeminiV2Content, isInPart(), loadMastersForService() (+32 more)
+Nodes (40): DbMaster, fetchMergedSlots(), formatTimeInTz(), GeminiV2Content, isInPart(), loadMastersForService(), nowInTz(), slotMinutesInTz() (+32 more)
 
 ### Community 7 - "devDependencies"
-Cohesion: 0.04
-Nodes (46): eslint, eslint-config-prettier, @eslint/js, eslint-plugin-prettier, eslint-plugin-react-hooks, eslint-plugin-react-refresh, globals, @lovable.dev/vite-tanstack-config (+38 more)
+Cohesion: 0.11
+Nodes (18): devDependencies, eslint, eslint-config-prettier, @eslint/js, eslint-plugin-prettier, eslint-plugin-react-hooks, eslint-plugin-react-refresh, globals (+10 more)
 
 ### Community 8 - "sidebar.tsx"
-Cohesion: 0.06
-Nodes (39): Separator, SheetContent, SheetContentProps, SheetDescription, SheetFooter(), SheetHeader(), SheetOverlay, SheetTitle (+31 more)
+Cohesion: 0.12
+Nodes (33): handleCallback(), handleUpdate(), HELP, isAllowed(), ownerIds(), agentsEnabled(), audit(), buildDailyDigest() (+25 more)
 
 ### Community 9 - "telegram.ts"
-Cohesion: 0.11
-Nodes (44): ErrorSource, fingerprintOf(), logError(), LogErrorInput, stackOf(), agentsEnabled(), audit(), buildDailyDigest() (+36 more)
+Cohesion: 0.06
+Nodes (36): Separator, SheetContent, SheetContentProps, SheetDescription, SheetFooter(), SheetHeader(), SheetOverlay, SheetTitle (+28 more)
 
 ### Community 10 - "chart.tsx"
-Cohesion: 0.25
-Nodes (9): ChartConfig, ChartContainer, ChartContext, ChartContextProps, ChartLegendContent, ChartTooltipContent, getPayloadConfigFromPayload(), THEMES (+1 more)
+Cohesion: 0.09
+Nodes (26): CreateAppointmentDialog(), DateQuickPicker(), Master, MoveAppointmentDialog(), Service, TIME_OPTIONS, DayGrid(), PositionedBlock() (+18 more)
 
 ### Community 11 - "ig.$salonId.ts"
 Cohesion: 0.09
-Nodes (44): acquireConversationLock(), LOCK_HEARTBEAT_MS, LOCK_TTL_SECONDS, NOTE: the WhatsApp route (src/routes/api/public/wa.$salonId.ts) still carries…, refreshConversationLock(), releaseConversationLock(), stillHoldingConversationLock(), commentWithinPrivateReplyWindow() (+36 more)
+Nodes (39): acquireConversationLock(), refreshConversationLock(), releaseConversationLock(), stillHoldingConversationLock(), record(), commentWithinPrivateReplyWindow(), IgCommentEvent, IgCommentTrigger (+31 more)
 
 ### Community 12 - "wa-agent.scenarios.test.ts"
 Cohesion: 0.09
 Nodes (22): bigMenuSalon(), BRANCHES, branchSalon(), composeSystemInstructions, CONFIG, confirmDraft(), convo(), convoV3() (+14 more)
 
 ### Community 13 - "admin.tsx"
-Cohesion: 0.15
-Nodes (25): PullToRefresh(), AppNotification, useNotifications(), signOutFromApp(), BUILD_VAPID_PUBLIC_KEY, debugLog(), disablePushSubscription(), EnsurePushOptions (+17 more)
+Cohesion: 0.13
+Nodes (24): AiAssistantTab(), BranchFilterBar(), Filters, CalendarPage(), ErrorsPage(), Dashboard(), OpsPage(), StatsPage() (+16 more)
 
 ### Community 14 - "client.server.ts"
-Cohesion: 0.05
-Nodes (76): requireSupabaseAuth, supabaseAdmin, CompositeTypes, Constants, Database, DatabaseWithoutInternals, DefaultSchema, Enums (+68 more)
+Cohesion: 0.09
+Nodes (11): BranchHours, BranchHoursEditor(), defaultBranchHours(), invalidHourDays(), WEEKDAYS, BranchDialog(), SalonScheduleCard(), SCHEDULE_DOW_KEYS (+3 more)
 
 ### Community 15 - "ops.tsx"
-Cohesion: 0.12
-Nodes (11): FullScreenLoader(), LoadingState(), getSsrLanding, MARKETING_HOSTS, OpsPage(), OpsRow, relTime(), Route (+3 more)
+Cohesion: 0.10
+Nodes (16): Assistant, ExcludedContact, Conversation, Message, needsHuman(), statusBadge(), WaChatsTab(), ChatMessage (+8 more)
 
 ### Community 16 - "compilerOptions"
-Cohesion: 0.07
-Nodes (26): DOM, DOM.Iterable, ES2022, eslint.config.js, src/**/*.ts, src/**/*.tsx, vite/client, vite.config.ts (+18 more)
+Cohesion: 0.10
+Nodes (19): compilerOptions, allowImportingTsExtensions, jsx, lib, module, moduleResolution, noEmit, noFallthroughCasesInSwitch (+11 more)
 
 ### Community 17 - "components.json"
 Cohesion: 0.11
 Nodes (18): aliases, components, hooks, lib, ui, utils, iconLibrary, registries (+10 more)
 
 ### Community 18 - "salons/index.tsx"
-Cohesion: 0.29
-Nodes (8): DialogContent, DialogDescription, DialogFooter(), DialogHeader(), DialogOverlay, DialogTitle, SalonsList(), slugify()
+Cohesion: 0.12
+Nodes (16): Density, DENSITY_LABEL, DENSITY_ORDER, DragData, HOUR_PX_BY_DENSITY, ConflictInfo, RestoreTarget, useIsMobile() (+8 more)
 
 ### Community 19 - "sections.tsx"
-Cohesion: 0.17
-Nodes (14): DAYS_RU, NAV_LABEL_KEYS, NavLinks(), SiteFaq(), SiteFooter(), SiteGallery(), SiteMasters(), SiteReviews() (+6 more)
+Cohesion: 0.12
+Nodes (19): cn(), ButtonProps, buttonVariants, Calendar(), CalendarDayButton(), HoverCardContent, Pagination(), PaginationContent (+11 more)
 
 ### Community 20 - "20260730120000_ops_agents_foundation.sql"
-Cohesion: 0.15
-Nodes (16): error_logs, public.ops_agents, public.ops_approvals, public.ops_audit_log, public.ops_config, public.ops_digest_snapshot(), public.ops_events, public.ops_kv (+8 more)
+Cohesion: 0.12
+Nodes (18): diagnose(), Diagnostics, InstagramTab(), NEW_TRIGGER, TestState, TriggerRow, whenLabel(), deleteCommentTrigger (+10 more)
 
 ### Community 21 - "cn"
-Cohesion: 0.06
-Nodes (48): Breadcrumb, BreadcrumbEllipsis(), BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator(), CardDescription (+40 more)
+Cohesion: 0.16
+Nodes (9): ErrorRow, LEVEL_STYLES, OpsRow, Route, AppNotification, supabase, Input, FullScreenLoader() (+1 more)
 
 ### Community 22 - "ServiceExportDialog.tsx"
-Cohesion: 0.22
-Nodes (19): Props, ServiceExportDialog(), useAutoPrintFromQuery(), TabsContent, TabsList, TabsTrigger, catalogAsText(), CatalogSalon (+11 more)
+Cohesion: 0.19
+Nodes (19): Props, ServiceExportDialog(), useAutoPrintFromQuery(), catalogAsText(), CatalogSalon, CatalogService, catalogUrl(), formatDuration() (+11 more)
 
 ### Community 23 - "PublicBooking.tsx"
-Cohesion: 0.13
-Nodes (18): Branch, Faq, FaqSection(), formatDuration(), Master, PublicBooking(), Salon, Service (+10 more)
+Cohesion: 0.14
+Nodes (9): Override, ServiceRow, SalonShareCard(), Slot, Snapshot, Button, Card, CardDescription (+1 more)
 
 ### Community 24 - "wa-v4-booking.test.ts"
-Cohesion: 0.13
-Nodes (9): clampPriceOverride(), loadSalonClosedDates(), sanitizeGeminiHistory(), DATE, input, makeDb(), makeDbWithMastersProbe(), slotISO() (+1 more)
+Cohesion: 0.14
+Nodes (8): clampPriceOverride(), sanitizeGeminiHistory(), DATE, input, makeDb(), makeDbWithMastersProbe(), slotISO(), slotRow()
 
 ### Community 25 - "verify.ts"
-Cohesion: 0.05
-Nodes (53): BYTES, MBANK_MARKERS, mbankAdapter, ADAPTERS, BankAdapter, detectBank(), ExtractContext, ExtractedReceipt (+45 more)
+Cohesion: 0.06
+Nodes (52): MBANK_MARKERS, mbankAdapter, ADAPTERS, BankAdapter, detectBank(), ExtractContext, ExtractedReceipt, ChatReceiptOutcome (+44 more)
 
 ### Community 26 - "button.tsx"
-Cohesion: 0.09
-Nodes (37): Override, ServiceRow, BranchHours, WEEKDAYS, diagnose(), Diagnostics, InstagramTab(), NEW_TRIGGER (+29 more)
+Cohesion: 0.16
+Nodes (13): AmountType, Currency, EMPTY, FormState, PrepaymentTab(), VerifyMode, ReviewsTab(), SiteTab() (+5 more)
 
 ### Community 27 - "Что необходимо проверить"
 Cohesion: 0.11
 Nodes (17): 1. Архитектуру, 2. Производительность, 3. Работа ИИ-Админа, 4. Работа Green API, 5. Работа базы данных, 6. Безопасность, 7. Пользовательский опыт, 8. Масштабируемость (+9 more)
 
 ### Community 28 - "$salonId.tsx"
-Cohesion: 0.07
-Nodes (35): BranchHoursEditor(), defaultBranchHours(), invalidHourDays(), Kind, kindLabel(), MasterDayOverrides(), Override, ReviewsTab() (+27 more)
+Cohesion: 0.13
+Nodes (10): Branch, Faq, formatDuration(), Master, PublicBooking(), Salon, Service, getSsrLanding (+2 more)
 
 ### Community 29 - "wa-config.functions.ts"
-Cohesion: 0.31
-Nodes (10): WaAgentState, WaAgentStateData, WaIncomingMessage, assertSalonAccess(), buildWebhookUrls(), genToken(), getWaWebhookConfig, publicBaseUrl() (+2 more)
-
-### Community 30 - "Architecture"
-Cohesion: 0.13
-Nodes (13): Architecture, Auth and roles, Commands, Environment variables, File-based routing (`src/routes/`), graphify, i18n, Project (+5 more)
-
-### Community 31 - "sales-playbook.server.ts"
-Cohesion: 0.08
-Nodes (38): block(), EMPTY_PLAYBOOK, FACTS, SN, BookingLinkSalon, bookingUrl(), activePromos(), asArray() (+30 more)
-
-### Community 32 - "AiAssistantTab.tsx"
-Cohesion: 0.11
-Nodes (21): AiAssistantTab(), Assistant, ExcludedContact, ExcludedContactsCard(), normalizePhone(), toObjectionList(), toPromoList(), toStringList() (+13 more)
-
-### Community 33 - "menubar.tsx"
 Cohesion: 0.12
 Nodes (11): Menubar, MenubarCheckboxItem, MenubarContent, MenubarItem, MenubarLabel, MenubarRadioItem, MenubarSeparator, MenubarShortcut() (+3 more)
 
+### Community 30 - "Architecture"
+Cohesion: 0.12
+Nodes (14): Architecture, Auth and roles, Commands, Environment variables, File-based routing (`src/routes/`), graphify, i18n, Instagram Direct assistant (+6 more)
+
+### Community 31 - "sales-playbook.server.ts"
+Cohesion: 0.09
+Nodes (36): BookingLinkSalon, bookingUrl(), activePromos(), asArray(), classifyFunnelStage(), classifyReadiness(), detectObjections(), EMPTY_SALES_STATE (+28 more)
+
+### Community 32 - "AiAssistantTab.tsx"
+Cohesion: 0.28
+Nodes (15): NotificationsPage(), BUILD_VAPID_PUBLIC_KEY, debugLog(), disablePushSubscription(), EnsurePushOptions, ensurePushSubscription(), getOrRegisterSW(), getVapidPublicKey() (+7 more)
+
+### Community 33 - "menubar.tsx"
+Cohesion: 0.21
+Nodes (12): splitForWhatsApp(), toWaCloudRecipient(), WaCloudCreds, waCloudFetchMedia(), WaCloudInboundEvent, waCloudMarkReadAndTyping(), waCloudPost(), waCloudSendImage() (+4 more)
+
 ### Community 34 - "SalonSite.tsx"
-Cohesion: 0.20
-Nodes (13): BranchContactsBar(), Branch, BranchContactCard(), BranchesContactsBlock(), BranchVariant, VARIANT_STYLES, SalonSiteData, SiteContacts() (+5 more)
+Cohesion: 0.19
+Nodes (8): Kind, MasterDayOverrides(), Override, BulkRow, Kind, SalonDayOverridesCard(), RadioGroup, RadioGroupItem
 
 ### Community 35 - "phone-input.tsx"
-Cohesion: 0.19
-Nodes (24): fullDigits(), Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator (+16 more)
+Cohesion: 0.14
+Nodes (12): Carousel, CarouselApi, CarouselContent, CarouselContext, CarouselContextProps, CarouselItem, CarouselNext, CarouselOptions (+4 more)
 
 ### Community 36 - "plan.md"
 Cohesion: 0.14
 Nodes (13): 10. Технические детали реализации, 11. Файлы, которые меняются, 12. Проверка после имплементации, 13. Что НЕ делаем в этом плане, 1. Архитектурное замечание (важно), 2. Миграция БД (lock + state machine + цена), 3. Секрет, 4. Анти-гонка вебхуков (Green-API часто шлёт два webhook'а параллельно) (+5 more)
 
 ### Community 37 - "schedule-import.functions.ts"
-Cohesion: 0.11
-Nodes (35): RFC-4180, SHEET, ScheduleImportTab(), extractAmounts(), importKeyFor(), isKeyword(), KEYWORD_EXACT, KEYWORD_EXACT_RE (+27 more)
+Cohesion: 0.07
+Nodes (41): Batch, Plan, ScheduleImportTab(), VERDICT_META, VISIT_KINDS, extractAmounts(), importKeyFor(), isKeyword() (+33 more)
 
 ### Community 38 - "server.ts"
-Cohesion: 0.23
-Nodes (8): attachSupabaseAuth, consumeLastCapturedError(), renderErrorPage(), fetch(), getServerEntry(), normalizeCatastrophicSsrResponse(), ServerEntry, errorMiddleware
+Cohesion: 0.26
+Nodes (7): consumeLastCapturedError(), renderErrorPage(), getServerEntry(), normalizeCatastrophicSsrResponse(), ServerEntry, errorMiddleware, attachSupabaseAuth
 
 ### Community 39 - "industries.ts"
 Cohesion: 0.05
-Nodes (47): barbershopQuestions, beautyQuestions, cosmetologyQuestions, DEFAULT_INDUSTRY, dentalQuestions, epilationQuestions, INDUSTRIES_META, INDUSTRY_ORDER (+39 more)
+Nodes (45): barbershopQuestions, beautyQuestions, cosmetologyQuestions, dentalQuestions, epilationQuestions, INDUSTRIES_META, INDUSTRY_ORDER, INDUSTRY_PRICING (+37 more)
 
 ### Community 41 - "20260622064548_cc2a4ca7-185a-4c98-98f4-23f7373a4551.sql"
-Cohesion: 0.13
-Nodes (13): appointments_dispatch_whatsapp_ins, appointments_dispatch_whatsapp_upd, appointments_guard_break, appointments_guard_restore, appointments_notify_event, notifications_dispatch_push, salons_guard_whatsapp_enabled, public.dispatch_push_for_notification (+5 more)
+Cohesion: 0.26
+Nodes (9): useNotifications(), signOutFromApp(), RefreshContext, RefreshContextValue, RefreshFn, RefreshProvider(), useRefreshController(), AdminLayout() (+1 more)
 
 ### Community 42 - "Changes Made"
 Cohesion: 0.14
@@ -474,8 +344,8 @@ Cohesion: 0.22
 Nodes (4): dbProxy, geminiQueue, geminiRequests, SALON
 
 ### Community 44 - "FileRoutesByPath"
-Cohesion: 0.13
-Nodes (14): Route, Route, Route, Route, Route, Route, Route, Route (+6 more)
+Cohesion: 0.12
+Nodes (16): Route, Route, Route, Route, Route, Route, Route, Route (+8 more)
 
 ### Community 45 - "frankfurt-migrate.ts"
 Cohesion: 0.21
@@ -494,36 +364,36 @@ Cohesion: 0.83
 Nodes (4): Qabyl App Icon (512px), Qabyl Brand Identity, Teal-to-Pink Gradient Background, Stylized Q Logo Mark
 
 ### Community 49 - "20260801130000_prepayment_schema.sql"
-Cohesion: 0.11
-Nodes (22): public.appointment_prepayments, public.confirm_prepayment(), public.get_available_slots(), public.prepayment_audit, public.prepayment_expire_holds(), public.prepayment_receipt_hashes, public.prepayment_settings, appointments (+14 more)
+Cohesion: 0.17
+Nodes (11): name, private, scripts, build, build:dev, dev, format, lint (+3 more)
 
 ### Community 50 - "Qabyl App Icon (192px PWA)"
 Cohesion: 1.00
 Nodes (3): Qabyl App Icon (192px PWA), Qabyl Brand Identity — Q lettermark with teal-to-pink gradient, Progressive Web App (PWA) Icon Asset 192x192
 
 ### Community 51 - "20260801120000_rbac_manager_role_and_staff_isolation.sql"
-Cohesion: 0.20
-Nodes (10): public.guard_salon_staff_isolation, guard_salon_staff_isolation_trg, public.has_salon_ops_access(), public.rbac_audit, public.user_manager_salon_id(), public.user_master_ids(), auth.users, public.masters (+2 more)
+Cohesion: 0.17
+Nodes (9): FormControl, FormDescription, FormFieldContext, FormFieldContextValue, FormItem, FormItemContext, FormItemContextValue, FormLabel (+1 more)
 
 ### Community 54 - "20260811120000_schedule_import_and_start_language.sql"
 Cohesion: 0.18
-Nodes (8): salon_ai_assistant, public.appointment_import_batches, public.dispatch_whatsapp_confirmation(), public.get_due_reminders(), appointments, auth.users, public.salons, services
+Nodes (9): adminConfirmPrepayment, adminRejectPrepayment, getPrepaymentByToken, getPrepaymentSettings, getReceiptSignedUrl, listPendingReviews, SETTINGS_INPUT, uploadPrepaymentReceipt (+1 more)
 
 ### Community 58 - "i18n.tsx"
-Cohesion: 0.13
-Nodes (10): Toaster(), ToasterProps, Ctx, DICT, DictKey, Entry, I18nContext, I18nProvider() (+2 more)
+Cohesion: 0.22
+Nodes (5): createSalonAdmin, listSalonAdmins, revokeSalonAdmin, sendManualChatMessage, requireSupabaseAuth
 
 ### Community 59 - "20260622062841_802b0245-0a7e-4487-a286-15e1183fcca0.sql"
-Cohesion: 0.15
-Nodes (13): appointments_dispatch_whatsapp_ins, appointments_dispatch_whatsapp_upd, appointments_guard_break, appointments_guard_restore, appointments_notify_event, notifications_dispatch_push, salons_guard_whatsapp_enabled, public.dispatch_push_for_notification (+5 more)
+Cohesion: 0.18
+Nodes (7): ChartConfig, ChartContainer, ChartContext, ChartContextProps, ChartLegendContent, ChartTooltipContent, THEMES
 
 ### Community 61 - "Deployment report — 2026-07-30"
 Cohesion: 0.22
 Nodes (8): Commit list (this branch), Deployment report — 2026-07-30, Post-merge smoke test (owner runs after promoting), Preview URL, Quality gates, Rollback, Status, What still requires owner attention
 
 ### Community 62 - "formatPrice"
-Cohesion: 0.24
-Nodes (9): AiServiceListEditor(), ServiceCard(), fmt(), formatPrice(), formatPriceShort(), ServicePrice, MasterDialog(), SalonInfoTab() (+1 more)
+Cohesion: 0.22
+Nodes (6): assertCanManageSalon(), notifyClientReschedule(), rescheduleAppointment, assertSalonOwner(), assertCanManageEmployees(), Database
 
 ### Community 63 - "/graphify"
 Cohesion: 0.18
@@ -579,199 +449,135 @@ Nodes (5): bookingCall(), dbProxy, fc(), geminiQueue, SALON
 
 ### Community 84 - "manage.$token.tsx"
 Cohesion: 0.22
-Nodes (3): Route, Slot, Snapshot
+Nodes (7): WaAgentState, WaAgentStateData, WaIncomingMessage, buildWebhookUrls(), getWaWebhookConfig, publicBaseUrl(), regenerateWaWebhookToken
 
 ### Community 85 - "Qabyl technical + security audit — 2026-07-30"
 Cohesion: 0.25
 Nodes (7): Baseline tests, Cross-references, Files touched, Not deployed to production, Qabyl technical + security audit — 2026-07-30, Scoring — before → after, What still requires the owner's attention
 
 ### Community 86 - "frankfurt-fn-secrets.ts"
-Cohesion: 0.25
-Nodes (6): lines, missing, sql, vapidPriv, vapidPub, vapidSub
+Cohesion: 0.20
+Nodes (9): CompositeTypes, Constants, DatabaseWithoutInternals, DefaultSchema, Enums, Json, Tables, TablesInsert (+1 more)
 
 ### Community 87 - "pagination.tsx"
-Cohesion: 0.22
-Nodes (8): ButtonProps, Pagination(), PaginationContent, PaginationEllipsis(), PaginationItem, PaginationLinkProps, PaginationNext(), PaginationPrevious()
+Cohesion: 0.20
+Nodes (9): ContextMenuCheckboxItem, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuRadioItem, ContextMenuSeparator, ContextMenuShortcut(), ContextMenuSubContent (+1 more)
 
 ### Community 88 - "book.$slug.tsx"
-Cohesion: 0.29
-Nodes (4): SalonSite(), Route, salonCanonical(), Route
+Cohesion: 0.20
+Nodes (9): DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuShortcut(), DropdownMenuSubContent (+1 more)
 
 ### Community 89 - "wa-language-style.test.ts"
 Cohesion: 0.29
 Nodes (5): confidentLanguage(), EN_STYLE, KY_STYLE, languageStyleBlock(), StyleLanguage
 
 ### Community 90 - "public.create_appointment"
-Cohesion: 0.40
-Nodes (3): prepayment_settings, public.create_appointment(), services
+Cohesion: 0.31
+Nodes (8): AccountPage(), anonClient(), emailFromClaims(), resolveCurrentEmail(), updateMyLogin, updateMyPassword, verifyPassword(), supabaseAdmin
 
 ### Community 91 - "navigation-menu.tsx"
-Cohesion: 0.29
-Nodes (7): NavigationMenu, NavigationMenuContent, NavigationMenuIndicator, NavigationMenuList, NavigationMenuTrigger, navigationMenuTriggerStyle, NavigationMenuViewport
+Cohesion: 0.22
+Nodes (8): AllowedRole, audit(), inviteEmployee, linkMasterToUser, listSalonEmployees, revokeEmployeeAccess, ROLE_LABELS, setStaffIsolation
+
+### Community 92 - "phone-input-render.test.tsx"
+Cohesion: 0.13
+Nodes (25): detectCountry(), formatNational(), getCountry(), isValidPhone(), maxDigitsOf(), minDigitsOf(), nationalDigits(), onlyDigits() (+17 more)
 
 ### Community 93 - "send-push/index.ts"
+Cohesion: 0.22
+Nodes (8): Table, TableBody, TableCaption, TableCell, TableFooter, TableHead, TableHeader, TableRow
+
+### Community 94 - "accordion.tsx"
+Cohesion: 0.25
+Nodes (3): Route, Route, SalonSite()
+
+### Community 95 - "carousel.tsx"
 Cohesion: 0.29
 Nodes (7): b64urlDecode(), cors, isValidVapidPublic(), supabase, VAPID_PRIVATE_KEY, VAPID_PUBLIC_KEY, VAPID_SUBJECT
 
-### Community 94 - "accordion.tsx"
-Cohesion: 0.50
-Nodes (3): AccordionContent, AccordionItem, AccordionTrigger
-
-### Community 95 - "carousel.tsx"
-Cohesion: 0.19
-Nodes (13): Carousel, CarouselApi, CarouselContent, CarouselContext, CarouselContextProps, CarouselItem, CarouselNext, CarouselOptions (+5 more)
-
 ### Community 96 - "20260613171854_186781b2-fac1-4883-a16c-b347020f4ea7.sql"
-Cohesion: 0.18
-Nodes (11): public.appointment_addons, public.get_addons_for_service(), public.notify_appointment_event(), public.service_addons, service_addons_touch_updated_at, public.appointments, public.salons, public.services (+3 more)
+Cohesion: 0.25
+Nodes (7): Breadcrumb, BreadcrumbEllipsis(), BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator()
 
 ### Community 97 - "20260625190944_cb6b949e-6629-496c-bd07-11291a4324ee.sql"
-Cohesion: 0.21
-Nodes (10): public.guard_salon_ai_assistant_enabled, guard_salon_ai_assistant_enabled_trg, public.salon_ai_assistant, public.wa_conversations, public.wa_messages, public, public.appointments, public.salons (+2 more)
+Cohesion: 0.25
+Nodes (6): DrawerContent, DrawerDescription, DrawerFooter(), DrawerHeader(), DrawerOverlay, DrawerTitle
 
 ### Community 98 - "public.dispatch_whatsapp_confirmation"
-Cohesion: 0.17
-Nodes (8): public.dispatch_whatsapp_confirmation(), appointments, LATERAL, master_services, masters, salons, service_addons, services
+Cohesion: 0.25
+Nodes (7): NavigationMenu, NavigationMenuContent, NavigationMenuIndicator, NavigationMenuList, NavigationMenuTrigger, navigationMenuTriggerStyle, NavigationMenuViewport
 
 ### Community 99 - "send-whatsapp/index.ts"
-Cohesion: 0.33
-Nodes (3): corsHeaders, readGreenApiBody(), sendGreenApi()
+Cohesion: 0.29
+Nodes (5): assertCanManageBranch(), createBranchMaster, listBranchMasters, revokeBranchMaster, WORDS
 
 ### Community 100 - "public.wa_run_reconciliation"
-Cohesion: 0.20
-Nodes (9): pg_extension, public.touch_excluded_contacts_updated_at, excluded_contacts_touch, public.excluded_contacts, public.wa_run_reconciliation(), public.salon_secrets, public.salons, public.wa_conversations (+1 more)
+Cohesion: 0.29
+Nodes (5): assertCanManageSalon(), createSalonMaster, listSalonMasters, revokeSalonMaster, WORDS
 
 ### Community 101 - "form.tsx"
-Cohesion: 0.23
-Nodes (10): FormControl, FormDescription, FormFieldContext, FormFieldContextValue, FormItem, FormItemContext, FormItemContextValue, FormLabel (+2 more)
+Cohesion: 0.33
+Nodes (3): corsHeaders, readGreenApiBody(), sendGreenApi()
 
 ### Community 102 - "Vertical readiness — 2026-07-30"
 Cohesion: 0.33
 Nodes (5): Acceptance criteria explicitly verified, Per-vertical scores, Rating rubric, Vertical readiness — 2026-07-30, What each vertical is missing (nothing critical)
 
 ### Community 103 - "alert.tsx"
-Cohesion: 0.50
-Nodes (4): Alert, AlertDescription, AlertTitle, alertVariants
+Cohesion: 0.33
+Nodes (5): ToggleGroup, ToggleGroupContext, ToggleGroupItem, Toggle, toggleVariants
 
 ### Community 104 - "avatar.tsx"
-Cohesion: 0.50
-Nodes (3): Avatar, AvatarFallback, AvatarImage
+Cohesion: 0.47
+Nodes (5): ErrorSource, fingerprintOf(), logError(), LogErrorInput, stackOf()
 
 ### Community 105 - "public.create_appointment"
-Cohesion: 0.18
-Nodes (9): public.create_appointment(), appointments, LATERAL, master_day_overrides, master_services, masters, salons, service_addons (+1 more)
+Cohesion: 0.40
+Nodes (4): Alert, AlertDescription, AlertTitle, alertVariants
 
 ### Community 106 - "router.tsx"
 Cohesion: 0.40
 Nodes (4): getRouter(), Register, routeTree, startInstance
 
 ### Community 107 - "public.get_available_slots"
-Cohesion: 0.20
-Nodes (7): public.get_available_slots(), appointments, master_schedules, master_services, masters, salons, services
-
-### Community 108 - "utils.ts"
-Cohesion: 0.09
-Nodes (16): Checkbox, HoverCardContent, InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot, PopoverContent, Progress (+8 more)
+Cohesion: 0.40
+Nodes (4): InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot
 
 ### Community 109 - "20260615035807_e5d9992c-f70a-4102-8397-8419f288836b.sql"
-Cohesion: 0.22
-Nodes (6): public.set_updated_at_now, public.push_subscriptions, push_subscriptions_set_updated_at, auth.users, public.branches, public.salons
-
-### Community 111 - "public.get_appointment_by_token"
-Cohesion: 0.31
-Nodes (8): public.cancel_appointment_by_token(), public.get_appointment_by_token(), public.notify_owner_self_service(), public.reschedule_appointment_by_token(), appointments, masters, salons, services
-
-### Community 112 - "sitemap[.]xml.ts"
-Cohesion: 0.83
+Cohesion: 0.67
 Nodes (3): Route, urlEntry(), xmlEscape()
 
-### Community 116 - "public.alert_silent_salons"
-Cohesion: 0.29
-Nodes (6): notifications, salon_secrets, public.alert_silent_salons(), salons, wa_conversations, wa_messages
-
-### Community 179 - "wa.$salonId.ts"
-Cohesion: 0.19
-Nodes (18): GreenApiCreds, greenApiDownloadFile(), greenApiSendFileByUrl(), greenApiSendMessage(), greenApiSendTyping(), isLikelyNativeGreetingRace(), normalizeChatIdToPhone(), ownerPhoneMatches() (+10 more)
-
-### Community 180 - "20260528053951_6f0c83d2-9946-4e32-b151-b182a34d120c.sql"
-Cohesion: 0.29
-Nodes (3): public.has_role(), public.user_roles, auth.users
-
-### Community 181 - "20260611032416_8c46538f-9cf0-46ce-afda-6dc454d4f93f.sql"
-Cohesion: 0.25
-Nodes (7): notify_appointment_event_trg, public.notifications, public.notify_appointment_event(), public.appointments, public.notify_appointment_event, public.salons, services
-
-### Community 182 - "public.get_available_slots"
-Cohesion: 0.29
-Nodes (6): master_time_off, public.get_available_slots(), appointments, branches, master_schedules, services
-
-### Community 183 - "public.reschedule_appointment_v2"
-Cohesion: 0.29
-Nodes (6): public.reschedule_appointment_v2(), appointments, LATERAL, master_day_overrides, master_services, masters
-
-### Community 185 - "public.masters"
-Cohesion: 0.33
-Nodes (6): public.master_schedules, public.master_services, public.master_time_off, public.appointments, public.master_day_overrides, public.masters
-
-### Community 186 - "20260612103214_4ae558eb-2995-4dd6-bf4f-6b600b4db728.sql"
-Cohesion: 0.33
-Nodes (4): public.master_day_overrides, public.masters, public.touch_updated_at, trg_master_day_overrides_updated
-
-### Community 187 - "20260613160451_bccfe2e9-ca19-43e1-9572-b633e3dd039f.sql"
-Cohesion: 0.47
-Nodes (5): public.has_branch_access(), public.master_branch_id(), public.master_salon_id(), public.branches, public.user_roles
-
-### Community 188 - "20260617183801_a359ceb0-695a-4ff2-98fe-4fa12fe077fe.sql"
-Cohesion: 0.40
-Nodes (4): public.salon_faqs, salon_faqs_touch, public.salons, public.touch_updated_at
-
-### Community 192 - "20260528064525_c1bd4f1d-6c4d-4271-b9fe-1de9a54b0948.sql"
+### Community 110 - "example.functions.ts"
 Cohesion: 0.50
-Nodes (3): public.get_salon_by_host(), public.salon_reviews, salons
+Nodes (3): AccordionContent, AccordionItem, AccordionTrigger
 
-### Community 195 - "public.notify_appointment_event"
+### Community 111 - "public.get_appointment_by_token"
 Cohesion: 0.50
-Nodes (3): public.notify_appointment_event(), salons, services
+Nodes (3): Avatar, AvatarFallback, AvatarImage
 
-### Community 198 - "public.notify_appointment_event"
-Cohesion: 0.50
-Nodes (3): public.notify_appointment_event(), salons, services
-
-### Community 199 - "public.notify_appointment_event"
-Cohesion: 0.50
-Nodes (3): public.notify_appointment_event(), salons, services
-
-### Community 200 - "public.notify_appointment_event"
-Cohesion: 0.50
-Nodes (3): public.notify_appointment_event(), salons, services
-
-### Community 203 - "public.ai_service_overrides"
-Cohesion: 0.50
-Nodes (3): public.ai_service_overrides, public.salons, public.services
-
-### Community 204 - "public.ops_salon_overview"
-Cohesion: 0.50
-Nodes (3): public.ops_salon_overview(), appointments, wa_conversations
+### Community 169 - "frankfurt-burst.ts"
+Cohesion: 0.08
+Nodes (21): callGeminiTools(), callGeminiV3Faq(), createGeminiCache(), downloadImageAsBase64(), GreenApiCreds, greenApiDownloadFile(), greenApiSendButtons(), greenApiSendFileByUrl() (+13 more)
 
 ## Knowledge Gaps
-- **619 isolated node(s):** `session-start.sh script`, `$schema`, `style`, `rsc`, `tsx` (+614 more)
+- **731 isolated node(s):** `session-start.sh script`, `$schema`, `style`, `rsc`, `tsx` (+726 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **136 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **22 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `cn()` connect `cn` to `admin/calendar.tsx`, `sidebar.tsx`, `chart.tsx`, `ops.tsx`, `salons/index.tsx`, `ServiceExportDialog.tsx`, `button.tsx`, `$salonId.tsx`, `AiAssistantTab.tsx`, `menubar.tsx`, `phone-input.tsx`, `pagination.tsx`, `navigation-menu.tsx`, `accordion.tsx`, `carousel.tsx`, `form.tsx`, `alert.tsx`, `avatar.tsx`, `utils.ts`?**
-  _High betweenness centrality (0.081) - this node is a cross-community bridge._
-- **Why does `Button` connect `button.tsx` to `AiAssistantTab.tsx`, `admin/calendar.tsx`, `sidebar.tsx`, `admin.tsx`, `ops.tsx`, `salons/index.tsx`, `manage.$token.tsx`, `cn`, `ServiceExportDialog.tsx`, `PublicBooking.tsx`, `$salonId.tsx`, `carousel.tsx`?**
-  _High betweenness centrality (0.012) - this node is a cross-community bridge._
-- **Why does `checkPhoneWhatsapp` connect `PublicBooking.tsx` to `admin/calendar.tsx`, `client.server.ts`?**
-  _High betweenness centrality (0.008) - this node is a cross-community bridge._
+- **Why does `cn()` connect `sections.tsx` to `telegram.ts`, `chart.tsx`, `admin.tsx`, `client.server.ts`, `ops.tsx`, `salons/index.tsx`, `cn`, `ServiceExportDialog.tsx`, `PublicBooking.tsx`, `button.tsx`, `wa-config.functions.ts`, `SalonSite.tsx`, `phone-input.tsx`, `20260801120000_rbac_manager_role_and_staff_isolation.sql`, `20260622062841_802b0245-0a7e-4487-a286-15e1183fcca0.sql`, `pagination.tsx`, `book.$slug.tsx`, `phone-input-render.test.tsx`, `send-push/index.ts`, `20260613171854_186781b2-fac1-4883-a16c-b347020f4ea7.sql`, `20260625190944_cb6b949e-6629-496c-bd07-11291a4324ee.sql`, `public.dispatch_whatsapp_confirmation`, `alert.tsx`, `public.create_appointment`, `public.get_available_slots`, `example.functions.ts`, `public.get_appointment_by_token`, `public.prepayment_expire_holds`?**
+  _High betweenness centrality (0.063) - this node is a cross-community bridge._
+- **Why does `fetch()` connect `frankfurt-burst.ts` to `admin/calendar.tsx`, `menubar.tsx`, `schedule-import.functions.ts`, `form.tsx`, `server.ts`, `sidebar.tsx`, `ig.$salonId.ts`, `verify.ts`, `formatPrice`?**
+  _High betweenness centrality (0.051) - this node is a cross-community bridge._
+- **Why does `processReceipt()` connect `verify.ts` to `formatPrice`?**
+  _High betweenness centrality (0.021) - this node is a cross-community bridge._
 - **What connects `session-start.sh script`, `$schema`, `style` to the rest of the system?**
-  _619 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _734 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `admin/calendar.tsx` be split into smaller, more focused modules?**
-  _Cohesion score 0.0875 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.0554954954954955 - nodes in this community are weakly interconnected._
 - **Should `dependencies` be split into smaller, more focused modules?**
-  _Cohesion score 0.13333333333333333 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.03225806451612903 - nodes in this community are weakly interconnected._
 - **Should `routeTree.gen.ts` be split into smaller, more focused modules?**
-  _Cohesion score 0.0625 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.06451612903225806 - nodes in this community are weakly interconnected._
