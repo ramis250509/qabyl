@@ -1126,6 +1126,22 @@ test("старый sales_mode=true всё ещё означает активны
   expect(prompt).toContain("СТИЛЬ ПРОДАЖ: АКТИВНЫЕ ПРОДАЖИ");
 });
 
+// The hard-coded «Стрижка стоит 700 сом. На какой день вас записать?» example was the most
+// concrete instruction in the whole prompt, so it beat every doctrine above it: a price answer
+// always ended in a booking request, in both styles. Prod 2026-08-12 is the evidence.
+test("после цены ассистент не прыгает сразу на «на какой день вас записать?»", () => {
+  const active = buildSystemPromptV4(
+    makeInput("сколько стоит?", { config: { sales_style: "active" } }),
+  );
+  expect(active).not.toContain("Стрижка стоит 700 сом. На какой день вас записать?");
+  expect(active).toMatch(/НЕ прыгай сразу на «на какой день вас записать\?»/);
+  expect(active).toMatch(/свяжи цену с ситуацией человека/);
+
+  const light = buildSystemPromptV4(makeInput("сколько стоит?"));
+  expect(light).not.toContain("Стрижка стоит 700 сом. На какой день вас записать?");
+  expect(light).toMatch(/ответь на цену и остановись/);
+});
+
 test("мусор в sales_style не делает ассистента напористым", () => {
   const prompt = buildSystemPromptV4(
     makeInput("сколько стоит?", { config: { sales_style: "АКТИВНЫЙ!!" } }),
