@@ -1099,17 +1099,38 @@ test("beauty (по умолчанию): без мед-границ, но с оц
 });
 
 // ============================================================
-// Salesperson mode — the toggle injects an active-closing block only when enabled.
+// Sales style — the owner's choice reaches the prompt as a stance, and the two styles
+// are mutually exclusive there. The per-turn tactics are covered in sales-playbook.test.ts.
 // ============================================================
 
-test("режим продаж включён: в промпте есть блок активного закрытия", () => {
-  const prompt = buildSystemPromptV4(makeInput("сколько стоит?", { config: { sales_mode: true } }));
-  expect(prompt).toContain("РЕЖИМ АКТИВНЫХ ПРОДАЖ");
+test("активные продажи: в промпте стоит активная стойка", () => {
+  const prompt = buildSystemPromptV4(
+    makeInput("сколько стоит?", { config: { sales_style: "active" } }),
+  );
+  expect(prompt).toContain("СТИЛЬ ПРОДАЖ: АКТИВНЫЕ ПРОДАЖИ");
+  expect(prompt).not.toContain("СТИЛЬ ПРОДАЖ: ЛЁГКИЕ ПРОДАЖИ");
 });
 
-test("режим продаж выключен (по умолчанию): блока активного закрытия нет", () => {
+test("по умолчанию (режим не выбран) — лёгкие продажи", () => {
   const prompt = buildSystemPromptV4(makeInput("сколько стоит?"));
-  expect(prompt).not.toContain("РЕЖИМ АКТИВНЫХ ПРОДАЖ");
+  expect(prompt).toContain("СТИЛЬ ПРОДАЖ: ЛЁГКИЕ ПРОДАЖИ");
+  expect(prompt).not.toContain("СТИЛЬ ПРОДАЖ: АКТИВНЫЕ ПРОДАЖИ");
+});
+
+// Salons configured before the sales_style migration have only the boolean. Their owners
+// picked "active" once and must not be silently downgraded to the calm style by a deploy.
+test("старый sales_mode=true всё ещё означает активные продажи", () => {
+  const prompt = buildSystemPromptV4(
+    makeInput("сколько стоит?", { config: { sales_mode: true } }),
+  );
+  expect(prompt).toContain("СТИЛЬ ПРОДАЖ: АКТИВНЫЕ ПРОДАЖИ");
+});
+
+test("мусор в sales_style не делает ассистента напористым", () => {
+  const prompt = buildSystemPromptV4(
+    makeInput("сколько стоит?", { config: { sales_style: "АКТИВНЫЙ!!" } }),
+  );
+  expect(prompt).toContain("СТИЛЬ ПРОДАЖ: ЛЁГКИЕ ПРОДАЖИ");
 });
 
 // ============================================================

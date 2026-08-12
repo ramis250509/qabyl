@@ -1595,6 +1595,7 @@ export type Database = {
           sales_mode: boolean
           sales_objections: Json
           sales_promos: Json
+          sales_style: string
           sales_usp: Json
           salon_id: string
           start_language: string
@@ -1624,6 +1625,7 @@ export type Database = {
           sales_mode?: boolean
           sales_objections?: Json
           sales_promos?: Json
+          sales_style?: string
           sales_usp?: Json
           salon_id: string
           start_language?: string
@@ -1653,6 +1655,7 @@ export type Database = {
           sales_mode?: boolean
           sales_objections?: Json
           sales_promos?: Json
+          sales_style?: string
           sales_usp?: Json
           salon_id?: string
           start_language?: string

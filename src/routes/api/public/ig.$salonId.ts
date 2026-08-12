@@ -315,6 +315,7 @@ export const Route = createFileRoute("/api/public/ig/$salonId")({
           client_addressing: (assistant as any)?.client_addressing ?? null,
           industry: (assistant as any)?.industry ?? null,
           knowledge_answers: (assistant as any)?.knowledge_answers ?? null,
+          sales_style: (assistant as any)?.sales_style ?? null,
           sales_mode: (assistant as any)?.sales_mode ?? false,
           start_language: (assistant as any)?.start_language ?? null,
           sales_usp: (assistant as any)?.sales_usp ?? null,

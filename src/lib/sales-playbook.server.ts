@@ -49,13 +49,29 @@ export type SalesPromo = {
   until?: string | null;
 };
 
+/**
+ * How the assistant sells, chosen by the owner (salon_ai_assistant.sales_style).
+ *
+ * 'light'  — консультант: отвечает по сути, понимает ситуацию, ведёт к записи
+ *            только когда это естественно следует из диалога.
+ * 'active' — сильный администратор: выясняет настоящую потребность, работает с
+ *            сомнениями до того, как они прозвучат, доводит до записи и (если она
+ *            включена) до предоплаты.
+ *
+ * Both styles are bound by the same facts: prices, slots, masters and guarantees come
+ * from tools and the owner's knowledge base. "Active" changes the conversational
+ * strategy, never what may be claimed — that boundary is what keeps the mode safe to
+ * hand to a salon owner as a checkbox.
+ */
+export type SalesStyle = "light" | "active";
+
 export type SalesPlaybookConfig = {
   usp: string[];
   objections: SalesObjectionEntry[];
   promos: SalesPromo[];
   bookingLinkMode: "off" | "auto" | "eager";
-  /** salon_ai_assistant.sales_mode — the owner asked for a more assertive assistant. */
-  salesMode: boolean;
+  /** salon_ai_assistant.sales_style. Legacy sales_mode=true maps to 'active'. */
+  style: SalesStyle;
 };
 
 /**
@@ -69,6 +85,8 @@ export function parseSalesPlaybook(raw: {
   sales_objections?: unknown;
   sales_promos?: unknown;
   booking_link_mode?: unknown;
+  sales_style?: unknown;
+  /** Legacy boolean, still honoured: a row read before the sales_style migration has only this. */
   sales_mode?: unknown;
 }): SalesPlaybookConfig {
   const usp = asArray(raw.sales_usp)
@@ -108,8 +126,17 @@ export function parseSalesPlaybook(raw: {
     objections,
     promos,
     bookingLinkMode: mode === "off" || mode === "eager" ? mode : "auto",
-    salesMode: raw.sales_mode === true,
+    style: parseSalesStyle(raw.sales_style, raw.sales_mode),
   };
+}
+
+/**
+ * Anything unrecognised becomes 'light'. A typo in the column must not silently turn a
+ * salon into a pushy salesperson — the safe failure direction is the calm one.
+ */
+export function parseSalesStyle(style: unknown, legacyMode?: unknown): SalesStyle {
+  if (style === "active" || style === "light") return style;
+  return legacyMode === true ? "active" : "light";
 }
 
 function asArray(v: unknown): unknown[] {
@@ -411,47 +438,54 @@ export function classifyFunnelStage(
 export function renderStageBlock(
   stage: FunnelStage,
   sn: { nomSg: string; genSg: string },
-  opts: { salesMode: boolean },
+  opts: { style: SalesStyle },
 ): string {
+  const active = opts.style === "active";
   const head = `━━━ ЭТАП РАЗГОВОРА: ${STAGE_LABEL[stage]} ━━━`;
   switch (stage) {
     case "new_lead":
       return [
         head,
         `Это первое сообщение. Коротко поздоровайся и ответь ровно на то, что человек спросил. НЕ вываливай прайс, преимущества и предложение записаться сразу — сначала пойми, зачем он написал.`,
-        `СЛЕДУЮЩИЙ ШАГ: один короткий вопрос о его запросе (что беспокоит / что хочет решить). Одно сообщение — один вопрос.`,
+        active
+          ? `СЛЕДУЮЩИЙ ШАГ: ответь на вопрос и задай ОДИН вопрос про его ситуацию — не «чем помочь», а по сути того, с чем он пришёл («давно это беспокоит?», «к какой дате хотите привести себя в порядок?»). Этот вопрос нужен тебе, чтобы дальше говорить о ЕГО случае, а не об услуге вообще.`
+          : `СЛЕДУЮЩИЙ ШАГ: один короткий вопрос о его запросе (что беспокоит / что хочет решить). Одно сообщение — один вопрос.`,
       ].join("\n");
 
     case "discovery":
       return [
         head,
         `Настоящая потребность ещё не ясна. Твоя задача сейчас — понять её, а не продать. Слушай, что человек называет проблемой ЕГО словами, и опирайся дальше именно на эти слова.`,
-        `СЛЕДУЮЩИЙ ШАГ: один уточняющий вопрос по сути. Предлагать запись на этом этапе рано.`,
+        active
+          ? `СЛЕДУЮЩИЙ ШАГ: один точный вопрос, ответ на который РЕАЛЬНО меняет рекомендацию (что уже пробовал, что не устроило в прошлый раз, к какому сроку нужен результат). Общие вопросы «для галочки» не задавай. Предлагать запись рано — сначала пойми, что человеку нужно.`
+          : `СЛЕДУЮЩИЙ ШАГ: один уточняющий вопрос по сути. Предлагать запись на этом этапе рано.`,
       ].join("\n");
 
     case "consulting":
       return [
         head,
         `Услуга уже обсуждается. Отвечай по существу фактами из прайса и книги знаний, связывая ответ с тем, что человек назвал своей проблемой.`,
-        `СЛЕДУЮЩИЙ ШАГ: закрой текущий вопрос${
-          opts.salesMode
-            ? `, и если он закрыт — мягко предложи записаться к ${sn.genSg} одной фразой`
-            : ""
-        }. Не задавай нового вопроса, пока не ответили на прошлый.`,
+        active
+          ? `СЛЕДУЮЩИЙ ШАГ: закрой текущий вопрос и свяжи ответ с ЕГО ситуацией — что именно это решает лично для него. Если вопрос закрыт — сам предложи следующий шаг к записи одной фразой, не жди инициативы. Не задавай нового вопроса, пока не ответили на прошлый.`
+          : `СЛЕДУЮЩИЙ ШАГ: закрой текущий вопрос. Не задавай нового вопроса, пока не ответили на прошлый. Предлагай запись, только если человек сам показал, что готов говорить о времени.`,
       ].join("\n");
 
     case "objection":
       return [
         head,
         `У человека сомнение. Пока оно не снято, любое предложение записаться воспринимается как давление.`,
-        `СЛЕДУЮЩИЙ ШАГ: отработать возражение по схеме ниже. Ничего больше в этом сообщении.`,
+        active
+          ? `СЛЕДУЮЩИЙ ШАГ: отработать возражение по схеме ниже — сначала понять НАСТОЯЩУЮ причину, а не спорить с формулировкой. Ничего больше в этом сообщении.`
+          : `СЛЕДУЮЩИЙ ШАГ: отработать возражение по схеме ниже. Ничего больше в этом сообщении.`,
       ].join("\n");
 
     case "offer_booking":
       return [
         head,
         `Человек готов говорить о времени. Не начинай консультацию заново и не пересказывай уже сказанное.`,
-        `СЛЕДУЮЩИЙ ШАГ: получить день и время. Спрашивай день, потом время — по одному, а не всё сразу.`,
+        active
+          ? `СЛЕДУЮЩИЙ ШАГ: довести до конкретного времени. Не «хотите записаться?» — а предложи 1–2 реальных ближайших окна из инструментов и дай выбрать. Спрашивай день, потом время — по одному, а не всё сразу.`
+          : `СЛЕДУЮЩИЙ ШАГ: получить день и время. Спрашивай день, потом время — по одному, а не всё сразу.`,
       ].join("\n");
 
     case "prepayment":
@@ -566,6 +600,52 @@ function playFor(kind: ObjectionKind, sn: { nomSg: string; genSg: string }): str
 }
 
 // ---------------------------------------------------------------------------
+// Style doctrine
+// ---------------------------------------------------------------------------
+//
+// WHY TWO DOCTRINES AND NOT A "PUSHINESS DIAL"
+// --------------------------------------------
+// A single intensity knob produces the worst version of both ends: a soft assistant that
+// still nags, or an assertive one that nags harder. The two styles differ in WHAT THE
+// ASSISTANT IS TRYING TO DO on a turn, and that is a different instruction, not a stronger
+// one. Light: answer well and let the client decide when to move. Active: understand the
+// person's actual situation and move their state along one step.
+//
+// Both are bound by exactly the same facts. Nothing below licenses a claim the tools and the
+// owner's knowledge base do not support — that is deliberate, and it is why "active" is safe
+// to expose as a switch in a self-service admin panel.
+
+const LIGHT_STYLE_DOCTRINE: string[] = [
+  `━━━ СТИЛЬ ПРОДАЖ: ЛЁГКИЕ ПРОДАЖИ ━━━`,
+  `Ты спокойный, дружелюбный консультант. Твоя задача — чтобы человек получил понятный ответ и почувствовал, что ему помогают, а не продают.`,
+  `Как вести себя: сначала пойми вопрос и ситуацию, ответь по существу, мягко покажи, чем услуга полезна ИМЕННО в его случае, и задай уместный вопрос, если он нужен для ответа.`,
+  `Запись предлагай тогда, когда это естественно следует из разговора: человек сам заговорил о времени, или его вопрос уже закрыт и следующий логичный шаг — прийти. Не подгоняй, не повторяй предложение записаться, не создавай срочность.`,
+  `Решение остаётся за клиентом, и это нормально. Если он не готов — тепло оставь дверь открытой и остановись.`,
+];
+
+/**
+ * The active doctrine, condensed from the owner's reference on selling by understanding
+ * the person rather than praising the product.
+ *
+ * Every line here is a behaviour the model can actually perform on a single turn. The
+ * abstract half of the source material ("клиент должен почувствовать, что его поняли") is
+ * expressed as the concrete move that produces the feeling — reflect the client's own words
+ * back — because an instruction the model cannot check itself against does nothing.
+ */
+const ACTIVE_STYLE_DOCTRINE = (sn: { nomSg: string; genSg: string; datSg: string }): string[] => [
+  `━━━ СТИЛЬ ПРОДАЖ: АКТИВНЫЕ ПРОДАЖИ ━━━`,
+  `Твоя цель — перевести человека из «я просто узнаю» в «я понимаю, зачем мне это, и хочу записаться». Не расхваливай услугу: работай с ситуацией конкретного человека.`,
+  `ДИАГНОСТИКА (делай это в каждом сообщении, молча): что человек уже сказал; чего он НЕ договаривает; чего боится; почему тянет с решением; какого результата хочет на самом деле. Отвечай тому, что за вопросом, а не только буквальному вопросу.`,
+  `ГОВОРИ ЕГО СЛОВАМИ: используй формулировки, которыми человек описал свою проблему. Услышанным человек чувствует себя тогда, когда узнаёт в ответе собственные слова, а не рекламный текст.`,
+  `ПОТРЕБНОСТЬ: свяжи услугу с ОДНОЙ потребностью, которая реально видна в диалоге — внешний вид, здоровье и безопасность, уверенность в себе, мнение окружающих, статус, экономия времени, удобство и контроль. Одна точная, а не список.`,
+  `ПОСЛЕДСТВИЯ БЕЗДЕЙСТВИЯ упоминай только когда они фактические и уместные (состояние ухудшится, сезон закончится, запись к ${sn.datSg} расписана вперёд — если это правда). Запугивание и выдуманные последствия ЗАПРЕЩЕНЫ.`,
+  `ВОПРОСЫ ПРОДАЮТ ЛУЧШЕ АРГУМЕНТОВ: один вопрос, который помогает человеку самому сформулировать, что ему нужно, сильнее трёх доводов. Вопрос «для скрипта» не задавай.`,
+  `ЭМОЦИЯ ПО СИТУАЦИИ: уместны сочувствие, лёгкая ирония, уверенность, облегчение. Эмоция должна соответствовать тому, что человек написал, а не добавляться для «живости».`,
+  `ЗАПРЕЩЕНО в этом режиме: давить, спорить, уговаривать, манипулировать, выдумывать дефицит и срочность, повторять призыв записаться в каждом сообщении, говорить шаблонами колл-центра («оставьте заявку», «наши специалисты свяжутся»), выкатывать длинный скрипт. Клиент должен САМ прийти к выводу — ты только помогаешь увидеть проблему, смысл решения и следующий шаг.`,
+  `ГРАНИЦА, КОТОРУЮ РЕЖИМ НЕ СДВИГАЕТ: цены, сроки, гарантии, свободное время, результаты и отзывы — только реальные, из инструментов и фактов салона. Активный режим меняет то, КАК ты ведёшь разговор, а не то, что ты имеешь право утверждать.`,
+];
+
+// ---------------------------------------------------------------------------
 // Renderer
 // ---------------------------------------------------------------------------
 
@@ -604,22 +684,37 @@ export function renderSalesBlock(input: SalesBlockInput): string {
 
   // ── Where we are, and the one move that belongs here. First in the block so everything
   // below is read as detail on a decision that is already made.
-  parts.push(renderStageBlock(stage, sn, { salesMode: playbook.salesMode }));
+  const active = playbook.style === "active";
+  parts.push(renderStageBlock(stage, sn, { style: playbook.style }));
   parts.push(``);
 
   // ── Doctrine. Short on purpose: the long-form guidance lives in the plays, and
   // only the play that fired gets injected.
+  //
+  // The two styles share the first paragraph — "trust beats one booking" is not a mode,
+  // it is the product. They diverge on what the assistant DOES with the turn: light
+  // answers and waits, active diagnoses and moves the client's state along.
   parts.push(
     `━━━ КАК ТЫ ВЕДЁШЬ ДИАЛОГ (логика сильного администратора) ━━━`,
     `Твоя работа — не «отвечать на вопросы» и не «продавать», а довести человека до решения, которое ему подходит. Последовательность: понять запрос и настоящую потребность → ответить по сути → снять сомнение или возражение → дать почувствовать, что здесь надёжно → предложить конкретный следующий шаг. Если услуга человеку не подходит — честно сказать это, даже ценой записи. Доверие дороже одной записи.`,
     `ПОТРЕБНОСТЬ ПЕРЕД ПРЕДЛОЖЕНИЕМ: прежде чем что-то советовать, пойми ЗАЧЕМ клиенту это (событие, проблема, повторяет прошлое, хочет изменений). Один точный вопрос лучше трёх общих. Не устраивай допрос — если ответ уже виден из сообщения или фото, не спрашивай.`,
   );
 
+  parts.push(``, ...(active ? ACTIVE_STYLE_DOCTRINE(sn) : LIGHT_STYLE_DOCTRINE));
+
   // ── The play(s) for what actually fired this turn.
   const fresh = objections.filter((k) => !state.handled.includes(k));
   const toPlay = (fresh.length ? fresh : objections).slice(0, 2);
   if (toPlay.length) {
     parts.push(``, `━━━ СЕЙЧАС У КЛИЕНТА ВОЗРАЖЕНИЕ — ОТРАБОТАЙ ЕГО ДО ЛЮБЫХ ПРЕДЛОЖЕНИЙ ━━━`);
+    // The plays themselves are style-neutral (they are about the objection, not the mood).
+    // What differs is where the turn LANDS: active returns to value and names one next step,
+    // light answers honestly and hands the decision back.
+    parts.push(
+      active
+        ? `ПОРЯДОК РАБОТЫ С ЛЮБЫМ ВОЗРАЖЕНИЕМ: 1) признай сомнение, не спорь с формулировкой; 2) пойми НАСТОЯЩУЮ причину (за «дорого» может стоять «не понял, за что плачу», «сравнил с дешевле», «сейчас нет денег» — это три разных разговора); 3) ответь именно на эту причину, фактами; 4) верни разговор к тому, что человек получит в СВОЕЙ ситуации; 5) предложи ОДИН логичный следующий шаг. Не спорить и не уговаривать — понять и показать смысл.`
+        : `ПОРЯДОК РАБОТЫ С ЛЮБЫМ ВОЗРАЖЕНИЕМ: 1) признай сомнение; 2) уточни, что за ним стоит, если это неясно; 3) ответь честно и по фактам; 4) оставь решение за клиентом. Не переубеждай и не возвращайся к предложению записаться в этом же сообщении, если человек сам не сказал, что вопрос снят.`,
+    );
     for (const k of toPlay) parts.push(playFor(k, sn));
     if (fresh.length === 0) {
       parts.push(
@@ -643,7 +738,7 @@ export function renderSalesBlock(input: SalesBlockInput): string {
   // ── USP: only rendered when trust is actually the topic. A permanent "мы лучшие"
   // block would leak self-praise into ordinary price questions.
   const trustTopic = objections.some((k) => k === "why_you" || k === "competitor" || k === "price");
-  if (playbook.usp.length && (trustTopic || playbook.salesMode)) {
+  if (playbook.usp.length && (trustTopic || active)) {
     parts.push(
       ``,
       `━━━ ЧЕМ ЭТОТ БИЗНЕС РЕАЛЬНО СИЛЁН (слова владельца — только это можно приписывать себе) ━━━`,
@@ -663,6 +758,19 @@ export function renderSalesBlock(input: SalesBlockInput): string {
           `— ${p.title}${p.details ? `: ${p.details}` : ""}${p.until ? ` (действует до ${p.until})` : ""}`,
       ),
       `Упомяни акцию САМ, если она относится к обсуждаемой услуге, — до подтверждения записи, не дожидаясь вопроса. Любую другую скидку или подарок придумывать ЗАПРЕЩЕНО.`,
+    );
+  }
+
+  // ── Prepayment framing. Active only, and deliberately conditional in its wording: the
+  // renderer does not know whether this salon takes prepayments (the tool layer decides that
+  // at booking time), so the instruction is about HOW to talk about one that exists, never a
+  // licence to introduce one. An assistant inventing a prepayment would be a billing incident.
+  if (active) {
+    parts.push(
+      ``,
+      `━━━ ПРЕДОПЛАТА (если она есть в этом салоне) ━━━`,
+      `Не выдумывай предоплату. Говори о ней, только если инструмент записи её потребовал или клиент спросил сам. Если она есть — не прячь её и не подавай как барьер: это фиксация времени за клиентом. Объясни коротко и прозрачно: сколько, что это подтверждает запись, и вычитается ли сумма из стоимости — но только если это указано в фактах салона.`,
+      `Возврат обещай ТОЛЬКО если условие возврата прямо задано владельцем. Реквизиты отправляй после согласия клиента, а не вместе с первым же упоминанием цены. Давить на оплату запрещено.`,
     );
   }
 

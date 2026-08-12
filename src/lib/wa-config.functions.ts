@@ -72,7 +72,7 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const [salonResult, assistantResult, branchResult] = await Promise.all([
       supabaseAdmin.from("salons").select("id, name, timezone, working_hours, address").eq("id", data.salonId).maybeSingle(),
-      supabaseAdmin.from("salon_ai_assistant").select("greeting, tone_instructions, pricing_rules, languages, manage_cutoff_hours, engine, knowledge_base, ai_rules, rich_formatting, client_addressing, industry, knowledge_answers").eq("salon_id", data.salonId).maybeSingle(),
+      supabaseAdmin.from("salon_ai_assistant").select("greeting, tone_instructions, pricing_rules, languages, manage_cutoff_hours, engine, knowledge_base, ai_rules, rich_formatting, client_addressing, industry, knowledge_answers, sales_style, sales_mode, sales_usp, sales_objections, sales_promos, booking_link_mode").eq("salon_id", data.salonId).maybeSingle(),
       supabaseAdmin.from("branches").select("id, name, address").eq("salon_id", data.salonId).eq("is_active", true).order("sort_order"),
     ]);
 
@@ -124,6 +124,15 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
         client_addressing: (assistant as any)?.client_addressing ?? null,
         industry: (assistant as any)?.industry ?? null,
         knowledge_answers: (assistant as any)?.knowledge_answers ?? null,
+        // The simulator exists so the owner can check a setting before real clients meet it.
+        // Without the sales fields it answered in a style no live conversation would use —
+        // and the sales style is precisely what an owner wants to try out before switching.
+        sales_style: (assistant as any)?.sales_style ?? null,
+        sales_mode: (assistant as any)?.sales_mode ?? false,
+        sales_usp: (assistant as any)?.sales_usp ?? null,
+        sales_objections: (assistant as any)?.sales_objections ?? null,
+        sales_promos: (assistant as any)?.sales_promos ?? null,
+        booking_link_mode: (assistant as any)?.booking_link_mode ?? "auto",
       },
       // Valid-format test number (12 digits): the appointments phone-validation trigger requires
       // 10–15 digits, so the placeholder "simulator_test" made every simulator booking fail. This

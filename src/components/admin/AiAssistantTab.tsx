@@ -17,7 +17,17 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-client";
 import { toast } from "sonner";
-import { Sparkles, Lock, Copy, RefreshCw, Webhook, MessageCircle } from "lucide-react";
+import {
+  Sparkles,
+  Lock,
+  Copy,
+  RefreshCw,
+  Webhook,
+  MessageCircle,
+  Check,
+  Leaf,
+  Flame,
+} from "lucide-react";
 import { getWaWebhookConfig, regenerateWaWebhookToken } from "@/lib/wa-config.functions";
 import {
   INDUSTRIES_META,
@@ -46,6 +56,9 @@ type Assistant = {
   client_addressing: string | null;
   industry: IndustryKey;
   knowledge_answers: Record<string, string>;
+  /** Как ассистент продаёт: мягкий консультант или активный администратор. */
+  sales_style: SalesStyleKey;
+  /** Legacy-зеркало sales_style. Пишется вместе с ним, чтобы старые чтения не сломались. */
   sales_mode: boolean;
   /** Language the assistant OPENS in, before the client shows their own. */
   start_language: "ru" | "ky";
@@ -57,6 +70,50 @@ type Assistant = {
   sales_promos: { title: string; details: string; until: string }[];
   booking_link_mode: "off" | "auto" | "eager";
 };
+
+// ── Режимы продаж ────────────────────────────────────────────────────────────
+// Два режима вместо одного чекбокса «активные продажи»: тот чекбокс не объяснял
+// владельцу ни что включается, ни что происходит, когда он выключен. Карточки
+// показывают оба варианта рядом — выбор делается сравнением, а не угадыванием.
+type SalesStyleKey = "light" | "active";
+
+const SALES_STYLES: {
+  key: SalesStyleKey;
+  label: string;
+  tagline: string;
+  icon: typeof Leaf;
+  bullets: string[];
+}[] = [
+  {
+    key: "light",
+    label: "Лёгкие продажи",
+    tagline: "Спокойный консультант. Помогает разобраться и не давит.",
+    icon: Leaf,
+    bullets: [
+      "Сначала понимает вопрос, потом отвечает по существу",
+      "Показывает пользу услуги мягко, без уговоров",
+      "Предлагает запись, когда это следует из разговора",
+      "Решение оставляет за клиентом",
+    ],
+  },
+  {
+    key: "active",
+    label: "Активные продажи",
+    tagline: "Сильный администратор. Выясняет потребность и доводит до записи.",
+    icon: Flame,
+    bullets: [
+      "Выясняет настоящую потребность, а не только вопрос",
+      "Замечает сомнения и снимает их до отказа",
+      "Связывает услугу с ситуацией конкретного клиента",
+      "Доводит до времени записи и предоплаты, если она есть",
+    ],
+  },
+];
+
+function normalizeSalesStyle(value: unknown, legacyMode?: unknown): SalesStyleKey {
+  if (value === "active" || value === "light") return value;
+  return legacyMode === true ? "active" : "light";
+}
 
 // ── Tolerant readers for the JSONB sales columns ─────────────────────────────
 // The columns are `jsonb` and the DB only guarantees "is an array". Everything inside is
@@ -126,6 +183,7 @@ export function AiAssistantTab({
     client_addressing: "",
     industry: DEFAULT_INDUSTRY,
     knowledge_answers: {},
+    sales_style: "light",
     sales_mode: false,
     start_language: "ru",
     assistant_branch_id: null,
@@ -172,6 +230,7 @@ export function AiAssistantTab({
           client_addressing: (row as any).client_addressing ?? "",
           industry: normalizeIndustry((row as any).industry),
           knowledge_answers: ((row as any).knowledge_answers as Record<string, string>) ?? {},
+          sales_style: normalizeSalesStyle((row as any).sales_style, (row as any).sales_mode),
           sales_mode: !!(row as any).sales_mode,
           start_language: (row as any).start_language === "ky" ? "ky" : "ru",
           assistant_branch_id: (row as any).assistant_branch_id ?? null,
@@ -264,7 +323,10 @@ export function AiAssistantTab({
         client_addressing: data.client_addressing || null,
         industry: data.industry,
         knowledge_answers: data.knowledge_answers ?? {},
-        sales_mode: data.sales_mode,
+        sales_style: data.sales_style,
+        // Legacy mirror. One source of truth in code (sales_style), but the old column stays
+        // truthful for anything reading the table directly.
+        sales_mode: data.sales_style === "active",
         start_language: data.start_language,
         assistant_branch_id: data.assistant_branch_id,
         // Blank rows are dropped rather than stored: an empty USP or a trigger with no answer
@@ -557,19 +619,64 @@ export function AiAssistantTab({
           </p>
         </div>
 
-        <div className="space-y-2">
-          <div className="flex items-center gap-3">
-            <Switch
-              checked={data.sales_mode}
-              onCheckedChange={(v) => setData({ ...data, sales_mode: v })}
-            />
-            <Label className="text-sm">Режим активных продаж</Label>
+        <div className="space-y-3">
+          <div>
+            <Label>Режим продаж</Label>
+            <p className="text-xs text-muted-foreground mt-1">
+              Как Ассистент ведёт разговор. На факты это не влияет: цены, свободное время,
+              гарантии и результаты в обоих режимах — только реальные, из вашего прайса и базы
+              знаний.
+            </p>
+          </div>
+          <div
+            role="radiogroup"
+            aria-label="Режим продаж"
+            className="grid gap-3 sm:grid-cols-2"
+          >
+            {SALES_STYLES.map((style) => {
+              const selected = data.sales_style === style.key;
+              const Icon = style.icon;
+              return (
+                <button
+                  key={style.key}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() => setData({ ...data, sales_style: style.key })}
+                  className={`relative rounded-xl border p-4 text-left transition-colors ${
+                    selected
+                      ? "border-primary bg-primary/5 ring-1 ring-primary"
+                      : "border-border hover:border-primary/40 hover:bg-muted/40"
+                  }`}
+                >
+                  {selected && (
+                    <span className="absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                      <Check className="h-3 w-3" />
+                    </span>
+                  )}
+                  <div className="flex items-center gap-2 pr-6">
+                    <Icon
+                      className={`h-4 w-4 shrink-0 ${selected ? "text-primary" : "text-muted-foreground"}`}
+                    />
+                    <span className="font-medium text-sm">{style.label}</span>
+                  </div>
+                  <p className="mt-1.5 text-xs text-muted-foreground">{style.tagline}</p>
+                  <ul className="mt-2.5 space-y-1">
+                    {style.bullets.map((b) => (
+                      <li key={b} className="flex gap-1.5 text-xs text-muted-foreground">
+                        <span aria-hidden className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-current" />
+                        <span>{b}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </button>
+              );
+            })}
           </div>
           <p className="text-xs text-muted-foreground">
-            Ассистент активнее ведёт клиента к записи: сам предлагает удобное время, мягко
-            отрабатывает возражения («дорого», «подумаю») и доводит до записи — культурно, без
-            навязчивости. Работает в режиме «Живой диалог». Медицинские ограничения всегда важнее
-            продажи.
+            {data.sales_style === "active"
+              ? "В активном режиме Ассистент сам предлагает следующий шаг и работает с возражениями. Давление, споры, выдуманная срочность и навязчивые повторы запрещены — стоп-правило от навязчивости работает в обоих режимах, а медицинская безопасность всегда важнее записи."
+              : "Лёгкий режим — безопасный выбор по умолчанию. Если записей мало, а вопросов много, попробуйте активный: проверить разницу можно в симуляторе ниже, не переключая клиентов."}
           </p>
         </div>
 

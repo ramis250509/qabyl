@@ -100,9 +100,16 @@ export type WaAssistantConfig = {
   // V4: answers to the industry-specific "knowledge book" questions, keyed by question id
   // (see src/lib/industries.ts). Rendered into the system prompt as labelled salon facts.
   knowledge_answers?: Record<string, string> | null;
-  // V4: "salesperson mode" — when true the agent proactively drives the conversation toward a
-  // booking (assumptive close, objection handling) instead of only answering. Off by default;
-  // medical/safety boundaries always outrank it. Only affects the V4 ("живой диалог") engine.
+  // V4: which of the two sales styles the owner chose — 'light' (default: calm consulting,
+  // booking offered when the conversation leads there) or 'active' (need diagnosis, objection
+  // work, drives to a booking and, where configured, a prepayment). Medical/safety boundaries
+  // and the facts the assistant may state are identical in both. V4 only.
+  sales_style?: string | null;
+  /**
+   * Legacy boolean that 'sales_style' replaced (migration 20260812150000). Still read as a
+   * fallback so a config assembled from an older row — or an older cached payload — keeps the
+   * behaviour its owner picked: true means 'active'.
+   */
   sales_mode?: boolean | null;
   // V5 sales playbook (salon_ai_assistant.sales_* columns, migration 20260810120000).
   // Raw JSONB as it comes out of the DB — parseSalesPlaybook() in sales-playbook.server.ts

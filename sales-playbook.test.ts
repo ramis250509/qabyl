@@ -14,6 +14,7 @@ import {
   EMPTY_SALES_STATE,
   nextSalesState,
   parseSalesPlaybook,
+  parseSalesStyle,
   readSalesState,
   renderSalesBlock,
   type SalesPlaybookConfig,
@@ -28,7 +29,7 @@ const EMPTY_PLAYBOOK: SalesPlaybookConfig = {
   objections: [],
   promos: [],
   bookingLinkMode: "auto",
-  salesMode: false,
+  style: "light",
 };
 
 function block(over: Partial<Parameters<typeof renderSalesBlock>[0]> = {}) {
@@ -246,7 +247,7 @@ describe("owner-configured facts", () => {
     objections: [{ trigger: "дорого", answer: "В цену входит уход и укладка" }],
     promos: [{ title: "Кератин + стрижка", details: "стрижка в подарок", until: "2026-12-31" }],
     bookingLinkMode: "auto",
-    salesMode: false,
+    style: "light",
   };
 
   test("the owner's own answer is injected and marked as outranking the generic play", () => {
@@ -313,6 +314,113 @@ describe("parseSalesPlaybook tolerance", () => {
     expect(parseSalesPlaybook({ booking_link_mode: "eager" }).bookingLinkMode).toBe("eager");
     expect(parseSalesPlaybook({ booking_link_mode: "off" }).bookingLinkMode).toBe("off");
     expect(parseSalesPlaybook({ booking_link_mode: "нет" }).bookingLinkMode).toBe("auto");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sales styles
+// ---------------------------------------------------------------------------
+
+describe("sales style resolution", () => {
+  test("the column wins when it holds a known style", () => {
+    expect(parseSalesStyle("active")).toBe("active");
+    expect(parseSalesStyle("light")).toBe("light");
+  });
+
+  test("legacy sales_mode is honoured when sales_style is absent", () => {
+    // Salons configured before migration 20260812150000 have only the boolean. Reading it as
+    // "no style set → light" would quietly turn off a mode the owner deliberately enabled.
+    expect(parseSalesStyle(null, true)).toBe("active");
+    expect(parseSalesStyle(undefined, false)).toBe("light");
+    expect(parseSalesPlaybook({ sales_mode: true }).style).toBe("active");
+  });
+
+  test("anything unrecognised degrades to light, never to active", () => {
+    // The safe failure direction: a typo must not make a salon's assistant pushy.
+    expect(parseSalesStyle("ACTIVE")).toBe("light");
+    expect(parseSalesStyle("агрессивный")).toBe("light");
+    expect(parseSalesStyle(1)).toBe("light");
+    expect(parseSalesPlaybook({}).style).toBe("light");
+  });
+
+  test("an explicit light overrides a stale legacy true", () => {
+    // The admin panel writes both columns, but a salon switched active → light between
+    // deploys could still carry sales_mode=true. The new column is the source of truth.
+    expect(parseSalesStyle("light", true)).toBe("light");
+  });
+});
+
+describe("what actually differs between the two styles", () => {
+  const light = (over = {}) => block({ playbook: { ...EMPTY_PLAYBOOK, style: "light" }, ...over });
+  const active = (over = {}) => block({ playbook: { ...EMPTY_PLAYBOOK, style: "active" }, ...over });
+
+  test("each style renders its own doctrine and only its own", () => {
+    expect(light()).toContain("СТИЛЬ ПРОДАЖ: ЛЁГКИЕ ПРОДАЖИ");
+    expect(light()).not.toContain("СТИЛЬ ПРОДАЖ: АКТИВНЫЕ ПРОДАЖИ");
+    expect(active()).toContain("СТИЛЬ ПРОДАЖ: АКТИВНЫЕ ПРОДАЖИ");
+    expect(active()).not.toContain("СТИЛЬ ПРОДАЖ: ЛЁГКИЕ ПРОДАЖИ");
+  });
+
+  test("active diagnoses the client; light does not", () => {
+    expect(active()).toMatch(/ДИАГНОСТИКА/);
+    expect(active()).toMatch(/чего он НЕ договаривает/);
+    expect(light()).not.toMatch(/ДИАГНОСТИКА/);
+  });
+
+  test("on the consulting stage only active offers the next step itself", () => {
+    expect(active()).toMatch(/сам предложи следующий шаг/i);
+    expect(light()).toMatch(/только если человек сам показал/i);
+  });
+
+  test("objections: active returns to value and names one step, light hands back the decision", () => {
+    const o = { objections: ["price" as const], clientText: "дорого", stage: "objection" as const };
+    expect(active(o)).toMatch(/верни разговор к тому, что человек получит/i);
+    expect(active(o)).toMatch(/предложи ОДИН логичный следующий шаг/);
+    expect(light(o)).toMatch(/оставь решение за клиентом/i);
+    expect(light(o)).not.toMatch(/верни разговор к тому, что человек получит/i);
+    // The objection play itself is shared — the mode changes the landing, not the analysis.
+    expect(active(o)).toContain("ВОЗРАЖЕНИЕ «ДОРОГО»");
+    expect(light(o)).toContain("ВОЗРАЖЕНИЕ «ДОРОГО»");
+  });
+
+  test("prepayment framing is active-only, and never invents a prepayment", () => {
+    expect(active()).toContain("ПРЕДОПЛАТА (если она есть в этом салоне)");
+    expect(active()).toMatch(/Не выдумывай предоплату/);
+    expect(light()).not.toContain("ПРЕДОПЛАТА (если она есть в этом салоне)");
+  });
+
+  test("USP is proactive in active mode, trust-gated in light", () => {
+    const usp = ["Работаем 8 лет"];
+    const idle = { objections: [], clientText: "во сколько вы работаете?" };
+    expect(block({ playbook: { ...EMPTY_PLAYBOOK, usp, style: "active" }, ...idle })).toContain(
+      "Работаем 8 лет",
+    );
+    expect(block({ playbook: { ...EMPTY_PLAYBOOK, usp, style: "light" }, ...idle })).not.toContain(
+      "Работаем 8 лет",
+    );
+  });
+
+  test("neither style may invent facts, and active says so out loud", () => {
+    expect(active()).toMatch(/только реальные, из инструментов и фактов салона/i);
+    expect(active()).toMatch(/Запугивание и выдуманные последствия ЗАПРЕЩЕНЫ/);
+    expect(active()).toMatch(/выдумывать дефицит и срочность/);
+  });
+
+  test("the anti-nag stop rule outranks the active style", () => {
+    // The governor is not a mode setting. An active-mode assistant that has already pushed
+    // twice is still forbidden from pushing again — otherwise the mode becomes the nagging
+    // the whole layer exists to prevent.
+    const out = active({
+      state: { ...EMPTY_SALES_STATE, closeAttempts: CLOSE_ATTEMPT_LIMIT },
+      readiness: "exploring" as const,
+    });
+    expect(out).toContain("СТОП-ПРАВИЛО НАВЯЗЧИВОСТИ");
+    expect(out).toMatch(/предлагать запись.*ЗАПРЕЩЕНО/is);
+  });
+
+  test("the booked stage still forbids re-selling in active mode", () => {
+    const out = active({ stage: "booked" as const });
+    expect(out).toMatch(/УЖЕ ЕСТЬ подтверждённая запись/);
   });
 });
 
