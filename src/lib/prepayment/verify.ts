@@ -13,6 +13,7 @@
 
 import type { ExtractedReceipt } from "./banks/registry";
 import { detectBank } from "./banks/registry";
+import { extractReceiptFields } from "./extract-fields";
 import { extractTextFromPdf } from "./extract-pdf";
 import { extractTextWithVision } from "./extract-vision";
 import { normalizePhone, phonesMatch, namesMatch } from "./normalize";
@@ -165,13 +166,39 @@ export async function verifyReceipt(input: VerifyInput): Promise<VerifyResult> {
     };
   }
 
-  // 3) Detect bank + parse.
+  // 3) Get the fields. A hand-written parser when one recognises this layout,
+  //    otherwise — and this is the normal case — straight from the image.
+  //
+  //    Clients pay from whatever bank they use, and a regex parser only covers
+  //    the one bank someone wrote it for, in the one layout they wrote it from.
+  //    Two real failures made that plain: MBANK's own in-app screen shares no
+  //    labels with its PDF, and an Optima receipt that merely mentioned "MBANK
+  //    по номеру телефона" was claimed by the MBANK adapter and then parsed into
+  //    nothing. So a parser that produces nothing usable is treated as no parser
+  //    at all, and the model is asked for the fields directly.
   const adapter = detectBank({ text: rawText, mime: input.mime, filename: input.filename });
-  if (!adapter) {
+  let extracted = adapter
+    ? adapter.parse({ text: rawText, mime: input.mime, filename: input.filename })
+    : null;
+
+  const USABLE_PARSE = 0.5; // at least half the anchor fields
+  if (!extracted || extracted.parserConfidence < USABLE_PARSE) {
+    const viaFields = await extractReceiptFields({ bytes: input.bytes, mime: input.mime });
+    if (viaFields.ok && viaFields.fields) {
+      // Keep whichever read more of the receipt; a specific parser that did well
+      // is still preferred, since it knows the layout exactly.
+      if (!extracted || viaFields.fields.parserConfidence > extracted.parserConfidence) {
+        extracted = viaFields.fields;
+        usedFallback = true;
+      }
+    }
+  }
+
+  if (!extracted) {
     return {
       verdict: "manual_review",
-      reasons: ["Не удалось определить банк"],
-      reasonCodes: ["unknown_bank"],
+      reasons: ["Не удалось разобрать чек"],
+      reasonCodes: ["unparsed_receipt"],
       bank: null,
       extracted: null,
       confidence: 0,
@@ -180,7 +207,6 @@ export async function verifyReceipt(input: VerifyInput): Promise<VerifyResult> {
       meta: { parserConfidence: 0, overallConfidence: 0 },
     };
   }
-  const extracted = adapter.parse({ text: rawText, mime: input.mime, filename: input.filename });
 
   // 4) Anti-reuse by txn.
   if (extracted.txnId && input.expectations.existingTxnIds?.has(extracted.txnId)) {
@@ -188,7 +214,7 @@ export async function verifyReceipt(input: VerifyInput): Promise<VerifyResult> {
       verdict: "rejected",
       reasons: ["Номер квитанции уже использовался"],
       reasonCodes: ["duplicate_txn"],
-      bank: adapter.bank,
+      bank: extracted.bank ?? adapter?.bank ?? null,
       extracted,
       confidence: extracted.parserConfidence,
       usedFallback,
@@ -287,7 +313,7 @@ export async function verifyReceipt(input: VerifyInput): Promise<VerifyResult> {
       verdict: "rejected",
       reasons,
       reasonCodes,
-      bank: adapter.bank,
+      bank: extracted.bank ?? adapter?.bank ?? null,
       extracted,
       confidence: overallConf,
       usedFallback,
@@ -301,7 +327,7 @@ export async function verifyReceipt(input: VerifyInput): Promise<VerifyResult> {
       verdict: "verified",
       reasons: ["Все проверки пройдены"],
       reasonCodes: ["ok"],
-      bank: adapter.bank,
+      bank: extracted.bank ?? adapter?.bank ?? null,
       extracted,
       confidence: overallConf,
       usedFallback,
@@ -314,7 +340,7 @@ export async function verifyReceipt(input: VerifyInput): Promise<VerifyResult> {
     verdict: "manual_review",
     reasons: reasons.length ? reasons : ["Требуется ручная проверка"],
     reasonCodes: reasonCodes.length ? reasonCodes : ["low_confidence"],
-    bank: adapter.bank,
+    bank: extracted.bank ?? adapter?.bank ?? null,
     extracted,
     confidence: overallConf,
     usedFallback,
