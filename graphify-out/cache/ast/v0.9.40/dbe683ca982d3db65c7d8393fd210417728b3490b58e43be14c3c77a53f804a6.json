@@ -1,0 +1,1 @@
+{"nodes": [{"id": "$graphify-root$_supabase_migrations_20260801140000_prepayment_receipts_storage_sql", "label": "20260801140000_prepayment_receipts_storage.sql", "file_type": "code", "source_file": "supabase/migrations/20260801140000_prepayment_receipts_storage.sql", "source_location": null}], "edges": []}

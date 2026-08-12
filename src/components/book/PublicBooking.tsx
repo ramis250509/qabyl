@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { PhoneInput } from "@/components/ui/phone-input";
+import { isValidPhone } from "@/lib/phone-countries";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -151,9 +152,9 @@ export function PublicBooking({
   // Set once the user leaves the phone field, so we only flag a bad format after they've had a
   // chance to finish typing (never red mid-entry).
   const [phoneTouched, setPhoneTouched] = useState(false);
-  // Full, well-formed Kyrgyz mobile number: +996 followed by 9 digits, first digit 2–9
-  // (rejects empty, too-short, and impossible leading 0/1). The public widget is KG-only.
-  const phoneFormatOk = /^\+996[2-9]\d{8}$/.test(clientPhone);
+  // Complete, well-formed number for whichever country the client picked in the
+  // input's code selector (length and leading digit are checked per country).
+  const phoneFormatOk = isValidPhone(clientPhone);
   const phoneInvalid = phoneTouched && clientPhone.length > 0 && !phoneFormatOk;
   const [clientNotes, setClientNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
