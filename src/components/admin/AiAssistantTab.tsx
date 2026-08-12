@@ -41,6 +41,8 @@ type Assistant = {
   engine: "v3" | "v4";
   knowledge_base: string | null;
   ai_rules: string | null;
+  /** Разрешить ассистенту списки, переносы строк и эмодзи (иначе — сплошной текст). */
+  rich_formatting: boolean;
   client_addressing: string | null;
   industry: IndustryKey;
   knowledge_answers: Record<string, string>;
@@ -120,6 +122,7 @@ export function AiAssistantTab({
     engine: "v4",
     knowledge_base: "",
     ai_rules: "",
+    rich_formatting: false,
     client_addressing: "",
     industry: DEFAULT_INDUSTRY,
     knowledge_answers: {},
@@ -165,6 +168,7 @@ export function AiAssistantTab({
           engine: (row as any).engine === "v3" ? "v3" : "v4",
           knowledge_base: (row as any).knowledge_base ?? "",
           ai_rules: (row as any).ai_rules ?? "",
+          rich_formatting: !!(row as any).rich_formatting,
           client_addressing: (row as any).client_addressing ?? "",
           industry: normalizeIndustry((row as any).industry),
           knowledge_answers: ((row as any).knowledge_answers as Record<string, string>) ?? {},
@@ -256,6 +260,7 @@ export function AiAssistantTab({
         engine: data.engine,
         knowledge_base: data.knowledge_base || null,
         ai_rules: data.ai_rules || null,
+        rich_formatting: data.rich_formatting,
         client_addressing: data.client_addressing || null,
         industry: data.industry,
         knowledge_answers: data.knowledge_answers ?? {},
@@ -721,6 +726,27 @@ export function AiAssistantTab({
                     выше любых общих правил системы — то, что написано здесь,
                     Ассистент обязан выполнять всегда. Пишите короткими
                     повелительными фразами, по одной на строку.
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Оформление сообщений (списки, эмодзи) правилами не задаётся — для этого
+                    есть переключатель ниже.
+                  </p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-3">
+                    <Switch
+                      checked={data.rich_formatting}
+                      onCheckedChange={(v) => setData({ ...data, rich_formatting: v })}
+                    />
+                    <Label className="text-sm">Красивое оформление сообщений</Label>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    По умолчанию Ассистент пишет сплошным текстом, как живой человек в чате, и
+                    ставит максимум один эмодзи — списки и переносы строк вырезаются. Включите,
+                    если хотите структурные сообщения: короткие списки с маркерами, переносы
+                    строк и эмодзи. Жирный шрифт и «звёздочки» недоступны в любом случае —
+                    WhatsApp и Instagram их не отображают.
                   </p>
                 </div>
 

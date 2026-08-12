@@ -1591,6 +1591,7 @@ export type Database = {
           manage_cutoff_hours: number
           pricing_rules: string | null
           reminder_lead_hours: number
+          rich_formatting: boolean
           sales_mode: boolean
           sales_objections: Json
           sales_promos: Json
@@ -1619,6 +1620,7 @@ export type Database = {
           manage_cutoff_hours?: number
           pricing_rules?: string | null
           reminder_lead_hours?: number
+          rich_formatting?: boolean
           sales_mode?: boolean
           sales_objections?: Json
           sales_promos?: Json
@@ -1647,6 +1649,7 @@ export type Database = {
           manage_cutoff_hours?: number
           pricing_rules?: string | null
           reminder_lead_hours?: number
+          rich_formatting?: boolean
           sales_mode?: boolean
           sales_objections?: Json
           sales_promos?: Json

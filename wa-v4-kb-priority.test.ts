@@ -27,6 +27,24 @@ describe("KB priority — salon overrides block at prompt tail", () => {
     expect(p).toContain("━━━ ПРАВИЛА ДЛЯ АССИСТЕНТА");
   });
 
+  // rich_formatting (migration 20260812120000) is the ONLY way a salon can get lists/emoji:
+  // writing "используй буллиты" into ai_rules used to lose to the hard "ФОРМАТ (СТРОГО)" line
+  // above it, and humanizeReply() flattened whatever survived. Prompt and post-processor must
+  // switch together, so lock both directions of the prompt half here.
+  test("rich_formatting=false keeps the strict prose-only FORMAT rule", () => {
+    const p = buildSystemPromptV4(inputFor({}));
+    expect(p).toContain("ФОРМАТ (СТРОГО): только сплошной связный текст");
+    expect(p).toContain("Эмодзи — максимум один на сообщение");
+  });
+
+  test("rich_formatting=true swaps in the permissive FORMAT rule, markdown still banned", () => {
+    const p = buildSystemPromptV4(inputFor({ rich_formatting: true }));
+    expect(p).not.toContain("ФОРМАТ (СТРОГО): только сплошной связный текст");
+    expect(p).not.toContain("Эмодзи — максимум один на сообщение");
+    expect(p).toContain("можно оформлять сообщения структурно");
+    expect(p).toMatch(/markdown ЗАПРЕЩ/i);
+  });
+
   test("knowledge_base appears with [ФАКТ] marker inside the salon block", () => {
     const p = buildSystemPromptV4(
       inputFor({ knowledge_base: "Парковка бесплатная. Работаем без выходных." }),

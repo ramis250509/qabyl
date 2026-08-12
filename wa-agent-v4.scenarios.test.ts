@@ -909,6 +909,19 @@ test("humanizeReply сохраняет построчную сводку под�
   expect(out.split("\n").length).toBeGreaterThanOrEqual(9);
 });
 
+test("humanizeReply({rich}) сохраняет буллиты владельца, но всё равно снимает markdown", () => {
+  // rich_formatting = true: the salon explicitly asked for lists. Structure survives; markdown
+  // does not — WhatsApp/Instagram render neither ** nor #, so it would reach the client raw.
+  const input =
+    "Что входит в консультацию:\n- **Разбор анализов**\n- Подбор питания\n- Рекомендации 💛\n\nЗаписать вас?";
+  const out = humanizeReply(input, { rich: true });
+  expect(out).not.toContain("**");
+  expect(out).toContain("\n- Разбор анализов\n");
+  expect(out).toContain("\n- Подбор питания\n");
+  expect(out).toContain("💛");
+  expect(out).toContain("\n\nЗаписать вас?");
+});
+
 test("ответ агента очищается от markdown/списка перед отправкой клиенту", async () => {
   (globalThis as any).__WA_DB__ = makeDb();
   geminiQueue = [

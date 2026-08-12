@@ -81,6 +81,13 @@ export type WaAssistantConfig = {
   // if the client asked for tomorrow", etc.). Injected in the OVERRIDES block at
   // the end of the system prompt and marked [ПРАВИЛО] — outranks generic rules.
   ai_rules?: string | null;
+  // V4: opt-in "красивое оформление" (migration 20260812120000). Off by default, and off means
+  // today's behaviour: the prompt forbids lists/markdown and humanizeReply() flattens whatever
+  // the model produces anyway. On, the assistant may use bullets, line breaks and several emoji,
+  // and the post-processor leaves that structure alone. Without this flag an owner asking for
+  // lists in ai_rules could never get them — the generic FORMAT rule and the post-processor
+  // both out-ranked the setting.
+  rich_formatting?: boolean | null;
   // V4: how clients typically address the admin (Айка, Эже, Админ…) — context only, so the
   // agent recognises such a message is directed at it and doesn't ask "к кому вы обращаетесь?".
   client_addressing?: string | null;

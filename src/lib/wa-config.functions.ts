@@ -72,7 +72,7 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const [salonResult, assistantResult, branchResult] = await Promise.all([
       supabaseAdmin.from("salons").select("id, name, timezone, working_hours, address").eq("id", data.salonId).maybeSingle(),
-      supabaseAdmin.from("salon_ai_assistant").select("greeting, tone_instructions, pricing_rules, languages, manage_cutoff_hours, engine, knowledge_base, ai_rules, client_addressing, industry, knowledge_answers").eq("salon_id", data.salonId).maybeSingle(),
+      supabaseAdmin.from("salon_ai_assistant").select("greeting, tone_instructions, pricing_rules, languages, manage_cutoff_hours, engine, knowledge_base, ai_rules, rich_formatting, client_addressing, industry, knowledge_answers").eq("salon_id", data.salonId).maybeSingle(),
       supabaseAdmin.from("branches").select("id, name, address").eq("salon_id", data.salonId).eq("is_active", true).order("sort_order"),
     ]);
 
@@ -120,6 +120,7 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
         manage_cutoff_hours: (assistant as any)?.manage_cutoff_hours ?? 0,
         knowledge_base: (assistant as any)?.knowledge_base ?? null,
         ai_rules: (assistant as any)?.ai_rules ?? null,
+        rich_formatting: (assistant as any)?.rich_formatting ?? false,
         client_addressing: (assistant as any)?.client_addressing ?? null,
         industry: (assistant as any)?.industry ?? null,
         knowledge_answers: (assistant as any)?.knowledge_answers ?? null,
