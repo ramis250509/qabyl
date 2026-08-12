@@ -876,6 +876,16 @@ async function ingestEvent(opts: {
 // Both media paths therefore check what actually arrived, and retry once with the access token
 // before giving up. The token is not sent on the first attempt because plain CDN links do work and
 // are the common case.
+/** Host + path only — the query string carries the CDN signature and the access token. */
+function safeUrlLabel(u: string): string {
+  try {
+    const p = new URL(u);
+    return `${p.host}${p.pathname}`;
+  } catch {
+    return "unparseable-url";
+  }
+}
+
 function looksLikeHtml(bytes: Uint8Array, contentType: string): boolean {
   if (/text\/html/i.test(contentType)) return true;
   const head = new TextDecoder("latin1").decode(bytes.subarray(0, 64)).trimStart().toLowerCase();
@@ -900,18 +910,40 @@ async function fetchMediaBytes(opts: {
   const { url, maxBytes, creds, mid, errLog, what } = opts;
   const token = creds.token;
 
+  // A Worker's fetch sends no User-Agent and no Accept by default, and Meta answers such requests
+  // with a full web page — the ~147 KB we kept storing — rather than the file. Green-API's CDN
+  // does not care, which is why the WhatsApp path never hit this. Asking for media explicitly, as
+  // a browser would, is the cheapest thing that can plausibly change Meta's mind.
+  const MEDIA_HEADERS: Record<string, string> = {
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+    Accept: "image/avif,image/webp,image/apng,image/*,video/*,audio/*,*/*;q=0.8",
+  };
+
   const download = async (
     target: string,
     init: RequestInit,
-  ): Promise<{ bytes: Uint8Array; mime: string } | null> => {
-    const r = await fetch(target, { ...init, signal: AbortSignal.timeout(20000) });
-    if (!r.ok) return null;
+  ): Promise<{ bytes: Uint8Array; mime: string; status: number; target: string } | null> => {
+    const r = await fetch(target, {
+      ...init,
+      headers: { ...MEDIA_HEADERS, ...((init.headers as Record<string, string>) ?? {}) },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!r.ok) {
+      errLog(`${what}: HTTP ${r.status} from ${safeUrlLabel(target)}`);
+      return null;
+    }
     const ab = await r.arrayBuffer();
     if (ab.byteLength > maxBytes) {
       errLog(`${what} too large (${ab.byteLength} bytes) — rejected`);
       return null;
     }
-    return { bytes: new Uint8Array(ab), mime: r.headers.get("content-type") ?? "" };
+    return {
+      bytes: new Uint8Array(ab),
+      mime: r.headers.get("content-type") ?? "",
+      status: r.status,
+      target,
+    };
   };
 
   const withQueryToken = (u: string) =>
@@ -940,6 +972,7 @@ async function fetchMediaBytes(opts: {
     ];
 
   const rejected: string[] = [];
+  const sampledHtml: string[] = [];
   for (const s of strategies) {
     try {
       const got = await s.run();
@@ -949,6 +982,20 @@ async function fetchMediaBytes(opts: {
       }
       if (looksLikeHtml(got.bytes, got.mime)) {
         rejected.push(`${s.name}:html`);
+        // Four different ways of asking produced a web page, so the page itself is now the only
+        // thing left that can say why. Meta states the reason in the markup — an expired link, a
+        // login wall, a permission it wants — and one line of it ends the guessing. The query
+        // string is dropped: it carries the signature and the access token.
+        if (sampledHtml.length < 2) {
+          sampledHtml.push(s.name);
+          const head = new TextDecoder("utf-8")
+            .decode(got.bytes.subarray(0, 1200))
+            .replace(/\s+/g, " ")
+            .slice(0, 300);
+          errLog(
+            `${what}: ${s.name} -> HTML ${got.status} ${got.bytes.length}b from ${safeUrlLabel(got.target)} :: ${head}`,
+          );
+        }
         continue;
       }
       if (rejected.length) errLog(`${what}: recovered via ${s.name} after ${rejected.join(", ")}`);
