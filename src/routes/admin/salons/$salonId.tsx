@@ -34,6 +34,7 @@ import { SalonDayOverridesCard } from "@/components/admin/SalonDayOverridesCard"
 import { AiAssistantTab } from "@/components/admin/AiAssistantTab";
 import { InstagramTab } from "@/components/admin/InstagramTab";
 import { PrepaymentTab } from "@/components/admin/PrepaymentTab";
+import { ScheduleImportTab } from "@/components/admin/ScheduleImportTab";
 import { ServiceExportDialog } from "@/components/admin/ServiceExportDialog";
 import { INDUSTRIES_META, INDUSTRY_ORDER, normalizeIndustry, type IndustryKey } from "@/lib/industries";
 import { SERVICE_CATALOG_TEMPLATES, colorForCategoryIndex } from "@/lib/service-catalog-templates";
@@ -331,6 +332,7 @@ function SalonEdit() {
                 <TabsTrigger value="ai">Ассистент</TabsTrigger>
               )}
               {isSuperAdmin && <TabsTrigger value="access">Доступ</TabsTrigger>}
+              {isSuperAdmin && <TabsTrigger value="import">Импорт</TabsTrigger>}
             </TabsList>
           </div>
 
@@ -393,6 +395,13 @@ function SalonEdit() {
           {isSuperAdmin && (
             <TabsContent value="access">
               <AccessTab salonId={salonId} />
+            </TabsContent>
+          )}
+          {/* Operator-only data migration. The server function gates it a second time on
+              SCHEDULE_IMPORT_SALON_IDS, so hiding the tab is convenience, not the control. */}
+          {isSuperAdmin && (
+            <TabsContent value="import">
+              <ScheduleImportTab salonId={salonId} />
             </TabsContent>
           )}
         </Tabs>
@@ -1124,7 +1133,9 @@ function MastersTab({ salonId }: { salonId: string }) {
         // master_schedules / master_day_overrides / master_time_off automatically, but doing
         // it explicitly makes the intent obvious in the audit trail (and works even if a
         // future migration weakens a CASCADE).
-        const steps: Array<[string, () => Promise<{ error: any }>]> = [
+        // PromiseLike, not Promise: a Postgrest builder is thenable but is not a real Promise
+        // (no .catch/.finally), and every call site here only awaits it.
+        const steps: Array<[string, () => PromiseLike<{ error: any }>]> = [
           ["appointments", () => supabase.from("appointments").delete().eq("master_id", deleting.id)],
           ["master_services", () => supabase.from("master_services").delete().eq("master_id", deleting.id)],
           ["master_schedules", () => supabase.from("master_schedules").delete().eq("master_id", deleting.id)],
