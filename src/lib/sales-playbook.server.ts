@@ -173,6 +173,7 @@ export type ObjectionKind =
   | "why_you" // «а почему именно вы», «чем вы лучше»
   | "fear" // страх процедуры/боли/вреда
   | "result_doubt" // «а получится?», «а держится?», сомнение в результате
+  | "value_doubt" // «а это окупится?», «стоит ли», «ну не знаю» — сомнение в СМЫСЛЕ трат
   | "competitor"; // сравнение с конкретным другим салоном/ценой
 
 /**
@@ -214,6 +215,14 @@ const OBJECTION_PATTERNS: Array<{ kind: ObjectionKind; re: RegExp }> = [
     kind: "competitor",
     re: /(в\s*другом\s*салоне|у\s*других|у\s*конкурент|там\s*дешевл|мне\s*предлож|видел[аи]?\s*за|башка\s*салон|another\s*salon|cheaper\s*elsewhere)/i,
   },
+  // The doubt that is NOT about price and NOT about the result, but about whether the whole
+  // thing is worth doing at all. Prod 2026-08-12: «ну не знаю» and «а это окупится?» matched
+  // nothing, so no play fired and the assistant answered with reassurance and another CTA —
+  // the single most common way a warm lead goes cold.
+  {
+    kind: "value_doubt",
+    re: /(окупит|стоит\s*ли|есть\s*ли\s*смысл|нет\s*ли\s*смысл|имеет\s*ли\s*смысл|не\s*знаю,?\s*(надо|нужно|стоит)?|ну\s*не\s*знаю|сомнева|не\s*уверен|а\s*надо\s*ли|туура\s*болобу|акча\s*текке|worth\s*it|not\s*sure)/i,
+  },
 ];
 
 /**
@@ -231,6 +240,7 @@ export function detectObjections(text: string): ObjectionKind[] {
     "why_you",
     "fear",
     "result_doubt",
+    "value_doubt",
     "price",
     "later",
     "think",
@@ -328,6 +338,48 @@ export function readSalesState(raw: unknown): SalesTurnState {
 
 /** Above this many fruitless pushes, the assistant is forbidden from closing again. */
 export const CLOSE_ATTEMPT_LIMIT = 2;
+
+/**
+ * Did the assistant's own reply ask for the booking?
+ *
+ * The governor used to learn about a push only from tool calls — slots fetched, appointment
+ * created. That misses the push that actually annoys people: a plain sentence, no tool
+ * involved, «что скажете, подберём удобное время?», repeated verbatim at the end of every
+ * message. Prod on 2026-08-12 showed four such closes in a row with closeAttempts still 0,
+ * so the stop rule — the one mechanism designed to prevent exactly this — never armed.
+ *
+ * Matched against the OUTGOING text, which is the only place a verbal close exists. Kept as a
+ * hand-written matcher for the same reason as the objection patterns: it runs every turn and
+ * must not cost a model round-trip. A false positive is cheap (one turn of extra restraint);
+ * a false negative is what produced the nagging.
+ */
+const CLOSE_ATTEMPT_RE = new RegExp(
+  [
+    "подбер(у|ём|ем)\\s+(вам\\s+)?(удобн|врем|окош|дат)",
+    "подобрать\\s+(вам\\s+)?врем",
+    "запиш(у|ем|ать)\\s*(вас|тебя)?",
+    "записать\\s+вас",
+    "хотите\\s+записа",
+    "готовы\\s+записа",
+    "на\\s+какой\\s+день",
+    "какое\\s+время\\s+(вам\\s+)?(подойд|удобн)",
+    "когда\\s+(вам\\s+)?удобн",
+    "во\\s+сколько\\s+(вам\\s+)?удобн",
+    "оформ(лю|им)\\s+запись",
+    "давайте\\s+запиш",
+    "жазып\\s*кой", // ky: «записать»
+    "качан\\s+ынгайлуу", // ky: «когда удобно»
+    "убакыт\\s+тандай", // ky: «выбрать время»
+    "book\\s+you\\s+in",
+    "shall\\s+i\\s+book",
+    "what\\s+time\\s+works",
+  ].join("|"),
+  "i",
+);
+
+export function detectCloseAttempt(replyText: string): boolean {
+  return CLOSE_ATTEMPT_RE.test(replyText ?? "");
+}
 
 /**
  * Advance the governor after a turn.
@@ -587,6 +639,16 @@ function playFor(kind: ObjectionKind, sn: { nomSg: string; genSg: string }): str
         `ЗАПРЕЩЕНО: «100% результат», «гарантируем», «точно понравится».`,
       ].join("\n");
 
+    case "value_doubt":
+      return [
+        `СОМНЕНИЕ В СМЫСЛЕ («а это окупится?», «стоит ли», «ну не знаю») — человек не спорит с ценой, он не видит, зачем ЕМУ это. Отвечать общими словами тут хуже всего:`,
+        `1) Не переубеждай и не хвали услугу. Сначала пойми, о чём именно сомнение: не верит, что поможет ИМЕННО ему; не понимает, что получит на выходе; или боится, что не хватит сил довести до конца.`,
+        `2) Задай ОДИН вопрос, который вернёт разговор к его ситуации: что он уже пробовал и что из этого не сработало. Ответ на этот вопрос — половина продажи.`,
+        `3) Ответь по его случаю, а не про услугу вообще: что конкретно у него разберут, какой результат реалистичен, за какой срок — только по фактам салона.`,
+        `4) Скажи прямо и спокойно, что решение за ним и что бесплатно ждать «правильного момента» не нужно — если сомнение не снято, лучше не записываться сейчас.`,
+        `ЗАПРЕЩЕНО: пустые фразы «инвестиция в себя», «вложение в здоровье», «главное — начать», «многие наши клиенты довольны». Это ответ ни о чём: человек их слышал сто раз и они не отвечают на его вопрос.`,
+      ].join("\n");
+
     case "competitor":
       return [
         `СРАВНЕНИЕ С КОНКУРЕНТОМ — работай с ним уважительно, это признак интереса, а не отказ:`,
@@ -698,6 +760,12 @@ export function renderSalesBlock(input: SalesBlockInput): string {
     `━━━ КАК ТЫ ВЕДЁШЬ ДИАЛОГ (логика сильного администратора) ━━━`,
     `Твоя работа — не «отвечать на вопросы» и не «продавать», а довести человека до решения, которое ему подходит. Последовательность: понять запрос и настоящую потребность → ответить по сути → снять сомнение или возражение → дать почувствовать, что здесь надёжно → предложить конкретный следующий шаг. Если услуга человеку не подходит — честно сказать это, даже ценой записи. Доверие дороже одной записи.`,
     `ПОТРЕБНОСТЬ ПЕРЕД ПРЕДЛОЖЕНИЕМ: прежде чем что-то советовать, пойми ЗАЧЕМ клиенту это (событие, проблема, повторяет прошлое, хочет изменений). Один точный вопрос лучше трёх общих. Не устраивай допрос — если ответ уже виден из сообщения или фото, не спрашивай.`,
+    // Prod 2026-08-12: «Многие наши клиенты отмечают значительные улучшения» — invented social
+    // proof, in a clinic, from a model that had no such fact anywhere. The generic "не выдумывай
+    // факты" rule does not catch it, because it does not read as a factual claim to the model.
+    // Naming the exact phrasings is what makes it catchable.
+    `НИКАКИХ ВЫДУМАННЫХ ОТЗЫВОВ И СТАТИСТИКИ: фразы «многие наши клиенты», «клиенты отмечают», «все довольны», «у нас высокий процент результата», «люди возвращаются» — ЗАПРЕЩЕНЫ, если этого дословно нет в фактах салона. У тебя нет данных об отзывах и результатах других клиентов. Ссылаться можно только на то, что написал владелец.`,
+    `НИКАКОЙ ВОДЫ: «инвестиция в себя», «вложение в здоровье», «главное — сделать первый шаг», «индивидуальный подход», «качественный сервис» — пустые фразы, которые ничего не отвечают. Вместо них — конкретика по случаю этого человека или честное «не знаю».`,
   );
 
   parts.push(``, ...(active ? ACTIVE_STYLE_DOCTRINE(sn) : LIGHT_STYLE_DOCTRINE));
@@ -796,6 +864,15 @@ export function renderSalesBlock(input: SalesBlockInput): string {
     parts.push(
       ``,
       `ПОРЯДОК В ЭТОМ ХОДЕ: сначала полностью закрой возражение. Предлагать запись в этом же сообщении можно ТОЛЬКО если клиент сам сказал, что вопрос снят.`,
+    );
+  } else if (state.closeAttempts === 1) {
+    // One unanswered close is not yet nagging, but a second identical one is how it starts.
+    // The hard stop at CLOSE_ATTEMPT_LIMIT was the only brake, which meant the assistant was
+    // free to repeat «подберём время?» twice before anything intervened. This is the warning
+    // shot: answer the question, don't re-ask.
+    parts.push(
+      ``,
+      `ТЫ УЖЕ ЗВАЛ ЗАПИСАТЬСЯ в прошлом сообщении, и клиент не сделал шаг. Не повторяй призыв в этом сообщении — ни теми же словами, ни другими. Ответь ровно на то, что человек спросил, и остановись. Он сам скажет, когда будет готов.`,
     );
   }
 

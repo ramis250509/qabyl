@@ -38,6 +38,7 @@ import { languageStyleBlock } from "@/lib/wa-language-style";
 import {
   classifyFunnelStage,
   classifyReadiness,
+  detectCloseAttempt,
   detectObjections,
   hasSchedulingSignal,
   nextSalesState,
@@ -3284,7 +3285,11 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
         readiness === "ready" ||
         hasSchedulingSignal(lastText) ||
         debug.actions.includes("tool:reschedule_appointment"),
-      pushedToClose: slotToolRanThisTurn || Boolean(flags.appointmentId),
+      // detectCloseAttempt reads the reply we are about to send. Without it the counter only
+      // saw tool-driven pushes, so a verbal «подберём удобное время?» at the end of every
+      // message never armed the stop rule — the exact nagging pattern it exists to stop.
+      pushedToClose:
+        slotToolRanThisTurn || Boolean(flags.appointmentId) || detectCloseAttempt(reply),
       showedSlots: (flags.slotToolCalls ?? 0) > 0,
       bookingLinkSentAt: flags.bookingLinkSent ? new Date().toISOString() : null,
     }),

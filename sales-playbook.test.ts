@@ -9,6 +9,7 @@ import {
   classifyFunnelStage,
   classifyReadiness,
   CLOSE_ATTEMPT_LIMIT,
+  detectCloseAttempt,
   detectObjections,
   hasSchedulingSignal,
   EMPTY_SALES_STATE,
@@ -320,6 +321,74 @@ describe("parseSalesPlaybook tolerance", () => {
 // ---------------------------------------------------------------------------
 // Sales styles
 // ---------------------------------------------------------------------------
+
+// Regression suite for the prod conversation of 2026-08-12 16:00 UTC (Тунукай эже, Instagram):
+// four assistant messages in a row, each ending in «подберём удобное время?», closeAttempts
+// stuck at 0, and «ну не знаю» / «а это окупится?» matching no objection at all.
+describe("prod 2026-08-12: the assistant that only wanted to book", () => {
+  test("a verbal close is counted, not just a tool-driven one", () => {
+    expect(detectCloseAttempt("Что скажете, подберём удобное время? 😊")).toBe(true);
+    expect(detectCloseAttempt("Хотите записаться на первичную консультацию?")).toBe(true);
+    expect(detectCloseAttempt("На какой день Вам удобно?")).toBe(true);
+    expect(detectCloseAttempt("Давайте запишу вас к Тунукай эже")).toBe(true);
+    expect(detectCloseAttempt("Качан ынгайлуу?")).toBe(true);
+  });
+
+  test("an ordinary informative reply is not a close", () => {
+    // A false positive costs a turn of restraint, so the matcher may be generous — but not
+    // so generous that answering a question counts as pushing.
+    expect(detectCloseAttempt("Консультация длится 30 минут и стоит 7 000 сом.")).toBe(false);
+    expect(detectCloseAttempt("Список анализов врач определяет после осмотра.")).toBe(false);
+    expect(detectCloseAttempt("")).toBe(false);
+  });
+
+  test("four verbal closes now arm the stop rule (previously stayed at 0)", () => {
+    let s = EMPTY_SALES_STATE;
+    const turn = {
+      objections: [] as ObjectionKind[],
+      progressed: false,
+      pushedToClose: detectCloseAttempt("Что скажете, подберём удобное время?"),
+      showedSlots: false,
+    };
+    s = nextSalesState(s, turn);
+    expect(s.closeAttempts).toBe(1);
+    s = nextSalesState(s, turn);
+    expect(s.closeAttempts).toBeGreaterThanOrEqual(CLOSE_ATTEMPT_LIMIT);
+  });
+
+  test("one unanswered close already brakes the next message", () => {
+    const out = block({ state: { ...EMPTY_SALES_STATE, closeAttempts: 1 } });
+    expect(out).toMatch(/ТЫ УЖЕ ЗВАЛ ЗАПИСАТЬСЯ/);
+    expect(out).toMatch(/Не повторяй призыв/);
+  });
+
+  test("«ну не знаю» and «а это окупится?» are recognised as a value doubt", () => {
+    expect(detectObjections("ну не знаю")).toContain("value_doubt");
+    expect(detectObjections("а это окупится?")).toContain("value_doubt");
+    expect(detectObjections("стоит ли оно того")).toContain("value_doubt");
+    expect(detectObjections("сомневаюсь честно говоря")).toContain("value_doubt");
+    expect(detectObjections("is it worth it?")).toContain("value_doubt");
+  });
+
+  test("the value-doubt play bans the empty phrases the model actually used", () => {
+    const out = block({
+      objections: ["value_doubt"],
+      clientText: "а это окупится?",
+      stage: "objection",
+    });
+    expect(out).toContain("СОМНЕНИЕ В СМЫСЛЕ");
+    expect(out).toMatch(/что он уже пробовал/);
+    expect(out).toMatch(/инвестиция в себя/); // named as forbidden, not as advice
+  });
+
+  test("invented social proof is banned in both styles", () => {
+    for (const style of ["light", "active"] as const) {
+      const out = block({ playbook: { ...EMPTY_PLAYBOOK, style } });
+      expect(out).toMatch(/многие наши клиенты/i);
+      expect(out).toMatch(/ЗАПРЕЩЕНЫ, если этого дословно нет в фактах салона/);
+    }
+  });
+});
 
 describe("sales style resolution", () => {
   test("the column wins when it holds a known style", () => {
