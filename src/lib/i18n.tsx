@@ -86,10 +86,17 @@ const DICT = {
     en: "Done alongside the main service — the total booking time doesn't increase.",
   },
   phoneInvalid: {
-    ru: "Введите корректный номер: +996 и 9 цифр, например +996 (555) 12-34-56.",
-    ky: "Туура номер киргизиңиз: +996 жана 9 сан, мисалы +996 (555) 12-34-56.",
-    en: "Enter a valid number: +996 and 9 digits, e.g. +996 (555) 12-34-56.",
+    ru: "Введите номер полностью и выберите код страны — например +996 555 12-34-56.",
+    ky: "Номерди толук киргизиңиз жана өлкө кодун тандаңыз — мисалы +996 555 12-34-56.",
+    en: "Enter the full number and pick the country code — e.g. +996 555 12-34-56.",
   },
+  countrySelect: { ru: "Код страны", ky: "Өлкө коду", en: "Country code" },
+  countrySearch: {
+    ru: "Поиск страны или кода",
+    ky: "Өлкө же код издөө",
+    en: "Search country or code",
+  },
+  countryNotFound: { ru: "Страна не найдена", ky: "Өлкө табылган жок", en: "No country found" },
   phoneNotWhatsapp: {
     ru: "Этот номер не зарегистрирован в WhatsApp. Укажите номер, привязанный к WhatsApp — на него придёт подтверждение записи.",
     ky: "Бул номер WhatsApp'та катталган эмес. WhatsApp'ка байланган номерди көрсөтүңүз — ага жазуу тастыктамасы келет.",

@@ -1,49 +1,87 @@
 import * as React from "react";
+import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useT } from "@/lib/i18n";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
+  DEFAULT_COUNTRY_ISO,
+  PHONE_COUNTRIES,
+  detectCountry,
+  formatNational,
+  getCountry,
+  maxDigitsOf,
+  nationalDigits,
+  onlyDigits,
+  placeholderFor,
+  toE164,
+  type PhoneCountry,
+} from "@/lib/phone-countries";
 
 /**
- * Универсальный input телефона для KG: фиксированный префикс +996,
- * маска отображения "+996 (XXX) XX-XX-XX". В onChange/значение всегда
- * возвращается E.164-строка "+996XXXXXXXXX" (или пустая строка).
+ * Phone input with a country-code picker. The country determines the dial code
+ * and the display mask; `onChange` always yields an E.164 string
+ * ("+996555123456") or "" when the national part is empty.
  */
-export interface PhoneInputProps
-  extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "onChange" | "value" | "type"> {
+export interface PhoneInputProps extends Omit<
+  React.InputHTMLAttributes<HTMLInputElement>,
+  "onChange" | "value" | "type"
+> {
   value?: string;
   onChange?: (e164: string) => void;
-  prefix?: string; // default +996
-  digitsLength?: number; // default 9
-}
-
-function formatKG(digits: string) {
-  // digits up to 9: XXX XX XX XX → "(XXX) XX-XX-XX"
-  const d = digits.slice(0, 9);
-  const p1 = d.slice(0, 3);
-  const p2 = d.slice(3, 5);
-  const p3 = d.slice(5, 7);
-  const p4 = d.slice(7, 9);
-  let out = "";
-  if (p1) out += `(${p1}`;
-  if (p1.length === 3) out += ")";
-  if (p2) out += ` ${p2}`;
-  if (p3) out += `-${p3}`;
-  if (p4) out += `-${p4}`;
-  return out;
+  /** ISO code preselected when `value` carries no recognisable dial code. */
+  defaultCountry?: string;
 }
 
 export const PhoneInput = React.forwardRef<HTMLInputElement, PhoneInputProps>(
-  ({ value = "", onChange, className, prefix = "+996", digitsLength = 9, placeholder, ...rest }, ref) => {
-    const rawDigits = React.useMemo(() => {
-      const s = (value || "").replace(/\D/g, "");
-      const pfx = prefix.replace(/\D/g, "");
-      const stripped = s.startsWith(pfx) ? s.slice(pfx.length) : s;
-      return stripped.slice(0, digitsLength);
-    }, [value, prefix, digitsLength]);
+  (
+    {
+      value = "",
+      onChange,
+      className,
+      defaultCountry = DEFAULT_COUNTRY_ISO,
+      placeholder,
+      disabled,
+      ...rest
+    },
+    ref,
+  ) => {
+    const { t } = useT();
+    const [open, setOpen] = React.useState(false);
+    // The country lives in local state because a dial code alone can't identify
+    // one (+7 is both KZ and RU) — an explicit pick must survive re-renders.
+    const [iso, setIso] = React.useState(
+      () => detectCountry(value)?.iso ?? getCountry(defaultCountry)?.iso ?? DEFAULT_COUNTRY_ISO,
+    );
+    const country = getCountry(iso) ?? PHONE_COUNTRIES[0];
 
-    const display = formatKG(rawDigits);
+    // Follow the value when it's set from outside to a different dial code
+    // (e.g. an edit dialog loading an existing client). Same dial code, no
+    // change — that would undo a KZ/RU style pick on every keystroke.
+    React.useEffect(() => {
+      const detected = detectCountry(value);
+      if (detected && detected.dial !== country.dial) setIso(detected.iso);
+    }, [value, country.dial]);
+
+    const digits = nationalDigits(value, country);
+    const display = formatNational(digits, country.mask);
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const digits = e.target.value.replace(/\D/g, "").slice(0, digitsLength);
-      onChange?.(digits ? `${prefix}${digits}` : "");
+      onChange?.(toE164(country, onlyDigits(e.target.value)));
+    };
+
+    const selectCountry = (next: PhoneCountry) => {
+      setIso(next.iso);
+      setOpen(false);
+      const kept = digits.slice(0, maxDigitsOf(next));
+      onChange?.(toE164(next, kept));
     };
 
     return (
@@ -53,18 +91,69 @@ export const PhoneInput = React.forwardRef<HTMLInputElement, PhoneInputProps>(
           className,
         )}
       >
-        <span className="px-3 flex items-center bg-muted text-muted-foreground select-none border-r border-input">
-          {prefix}
-        </span>
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              disabled={disabled}
+              aria-label={t("countrySelect")}
+              className="flex items-center gap-1 px-3 bg-muted text-muted-foreground select-none border-r border-input outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <span aria-hidden className="text-base leading-none">
+                {country.flag}
+              </span>
+              <span className="tabular-nums">{country.dial}</span>
+              <ChevronDown className="h-3.5 w-3.5 opacity-60" aria-hidden />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent
+            align="start"
+            className="w-[min(20rem,calc(100vw-2rem))] p-0"
+            // Keep focus on the search box instead of bouncing back to the input.
+            onOpenAutoFocus={(e) => e.preventDefault()}
+          >
+            <Command
+              filter={(itemValue, search) => {
+                const q = search.trim().toLowerCase().replace(/^\+/, "");
+                if (!q) return 1;
+                return itemValue.toLowerCase().includes(q) ? 1 : 0;
+              }}
+            >
+              <CommandInput placeholder={t("countrySearch")} />
+              <CommandList className="max-h-64">
+                <CommandEmpty>{t("countryNotFound")}</CommandEmpty>
+                <CommandGroup>
+                  {PHONE_COUNTRIES.map((c) => (
+                    <CommandItem
+                      key={c.iso}
+                      // Searchable haystack: Russian and English names, the ISO
+                      // code, and the dial code with and without its "+".
+                      value={`${c.name} ${c.nameEn} ${c.iso} ${c.dial} ${c.dial.slice(1)}`}
+                      onSelect={() => selectCountry(c)}
+                      className="gap-2"
+                    >
+                      <span aria-hidden className="text-base leading-none">
+                        {c.flag}
+                      </span>
+                      <span className="flex-1 truncate">{c.name}</span>
+                      <span className="text-muted-foreground tabular-nums">{c.dial}</span>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
         <input
           ref={ref}
           type="tel"
           inputMode="numeric"
-          autoComplete="tel"
-          className="flex-1 bg-transparent px-3 outline-none placeholder:text-muted-foreground"
+          autoComplete="tel-national"
+          disabled={disabled}
+          className="flex-1 min-w-0 bg-transparent px-3 outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
           value={display}
           onChange={handleChange}
-          placeholder={placeholder ?? "(555) 12-34-56"}
+          placeholder={placeholder ?? placeholderFor(country)}
           {...rest}
         />
       </div>
@@ -72,9 +161,3 @@ export const PhoneInput = React.forwardRef<HTMLInputElement, PhoneInputProps>(
   },
 );
 PhoneInput.displayName = "PhoneInput";
-
-/** Проверка, что номер заполнен полностью (E.164 KG). */
-export function isValidKGPhone(e164: string, prefix = "+996", digitsLength = 9) {
-  const re = new RegExp(`^\\${prefix}\\d{${digitsLength}}$`);
-  return re.test(e164);
-}
