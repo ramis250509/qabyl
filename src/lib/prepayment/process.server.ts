@@ -110,7 +110,7 @@ export async function processReceipt(input: ProcessReceiptInput): Promise<Proces
   // ── 2) Resolve the appointment and its prepayment row ──────────────────────
   const { data: appt } = await supabaseAdmin
     .from("appointments")
-    .select("id, salon_id, status")
+    .select("id, salon_id, status, salons(timezone)")
     .eq("id", appointmentId)
     .maybeSingle();
   if (!appt) {
@@ -210,6 +210,7 @@ export async function processReceipt(input: ProcessReceiptInput): Promise<Proces
       existingFileSha256s: shaSet,
       existingTxnIds: txnSet,
       existingPhashes: phashList,
+      timezone: (appt as any)?.salons?.timezone ?? "UTC",
     },
   });
 

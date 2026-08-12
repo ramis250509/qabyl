@@ -43,6 +43,11 @@ Rules:
 - If a field is not printed on the receipt, return null. NEVER guess or infer it.
 - recipient_* means the DESTINATION. Do not use the payer's own name, phone, or the
   account the money was debited from.
+- recipient_name is the PERSON or company receiving the money. If the receipt only
+  names the destination bank or wallet ("MBANK по номеру телефона", "Optima"),
+  recipient_name is null — a bank is not a recipient name.
+- txn_at is wall-clock time as printed on the receipt. Do NOT convert it to UTC and
+  do NOT append a timezone; return it exactly as shown, e.g. "2026-08-12T12:58:00".
 - If the receipt names a destination bank different from the issuing bank, "bank"
   is still the ISSUING one.
 - amount is the transferred sum, not the fee and not the remaining balance.`;
@@ -56,6 +61,8 @@ export interface FieldExtractResult {
 export async function extractReceiptFields(input: {
   bytes: Uint8Array;
   mime: string;
+  /** Salon timezone. A receipt prints local wall-clock with no offset. */
+  timezone?: string;
 }): Promise<FieldExtractResult> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return { ok: false, fields: null, error: "GEMINI_API_KEY missing" };
@@ -105,7 +112,7 @@ export async function extractReceiptFields(input: {
 
     const amount =
       typeof parsed.amount === "number" ? parsed.amount : parseAmount(String(parsed.amount ?? ""));
-    const txnAt = parsed.txn_at ? new Date(String(parsed.txn_at)) : null;
+    const txnAt = parseWallClock(parsed.txn_at, input.timezone);
 
     // How much of what the verifier needs actually came back. Kept in the same
     // 0..1 shape the regex parsers report, so verify.ts treats both the same.
@@ -136,6 +143,56 @@ export async function extractReceiptFields(input: {
     };
   } catch (e: any) {
     return { ok: false, fields: null, error: e?.message ?? String(e) };
+  }
+}
+
+/**
+ * A receipt prints local time with no offset — "12 авг. 2026, 12:58" is 12:58 in
+ * Bishkek. Reading that as UTC shifted every Kyrgyz payment six hours into the
+ * future, and the verifier then rejected it as made after the hold expired.
+ *
+ * A string that already carries an offset (or Z) is trusted as-is.
+ */
+export function parseWallClock(raw: unknown, timezone?: string): Date | null {
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
+  const hasOffset = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(s);
+  if (hasOffset || !timezone) {
+    const d = new Date(s);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  // Pretend the wall-clock is UTC, ask what that instant looks like in the salon's
+  // zone, and shift by the difference. Handles DST because the offset is computed
+  // for that very instant.
+  const asIfUtc = new Date(`${s.replace(/\s+/, "T")}${/[zZ]$/.test(s) ? "" : "Z"}`);
+  if (Number.isNaN(asIfUtc.getTime())) return null;
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      hour12: false,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    })
+      .formatToParts(asIfUtc)
+      .reduce<Record<string, string>>((acc, p) => {
+        if (p.type !== "literal") acc[p.type] = p.value;
+        return acc;
+      }, {});
+    const back = Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day),
+      Number(parts.hour === "24" ? "0" : parts.hour),
+      Number(parts.minute),
+      Number(parts.second),
+    );
+    return new Date(asIfUtc.getTime() - (back - asIfUtc.getTime()));
+  } catch {
+    return asIfUtc;
   }
 }
 

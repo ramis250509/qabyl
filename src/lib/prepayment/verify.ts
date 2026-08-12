@@ -42,6 +42,9 @@ export interface VerifyExpectations {
   existingTxnIds?: Set<string>;
   // Also seen phashes (for cropped/re-saved screenshots).
   existingPhashes?: string[];
+  /** Salon timezone. Receipts print local wall-clock with no offset; without this
+   *  every Kyrgyz payment reads six hours late and misses the hold window. */
+  timezone?: string;
 }
 
 export interface VerifyInput {
@@ -183,7 +186,11 @@ export async function verifyReceipt(input: VerifyInput): Promise<VerifyResult> {
 
   const USABLE_PARSE = 0.5; // at least half the anchor fields
   if (!extracted || extracted.parserConfidence < USABLE_PARSE) {
-    const viaFields = await extractReceiptFields({ bytes: input.bytes, mime: input.mime });
+    const viaFields = await extractReceiptFields({
+      bytes: input.bytes,
+      mime: input.mime,
+      timezone: input.expectations.timezone,
+    });
     if (viaFields.ok && viaFields.fields) {
       // Keep whichever read more of the receipt; a specific parser that did well
       // is still preferred, since it knows the layout exactly.

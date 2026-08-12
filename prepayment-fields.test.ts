@@ -104,3 +104,30 @@ test("a Gemini failure is reported, not turned into empty fields", async () => {
   expect(r.ok).toBe(false);
   expect(r.fields).toBeNull();
 });
+
+// ---------------------------------------------------------------------------
+// Receipt timestamps are local wall-clock. A real payment made at 12:58 in
+// Bishkek was read as 12:58 UTC — six hours into the future — and the verifier
+// rejected it as "совершён после истечения срока брони".
+// ---------------------------------------------------------------------------
+test("wall-clock on a receipt is read in the salon's timezone", async () => {
+  const { parseWallClock } = await import("@/lib/prepayment/extract-fields");
+  const d = parseWallClock("2026-08-12T12:58:00", "Asia/Bishkek");
+  // Bishkek is UTC+6, so 12:58 local is 06:58 UTC.
+  expect(d?.toISOString()).toBe("2026-08-12T06:58:00.000Z");
+});
+
+test("a timestamp that already carries an offset is left alone", async () => {
+  const { parseWallClock } = await import("@/lib/prepayment/extract-fields");
+  expect(parseWallClock("2026-08-12T12:58:00Z", "Asia/Bishkek")?.toISOString()).toBe(
+    "2026-08-12T12:58:00.000Z",
+  );
+  expect(parseWallClock("2026-08-12T12:58:00+06:00", "Asia/Bishkek")?.toISOString()).toBe(
+    "2026-08-12T06:58:00.000Z",
+  );
+});
+
+test("without a timezone nothing is shifted", async () => {
+  const { parseWallClock } = await import("@/lib/prepayment/extract-fields");
+  expect(parseWallClock("2026-08-12T12:58:00")?.toISOString()).toBe("2026-08-12T12:58:00.000Z");
+});
