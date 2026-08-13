@@ -174,6 +174,66 @@ WITH checks AS (
   FROM appointments
   WHERE source <> 'import'
     AND length(regexp_replace(COALESCE(client_phone, ''), '[^0-9]', '', 'g')) NOT BETWEEN 10 AND 15
+
+  UNION ALL
+
+  -- ═══ Миграция 20260813130000 (упреждение, аудит, доставка) ═══════════════
+
+  -- ── A14. Упреждение записи ────────────────────────────────────────────────
+  SELECT
+    'A14 salon_ai_assistant.min_lead_minutes существует',
+    CASE WHEN count(*) = 1 THEN 'PASS' ELSE 'FAIL' END,
+    NULL
+  FROM information_schema.columns
+  WHERE table_schema = 'public' AND table_name = 'salon_ai_assistant'
+    AND column_name = 'min_lead_minutes'
+
+  UNION ALL
+
+  -- Порог обязан действовать в ОБОИХ местах. Показывать слот, но запрещать его
+  -- занять (или наоборот) — ровно тот класс расхождений, который аудит и нашёл.
+  SELECT
+    'A15 min_lead_minutes учитывается и в слотах, и в записи',
+    CASE WHEN count(*) FILTER (WHERE pg_get_functiondef(p.oid) LIKE '%min_lead_minutes%') = 2
+         THEN 'PASS' ELSE 'FAIL' END,
+    string_agg(p.proname, ', ') FILTER (WHERE pg_get_functiondef(p.oid) LIKE '%min_lead_minutes%')
+  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public'
+    AND p.proname IN ('get_available_slots', 'assert_master_available')
+
+  UNION ALL
+
+  -- ── A16. Аудит-лог ────────────────────────────────────────────────────────
+  SELECT
+    'A16 триггер аудита записей установлен',
+    CASE WHEN count(*) = 1 THEN 'PASS' ELSE 'FAIL' END,
+    NULL
+  FROM pg_trigger
+  WHERE tgrelid = 'public.appointments'::regclass AND tgname = 'appointments_audit_trg'
+
+  UNION ALL
+
+  -- Журнал, который можно отредактировать из браузера, журналом не является.
+  SELECT
+    'A17 appointment_audit доступен только на чтение',
+    CASE WHEN count(*) > 0 THEN 'FAIL' ELSE 'PASS' END,
+    string_agg(grantee || ':' || privilege_type, ', ')
+  FROM information_schema.role_table_grants
+  WHERE table_schema = 'public' AND table_name = 'appointment_audit'
+    AND grantee IN ('anon', 'authenticated')
+    AND privilege_type IN ('INSERT', 'UPDATE', 'DELETE')
+
+  UNION ALL
+
+  -- ── A18. Статус доставки подтверждения ────────────────────────────────────
+  SELECT
+    'A18 колонки статуса доставки на месте',
+    CASE WHEN count(*) = 4 THEN 'PASS' ELSE 'FAIL' END,
+    count(*)::text
+  FROM information_schema.columns
+  WHERE table_schema = 'public' AND table_name = 'appointments'
+    AND column_name IN ('confirmation_status', 'confirmation_detail',
+                        'confirmation_at', 'confirmation_message_id')
 )
 SELECT check_name, status, COALESCE(detail, '') AS detail
 FROM checks

@@ -72,8 +72,37 @@ Deno.serve(async (req) => {
       .eq("salon_id", appt.salon_id)
       .maybeSingle();
     const salon = { ...salonBase, ...(secrets ?? {}) } as any;
+
+    // Confirmation delivery is the only thing the salon owner can act on, so only the
+    // confirmation kind writes the status. Reminders and reschedule notices must not
+    // overwrite it — the owner's question is always "did THIS client ever hear from us
+    // when they booked?".
+    const isConfirmation = kind == null || kind === "confirmation";
+    async function markConfirmation(
+      status: "sent" | "failed" | "skipped",
+      detail: string | null,
+      messageId?: string | null,
+    ) {
+      if (!isConfirmation) return;
+      const patch: Record<string, unknown> = {
+        confirmation_status: status,
+        confirmation_detail: detail,
+        confirmation_at: new Date().toISOString(),
+      };
+      if (messageId !== undefined) patch.confirmation_message_id = messageId;
+      const { error: markErr } = await supabase
+        .from("appointments")
+        .update(patch)
+        .eq("id", appointment_id);
+      // Never fail the send because bookkeeping failed.
+      if (markErr) console.error("send-whatsapp confirmation mark failed", { appointment_id, markErr });
+    }
+
     if (!salon?.greenapi_instance || !salon?.greenapi_token) {
       console.warn("Salon has no GreenAPI credentials configured", appt.salon_id);
+      // Reached only when the salon has whatsapp_enabled but no credentials — a
+      // misconfiguration the owner needs to see, not a deliberate opt-out.
+      await markConfirmation("failed", "WhatsApp включён, но учётные данные не настроены");
       return jsonResponse({ skipped: true, reason: "no_credentials" });
     }
 
@@ -88,6 +117,7 @@ Deno.serve(async (req) => {
     const clientChatId = normalizeGreenApiChatId(appt.client_phone as string);
     if (!clientChatId) {
       console.error("send-whatsapp invalid client phone", { appointment_id, client_phone: appt.client_phone });
+      await markConfirmation("failed", "Номер телефона нераспознаваем");
       return jsonResponse({ error: "Invalid phone" }, 400);
     }
 
@@ -190,10 +220,27 @@ Deno.serve(async (req) => {
       }
     }
 
-    const clientRes = await sendGreenApi(clientChatId, text, "client");
+    let clientRes: Awaited<ReturnType<typeof sendGreenApi>>;
+    try {
+      clientRes = await sendGreenApi(clientChatId, text, "client");
+    } catch (sendErr: any) {
+      // sendGreenApi rethrows network/timeout failures. The client heard nothing,
+      // and that is exactly what the owner must see in the calendar.
+      await markConfirmation("failed", `Сеть или таймаут: ${sendErr?.message ?? sendErr}`);
+      throw sendErr;
+    }
     if (!clientRes.ok) {
+      await markConfirmation("failed", `Провайдер отказал (HTTP ${clientRes.status})`);
       return jsonResponse({ error: "Notification provider failed", target: "client", status: clientRes.status }, 502);
     }
+    // "sent" means the provider ACCEPTED the message, not that the client received it.
+    // Green-API queues for unreachable numbers and reports the real outcome later via the
+    // outgoingMessageStatus webhook — that is what upgrades this to delivered/failed.
+    await markConfirmation(
+      "sent",
+      null,
+      (clientRes.result?.parsed as any)?.idMessage ?? null,
+    );
 
     // Notify salon owner on new bookings only. Reminders are automated, and
     // reschedule/cancellation were performed by the owner themselves in the calendar,

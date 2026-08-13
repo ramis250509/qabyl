@@ -16,7 +16,11 @@ import { useSalonTimezone, formatInTz, dayKeyInTz, minutesFromMidnightInTz, star
 import { CreateAppointmentDialog, MoveAppointmentDialog } from "@/components/admin/AppointmentDialogs";
 import { LoadingState } from "@/components/ui/loading-state";
 import { useRegisterRefresh } from "@/lib/refresh-context";
-import { rescheduleAppointment } from "@/lib/appointments.functions";
+import {
+  rescheduleAppointment,
+  getAppointmentHistory,
+  type AuditEntry,
+} from "@/lib/appointments.functions";
 
 export const Route = createFileRoute("/admin/calendar")({
   component: CalendarPage,
@@ -445,6 +449,7 @@ function CalendarPage() {
               <div className="text-muted-foreground">Мастер: {selected.masters?.name}</div>
               <div className="font-medium">{Number(selected.price).toLocaleString("ru-RU")} сом</div>
               <AppointmentAddons appointmentId={selected.id} />
+              {!lockedMaster && <ConfirmationBadge appt={selected} />}
               {selected.client_notes && <div className="p-2 rounded bg-muted text-muted-foreground">{selected.client_notes}</div>}
               {selected.status === "cancelled" && (
                 <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 p-3 text-amber-900 dark:text-amber-200 text-xs space-y-1">
@@ -479,6 +484,7 @@ function CalendarPage() {
                   </Button>
                 </div>
               )}
+              {!lockedMaster && <AppointmentHistory appointmentId={selected.id} />}
               <div className="flex flex-wrap justify-end gap-2 pt-2">
                 <Button variant="outline" onClick={() => setSelected(null)}>Закрыть</Button>
                 {selected.status === "cancelled" ? (
@@ -608,6 +614,118 @@ function AppointmentAddons({ appointmentId }: { appointmentId: string }) {
       <div className="flex justify-between pt-1 border-t font-medium"><span>Сумма доп.</span><span>+{total.toLocaleString("ru-RU")}</span></div>
     </div>
   );
+}
+
+// Did this client actually hear from us when they booked?
+//
+// Qabyl cannot reliably check whether a number is on WhatsApp BEFORE a booking — that probe
+// only ever existed for Green-API, and Cloud-API salons have no equivalent. So instead of
+// blocking the booking on a guess, we report the provider's own verdict afterwards. Only the
+// states the owner can act on are shown; a normally delivered confirmation stays silent.
+function ConfirmationBadge({ appt }: { appt: any }) {
+  const status: string | undefined = appt?.confirmation_status;
+  if (!status || status === "delivered" || status === "skipped") return null;
+
+  if (status === "failed") {
+    return (
+      <div className="rounded-md border border-red-300 bg-red-50 dark:bg-red-950/30 p-3 text-red-900 dark:text-red-200 text-xs space-y-1">
+        <div className="font-semibold">Клиент не получил подтверждение</div>
+        <div>{appt.confirmation_detail || "Сообщение не доставлено."}</div>
+        <div className="opacity-80">Свяжитесь с клиентом другим способом — он не знает, что записан.</div>
+      </div>
+    );
+  }
+  if (status === "sent") {
+    return (
+      <div className="rounded-md border p-2 text-xs text-muted-foreground">
+        Подтверждение отправлено, доставка ещё не подтверждена.
+      </div>
+    );
+  }
+  // pending — отправка ещё не отработала; на свежей записи это норма на несколько секунд.
+  return null;
+}
+
+// «Кто перенёс эту запись и когда» — до аудита ответа на этот вопрос не существовало.
+// Грузится по требованию, только когда карточка записи открыта.
+function AppointmentHistory({ appointmentId }: { appointmentId: string }) {
+  const [entries, setEntries] = useState<AuditEntry[] | null>(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    getAppointmentHistory({ data: { appointmentId } })
+      .then((r) => alive && setEntries(r.entries))
+      // История — вспомогательная панель: её недоступность не должна ломать карточку.
+      .catch(() => alive && setEntries([]));
+    return () => {
+      alive = false;
+    };
+  }, [open, appointmentId]);
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+        onClick={() => setOpen(true)}
+      >
+        История изменений
+      </button>
+    );
+  }
+
+  return (
+    <div className="rounded-md border p-2 space-y-1 text-xs">
+      <div className="font-medium text-foreground text-sm">История изменений</div>
+      {entries === null && <div className="text-muted-foreground">Загружаем…</div>}
+      {entries?.length === 0 && (
+        <div className="text-muted-foreground">
+          Изменений не записано. Журнал ведётся только с момента его включения.
+        </div>
+      )}
+      {entries?.map((e, i) => (
+        <div key={i} className="flex justify-between gap-2 text-muted-foreground">
+          <span>{describeAuditEntry(e)}</span>
+          <span className="shrink-0 opacity-70">
+            {new Date(e.at).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" })}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const AUDIT_STATUS_RU: Record<string, string> = {
+  confirmed: "подтверждена",
+  cancelled: "отменена",
+  completed: "визит состоялся",
+  no_show: "клиент не пришёл",
+  pending_payment: "ждёт предоплату",
+  payment_expired: "предоплата просрочена",
+};
+
+function describeAuditEntry(e: AuditEntry): string {
+  const d = e.detail as any;
+  const fmt = (v: unknown) =>
+    v ? new Date(String(v)).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" }) : "—";
+  switch (e.action) {
+    case "created":
+      return `${e.actor}: запись создана (${d?.source ?? "?"})`;
+    case "status_changed":
+      return `${e.actor}: статус — ${AUDIT_STATUS_RU[d?.to] ?? d?.to}`;
+    case "rescheduled":
+      return `${e.actor}: перенос ${fmt(d?.from)} → ${fmt(d?.to)}`;
+    case "master_changed":
+      return `${e.actor}: сменил мастера`;
+    case "contact_changed":
+      return `${e.actor}: изменил контакты клиента`;
+    case "deleted":
+      return `${e.actor}: запись удалена`;
+    default:
+      return `${e.actor}: изменение`;
+  }
 }
 
 function HoursColumn({ hours, totalPx, hourPx }: { hours: number[]; totalPx: number; hourPx: number }) {
