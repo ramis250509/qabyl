@@ -166,6 +166,19 @@ export function toE164(country: PhoneCountry, digits: string): string {
 }
 
 /**
+ * Total-digit bounds, shared by every layer that judges a phone number.
+ *
+ * The authority is the `validate_appointment_phone` DB trigger — it is the only
+ * check a caller cannot skip, so everything upstream must agree with it or a
+ * number gets rejected in one place and accepted in another. This constant
+ * exists because those layers HAD drifted: wa-check used to demand 11 digits and
+ * reported a valid 10-digit number as "not registered on WhatsApp", which the
+ * public widget turns into a hard block with a factually wrong message.
+ */
+export const PHONE_DIGITS_MIN = 10;
+export const PHONE_DIGITS_MAX = 15;
+
+/**
  * Is `e164` a complete, plausible number for its country? Unknown dial codes
  * fall back to the same lenient 10–15 total digits the `validate_appointment_phone`
  * DB trigger enforces, so the widget never rejects what the backend accepts.
@@ -175,11 +188,21 @@ export function isValidPhone(e164: string): boolean {
   if (!value.startsWith("+")) return false;
   const digits = onlyDigits(value);
   const country = detectCountry(value);
-  if (!country) return digits.length >= 10 && digits.length <= 15;
+  if (!country) return isPlausiblePhoneLength(digits);
   const national = digits.slice(onlyDigits(country.dial).length);
   if (national.length < minDigitsOf(country) || national.length > maxDigitsOf(country))
     return false;
   if (country.firstDigit && !new RegExp(`^${country.firstDigit}`).test(national)) return false;
   // The DB trigger rejects anything outside 10–15 digits regardless of country.
-  return digits.length >= 10 && digits.length <= 15;
+  return isPlausiblePhoneLength(digits);
+}
+
+/**
+ * Digit-count gate, matching the DB trigger exactly. Takes a raw string so
+ * callers that only ever see digits (the WhatsApp check, the agent's phone gate)
+ * can use the same rule without importing the country table.
+ */
+export function isPlausiblePhoneLength(value: string): boolean {
+  const digits = onlyDigits(value);
+  return digits.length >= PHONE_DIGITS_MIN && digits.length <= PHONE_DIGITS_MAX;
 }
