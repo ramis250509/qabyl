@@ -234,6 +234,42 @@ WITH checks AS (
   WHERE table_schema = 'public' AND table_name = 'appointments'
     AND column_name IN ('confirmation_status', 'confirmation_detail',
                         'confirmation_at', 'confirmation_message_id')
+
+  UNION ALL
+
+  -- ═══ Миграция 20260813140000 (ограничение частоты) ═══════════════════════
+
+  -- ── A19. Публичное создание записей ограничено по частоте ─────────────────
+  -- После закрытия прямого INSERT единственная публичная дверь — RPC. Без
+  -- лимита один скрипт забивает салону весь рабочий день за минуту.
+  SELECT
+    'A19 триггер ограничения частоты записей установлен',
+    CASE WHEN count(*) = 1 THEN 'PASS' ELSE 'FAIL' END,
+    NULL
+  FROM pg_trigger
+  WHERE tgrelid = 'public.appointments'::regclass AND tgname = 'appointments_rate_limit_trg'
+
+  UNION ALL
+
+  -- ── A20. Счётчик недоступен снаружи ───────────────────────────────────────
+  -- Лимит, который вызывающая сторона может обнулить сама, лимитом не является.
+  SELECT
+    'A20 rate_limit_counters закрыт для anon/authenticated',
+    CASE WHEN count(*) > 0 THEN 'FAIL' ELSE 'PASS' END,
+    string_agg(grantee || ':' || privilege_type, ', ')
+  FROM information_schema.role_table_grants
+  WHERE table_schema = 'public' AND table_name = 'rate_limit_counters'
+    AND grantee IN ('anon', 'authenticated')
+
+  UNION ALL
+
+  -- ── A21. Уборка счётчиков запланирована ───────────────────────────────────
+  -- Без неё таблица растёт вечно: строка на каждый ключ в каждом окне.
+  SELECT
+    'A21 уборка счётчиков в расписании cron',
+    CASE WHEN count(*) = 1 THEN 'PASS' ELSE 'FAIL' END,
+    NULL
+  FROM cron.job WHERE jobname = 'prune-rate-limit-counters'
 )
 SELECT check_name, status, COALESCE(detail, '') AS detail
 FROM checks

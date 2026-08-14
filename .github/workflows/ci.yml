@@ -1,0 +1,107 @@
+name: CI
+
+# Смысл этого файла — чтобы правила, которые аудит 2026-08-13 закрепил в тестах,
+# нельзя было незаметно откатить. Раньше единственной проверкой перед деплоем был
+# запуск `bun test` вручную, если кто-то вспомнит.
+#
+# Cloudflare деплоит `main` в продакшн, поэтому push в main проверяется тоже —
+# лучше узнать о поломке из красной галочки, чем из сообщения салона.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+# Новый push в ту же ветку отменяет предыдущий прогон: гонять сборку для кода,
+# который уже переписан, — трата минут.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Тесты и сборка
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # --frozen-lockfile: CI не имеет права молча обновить зависимость.
+      # Если bun.lock разошёлся с package.json — это ошибка, а не повод
+      # пересобрать дерево по-своему.
+      - name: Установка зависимостей
+        run: bun install --frozen-lockfile
+
+      - name: Тесты
+        run: bun test
+
+      # Сборка ловит то, чего не видят тесты: ошибки типов на путях, которые
+      # тесты не импортируют, и падения бандлера.
+      - name: Сборка
+        run: bun run build
+        env:
+          # Значения-заглушки: сборке нужен факт наличия переменных, а не
+          # настоящие ключи. Настоящие живут в Cloudflare.
+          VITE_SUPABASE_URL: https://example.supabase.co
+          VITE_SUPABASE_PUBLISHABLE_KEY: build-placeholder
+
+  # Линт намеренно не блокирует. В репозитории ~34 000 замечаний, почти все —
+  # CRLF против LF, то есть последствия работы в Windows, а не дефекты кода.
+  # Сделать его гейтом сейчас значит получить вечно красный CI, который все
+  # научатся игнорировать. Отчёт собираем, чтобы видеть динамику; чинить —
+  # отдельной задачей (`bun format` + .gitattributes с eol=lf).
+  lint:
+    name: Линт (справочно)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bun lint
+
+  # Инварианты схемы: гранты, RLS-политики, ограничения. Именно они ловят самые
+  # дорогие баги (обход оплаты, спам-рассылка) — и ловят за секунды.
+  #
+  # Запускается ТОЛЬКО когда задан секрет SUPABASE_DB_URL. Пока обе миграции
+  # аудита не применены, часть проверок честно провалится, поэтому секрет стоит
+  # добавлять ПОСЛЕ их применения — иначе job будет красным по делу, но бесполезно.
+  #
+  # Как включить: Settings → Secrets and variables → Actions → New repository
+  # secret, имя SUPABASE_DB_URL, значение — строка подключения из Supabase →
+  # Settings → Database → Connection string (URI).
+  db-invariants:
+    name: Инварианты схемы
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      # Секрет передаётся через env, а не подставляется в текст команды:
+      # строка подключения содержит пароль и спецсимволы, и в теле скрипта она
+      # и сломает разбор, и рискует утечь в лог.
+      - name: Проверка наличия секрета
+        id: secret
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -n "$SUPABASE_DB_URL" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "SUPABASE_DB_URL не задан — проверка инвариантов пропущена." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Прогон инвариантов
+        if: steps.secret.outputs.present == 'true'
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: bash scripts/check-invariants.sh
