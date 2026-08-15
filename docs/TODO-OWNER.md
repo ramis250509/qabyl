@@ -16,16 +16,25 @@
 Старый проект в Токио (`khykprcdojksqvuqyajd`) идеально подходит: 0 записей
 клиентов, полная схема, и он всё равно под снос. Docker не нужен.
 
-```bash
-npx supabase link --project-ref khykprcdojksqvuqyajd
-```
+⚠️ **Не запускайте `supabase db push` без `--db-url`.** Попытка 2026-08-14
+показала почему: линк на Токио прошёл, а `db push` полез в
+`bfxexnpyfslfuelfkhzr` — боевой Франкфурт. Причина в `supabase/config.toml`,
+где `project_id` указывает на прод. Спасло только то, что сеть не поддерживает
+IPv6: прямые подключения Supabase (`db.<ref>.supabase.co`) теперь IPv6-only.
+Иначе три непроверенные миграции ушли бы на живую базу.
+
+Поэтому цель задаётся явно, строкой подключения, а не «тем, что запомнил CLI».
+И через пулер — он работает по IPv4:
 
 ```bash
-npx supabase db push
+npx supabase db push --db-url "postgresql://postgres.khykprcdojksqvuqyajd:ПАРОЛЬ@aws-1-ap-northeast-1.pooler.supabase.com:5432/postgres"
 ```
 
-Спросит пароль от базы Токио — он в вашем менеджере паролей. Накатит всю
-цепочку миграций, включая три новые.
+Замените `ПАРОЛЬ` на пароль базы **Токио** (Supabase → проект `qabyl` →
+Settings → Database). Обратите внимание на `ap-northeast-1` в адресе — это
+Токио. Если в строке окажется `eu-central-1`, вы целитесь в прод, остановитесь.
+
+Линковать проект для этого не нужно вообще: `--db-url` перекрывает всё.
 
 **Зачем.** Сейчас три миграции не проверены нигде. Одна из них меняет
 `create_appointment` — функцию, через которую проходит каждая запись клиента.
@@ -48,6 +57,17 @@ npx supabase db push
 живы в проде**: предоплату можно подтвердить не заплатив, календарь можно забить
 через прямой запрос, а салон — превратить в ретранслятор WhatsApp-спама за его
 же счёт.
+
+Здесь цель тоже задаём явно, чтобы не полагаться на память CLI. Строка
+подключения к проду — Supabase → `Qabyl Final` → Settings → Database →
+Connection string → **Session pooler** (там будет `eu-central-1`):
+
+```bash
+npx supabase db push --db-url "postgresql://postgres.bfxexnpyfslfuelfkhzr:ПАРОЛЬ@aws-1-eu-central-1.pooler.supabase.com:5432/postgres"
+```
+
+Перед запуском сверьте: `bfxexnpyfslfuelfkhzr` и `eu-central-1` — это прод,
+и попасть туда вы хотите **только на этом шаге**.
 
 ### 3. Передеплоить edge-функцию *(2 минуты)*
 
