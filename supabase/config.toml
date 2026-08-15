@@ -1,5 +1,13 @@
 project_id = "bfxexnpyfslfuelfkhzr"
 
+# Локальная аналитика (Logflare) выключена. На Windows её контейнер требует, чтобы
+# демон Docker был выставлен наружу на tcp://localhost:2375 — это лишняя дыра ради
+# сервиса, который нужен только для просмотра логов локального стека. Без него
+# `supabase start` поднимается нормально; на боевой проект настройка не влияет,
+# этот файл описывает только локальный запуск.
+[analytics]
+enabled = false
+
 # IMPORTANT: these functions are invoked by DB triggers and pg_cron via net.http_post, which
 # send only an `x-cron-secret` header (their own auth) and NO `Authorization: Bearer <jwt>`.
 # They MUST keep verify_jwt = false, otherwise the Edge Function gateway rejects every internal

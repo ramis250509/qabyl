@@ -28,6 +28,46 @@
 Green-API токены салонов (`salon_secrets.greenapi_*`) и секрет приложения
 Instagram переезд не затрагивал — они не менялись и в ротацию не входят.
 
+## Где брать значения
+
+Проверено на боевом проекте 2026-08-15.
+
+| Ключ | Где выпустить новое значение | Куда вставить |
+|---|---|---|
+| Пароль базы | Supabase → `Qabyl Final` → Settings → Database → **Reset database password** | В проде не используется нигде. Нужен только вам: для `supabase db push` и для секрета `SUPABASE_DB_URL` в GitHub |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase → Settings → API → раздел `service_role` → **Generate new key** | Cloudflare → Workers → `qabyl` → Settings → Variables **и** Supabase → Edge Functions → Secrets |
+| `CRON_SECRET` | **Придумываете сами** — случайная строка, см. ниже | Хранилище Supabase (SQL ниже) **и** Supabase → Edge Functions → Secrets |
+| `GEMINI_API_KEY` | Google AI Studio → API keys → Create API key | Cloudflare → Workers → Variables |
+| `TELEGRAM_BOT_TOKEN` | Telegram → @BotFather → `/revoke` → выдаст новый | Cloudflare → Workers → Variables, затем заново установить вебхук бота |
+| `VAPID_*` | **не трогать** | — |
+
+### Как сгенерировать CRON_SECRET
+
+Это не выданный кем-то ключ, а просто длинная случайная строка, которую вы
+придумываете. В PowerShell:
+
+```powershell
+-join ((48..57)+(65..90)+(97..122) | Get-Random -Count 64 | ForEach-Object {[char]$_})
+```
+
+Текущее значение — 64 символа, держитесь той же длины.
+
+### Как заменить CRON_SECRET в хранилище
+
+Он лежит в Vault под именем `cron_secret`. Supabase → SQL Editor:
+
+```sql
+select vault.update_secret(
+  (select id from vault.secrets where name = 'cron_secret'),
+  'НОВОЕ_ЗНАЧЕНИЕ'
+);
+```
+
+Сразу после этого — то же значение в Supabase → Edge Functions → Secrets, поле
+`CRON_SECRET`, и передеплоить функции. **Между этими двумя действиями рассылки
+клиентам не работают**: база подписывает запросы новым секретом, а функции ещё
+проверяют по старому. Поэтому — в нерабочее время салонов.
+
 ## Порядок
 
 Важно: сначала добавляем новое значение везде, где оно читается, и только потом
