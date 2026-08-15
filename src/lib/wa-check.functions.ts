@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { isPlausiblePhoneLength } from "@/lib/phone-countries";
 
 // Verify that a phone number is registered on WhatsApp via the salon's Green-API
 // credentials (Green-API `checkWhatsapp`). Called from the public booking widget and the
@@ -46,20 +47,37 @@ export const checkPhoneWhatsapp = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }): Promise<{ status: WaCheckStatus }> => {
     const digits = data.phone.replace(/\D/g, "");
-    if (digits.length < 11 || digits.length > 15) return { status: "not_registered" };
+    // Same bounds as the validate_appointment_phone DB trigger. This used to demand
+    // 11 digits, which made every valid 10-digit number come back "not_registered" —
+    // and the public widget turns that verdict into a hard block with a message that
+    // isn't true ("этот номер не зарегистрирован в WhatsApp"). One rule, one place.
+    if (!isPlausiblePhoneLength(digits)) return { status: "not_registered" };
 
     const key = `${data.salonId}:${digits}`;
     const hit = cache.get(key);
     if (hit && hit.exp > Date.now()) return { status: hit.status };
 
-    // Rate-limit distinct phones per salon. On over-limit, fail-open (unavailable) so the
-    // booking flow doesn't hard-block real clients — same policy as any other transient
-    // Green-API failure. The salon's paid quota is protected either way.
+    // First line: per-instance counter. Cheap, no round-trip, catches an obvious flood
+    // immediately. On over-limit, fail-open (unavailable) so the booking flow doesn't
+    // hard-block real clients — same policy as any other transient Green-API failure.
     if (!rlAllow(data.salonId, digits)) return { status: "unavailable" };
 
     let secrets: { greenapi_instance: string | null; greenapi_token: string | null } | null = null;
     try {
       const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+      // Second line: shared counter in the database. The in-memory one above lives inside a
+      // single Cloudflare Worker isolate, and Cloudflare runs many of them — so a "40 per 5
+      // minutes" cap in memory is really 40 × however many isolates happen to be warm. This
+      // is the counter that actually holds, because every isolate increments the same row.
+      // Failure to check is not a reason to block: the in-memory cap still applies.
+      const { data: allowed, error: rlErr } = await supabaseAdmin.rpc(
+        "wa_check_rate_limit" as any,
+        { _salon_id: data.salonId },
+      );
+      if (rlErr) console.error("[wa-check] shared rate limit unavailable:", rlErr.message);
+      else if (allowed === false) return { status: "unavailable" };
+
       const { data: row } = await supabaseAdmin
         .from("salon_secrets")
         .select("greenapi_instance, greenapi_token")

@@ -19,6 +19,7 @@ function StatsPage() {
   const { salonId, branchId } = filters;
   const [period, setPeriod] = useState<"today" | "7" | "30" | "month" | "90">("month");
   const [rows, setRows] = useState<any[]>([]);
+  const [visits, setVisits] = useState<any[]>([]);
   const [convCount, setConvCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
@@ -44,11 +45,27 @@ function StatsPage() {
       sinceISO = new Date(Date.now() - Number(period) * 86400000).toISOString();
     }
     let q = supabase.from("appointments")
-      .select("price, master_id, service_id, branch_id, status, source, masters(name), services(name), branches(name)")
+      // client_phone is what makes "возвращаемость" possible: it is the only stable identity a
+      // client has across visits — there is no client account, and the same person books under
+      // "Айгуль", "Айгуль К." and "айгуль" on different days.
+      .select("price, master_id, service_id, branch_id, status, source, client_phone, masters(name), services(name), branches(name)")
       .gte("created_at", sinceISO);
     if (untilISO) q = q.lte("created_at", untilISO);
     if (salonId !== "all") q = q.eq("salon_id", salonId);
     if (branchId !== "all") q = q.eq("branch_id", branchId);
+
+    // Chair-hours are the one metric on this page that CANNOT be keyed on created_at: a booking
+    // made today for next month says nothing about how busy anyone was today. So it gets its own
+    // query, keyed on the visit date, and capped at "now" — counting hours that haven't happened
+    // yet would quietly inflate every master's workload.
+    const visitsUntil = untilISO && new Date(untilISO) < now ? untilISO : now.toISOString();
+    let vq = supabase.from("appointments")
+      .select("master_id, starts_at, ends_at, status, masters(name)")
+      .gte("starts_at", sinceISO)
+      .lte("starts_at", visitsUntil)
+      .in("status", ["confirmed", "completed"]);
+    if (salonId !== "all") vq = vq.eq("salon_id", salonId);
+    if (branchId !== "all") vq = vq.eq("branch_id", branchId);
 
     // Assistant funnel is a super-admin-only view, so only fetch its top-of-funnel number
     // (assistant conversations started in the period — WhatsApp and Instagram alike, they share
@@ -63,8 +80,9 @@ function StatsPage() {
       convPromise = cq as any;
     }
 
-    const [{ data }, conv] = await Promise.all([q, convPromise]);
+    const [{ data }, conv, { data: visitData }] = await Promise.all([q, convPromise, vq]);
     setRows(data ?? []);
+    setVisits(visitData ?? []);
     setConvCount((conv as any).count ?? 0);
     setLoading(false);
   }, [salonId, branchId, period, isSuperAdmin]);
@@ -111,15 +129,49 @@ function StatsPage() {
     const noShowRate = nonCancelled > 0 ? Math.round((noShowCount / nonCancelled) * 100) : 0;
     // Assistant funnel: conversations → bookings the assistant closed.
     const aiConversion = convCount > 0 ? Math.round((aiCount / convCount) * 100) : 0;
+
+    // Средний чек. Считается по тем же активным записям, что и выручка, — иначе отменённая
+    // запись с нулевой выручкой утянула бы среднее вниз и цифра перестала бы значить «сколько
+    // в среднем оставляет клиент за визит».
+    const avgTicket = active.length > 0 ? Math.round(revenue / active.length) : 0;
+
+    // Возвращаемость. Личность клиента — это номер телефона: аккаунтов у клиентов нет, а один и
+    // тот же человек записывается как «Айгуль», «Айгуль К.» и «айгуль» в разные дни. Номер
+    // нормализуем до цифр, иначе +996 700 12-34-56 и 996700123456 сойдут за двух разных людей.
+    const visitsByClient = new Map<string, number>();
+    for (const a of active) {
+      const digits = String(a.client_phone ?? "").replace(/\D/g, "");
+      if (!digits) continue;
+      visitsByClient.set(digits, (visitsByClient.get(digits) ?? 0) + 1);
+    }
+    const uniqueClients = visitsByClient.size;
+    const repeatClients = [...visitsByClient.values()].filter((n) => n > 1).length;
+    // ВАЖНО: это доля повторных ВНУТРИ периода, а не «сколько клиентов вернулось вообще».
+    // Клиент, приходящий раз в квартал, в 30-дневном окне выглядит разовым. Поэтому на коротких
+    // периодах цифра занижена — честнее смотреть на 90 днях.
+    const repeatRate = uniqueClients > 0 ? Math.round((repeatClients / uniqueClients) * 100) : 0;
+
+    // Часы в кресле по мастерам — из отдельной выборки по дате визита (см. загрузку).
+    const hoursByMaster: Record<string, { name: string; minutes: number }> = {};
+    for (const v of visits as any[]) {
+      const from = new Date(v.starts_at).getTime();
+      const to = new Date(v.ends_at).getTime();
+      if (!(to > from)) continue;
+      const mk = v.master_id;
+      hoursByMaster[mk] ??= { name: v.masters?.name ?? "—", minutes: 0 };
+      hoursByMaster[mk].minutes += Math.round((to - from) / 60000);
+    }
+
     return {
       revenue, count: active.length, cancelledCount, aiCount, noShowCount, noShowRate,
-      convCount, aiConversion,
+      convCount, aiConversion, avgTicket, uniqueClients, repeatClients, repeatRate,
+      hoursByMaster: Object.values(hoursByMaster).sort((a, b) => b.minutes - a.minutes),
       byMaster: Object.values(byMaster).sort((a, b) => b.revenue - a.revenue),
       byService: Object.values(byService).sort((a, b) => b.revenue - a.revenue),
       byBranch: Object.values(byBranch).sort((a, b) => b.revenue - a.revenue),
       noShowByMaster: Object.values(noShowByMaster).sort((a, b) => b.count - a.count),
     };
-  }, [rows, convCount]);
+  }, [rows, visits, convCount]);
 
   const showBranchTable = branchId === "all" && stats.byBranch.length > 1;
 
@@ -145,10 +197,13 @@ function StatsPage() {
       {loading && rows.length === 0 ? <Card><LoadingState /></Card> : null}
 
       <p className="text-xs text-muted-foreground -mt-2">Считается по дате создания записи (когда её оформили), а не по дате визита.</p>
-      <div className="grid sm:grid-cols-3 gap-4">
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card className="p-6">
           <p className="text-sm text-muted-foreground">Выручка</p>
           <p className="text-3xl sm:text-4xl font-bold mt-1">{stats.revenue.toLocaleString("ru-RU")} сом</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            средний чек {stats.avgTicket.toLocaleString("ru-RU")} сом
+          </p>
         </Card>
         <Card className="p-6">
           <p className="text-sm text-muted-foreground">Записей</p>
@@ -159,11 +214,26 @@ function StatsPage() {
           </p>
         </Card>
         <Card className="p-6">
+          <p className="text-sm text-muted-foreground">Клиентов</p>
+          <p className="text-3xl sm:text-4xl font-bold mt-1">{stats.uniqueClients}</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            {stats.repeatClients > 0
+              ? `${stats.repeatClients} приходили не один раз (${stats.repeatRate}%)`
+              : "повторных визитов пока нет"}
+          </p>
+        </Card>
+        <Card className="p-6">
           <p className="text-sm text-muted-foreground">Через Ассистента</p>
           <p className="text-3xl sm:text-4xl font-bold mt-1">{stats.aiCount}</p>
           <p className="text-xs text-muted-foreground mt-1">записей оформил ассистент</p>
         </Card>
       </div>
+
+      <p className="text-xs text-muted-foreground -mt-2">
+        Уникальные клиенты считаются по номеру телефона. Доля повторных — это повторные визиты
+        <em> внутри выбранного периода</em>: клиент, который ходит раз в квартал, в окне на 30 дней
+        выглядит разовым. Для честной картины смотрите 90 дней.
+      </p>
 
       {/* Assistant funnel: how many assistant conversations turned into bookings. Super-admin only.
           Counts every channel — wa_conversations holds both WhatsApp and Instagram Direct. */}
@@ -245,6 +315,26 @@ function StatsPage() {
             ))}
             {stats.byMaster.length === 0 && <p className="text-sm text-muted-foreground">Нет данных</p>}
           </div>
+        </Card>
+        <Card className="p-6">
+          <h3 className="font-semibold mb-3">Часы в кресле</h3>
+          <div className="space-y-2">
+            {stats.hoursByMaster.slice(0, 10).map((m, i) => (
+              <div key={i} className="flex items-center justify-between text-sm">
+                <span>{m.name}</span>
+                <span className="font-medium">
+                  {Math.floor(m.minutes / 60)} ч {m.minutes % 60 > 0 ? `${m.minutes % 60} мин` : ""}
+                </span>
+              </div>
+            ))}
+            {stats.hoursByMaster.length === 0 && (
+              <p className="text-sm text-muted-foreground">Визитов за период не было</p>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground mt-3">
+            Считается по дате визита и только по уже прошедшим — в отличие от остальных цифр на
+            этой странице, которые считаются по дате оформления записи.
+          </p>
         </Card>
         <Card className="p-6">
           <h3 className="font-semibold mb-3">Топ услуг</h3>

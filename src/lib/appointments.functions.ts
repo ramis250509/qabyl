@@ -82,6 +82,76 @@ async function notifyClientReschedule(appointmentId: string): Promise<void> {
   }
 }
 
+// History of one appointment, for the "кто это изменил" question in the calendar.
+//
+// Goes through a server function rather than a direct client query for one reason: the
+// actor is stored as a bare auth.uid(), and turning it into a human-readable name needs
+// the admin auth API, which must never reach the browser. Falls back to the raw id when
+// the account has since been deleted.
+export const getAppointmentHistory = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => z.object({ appointmentId: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+    const { data: appt } = await supabaseAdmin
+      .from("appointments")
+      .select("salon_id")
+      .eq("id", data.appointmentId)
+      .maybeSingle();
+    if (!appt) return { entries: [] as AuditEntry[] };
+    await assertCanManageSalon(context.userId, (appt as any).salon_id);
+
+    const { data: rows, error } = await supabaseAdmin
+      .from("appointment_audit" as any)
+      .select("action, detail, actor_id, actor_kind, created_at")
+      .eq("appointment_id", data.appointmentId)
+      .order("created_at", { ascending: true })
+      .limit(100);
+    if (error) throw new Error(error.message);
+
+    // One lookup per distinct actor, not per row: a busy appointment is mostly the same
+    // person acting several times.
+    const ids = [...new Set((rows ?? []).map((r: any) => r.actor_id).filter(Boolean))];
+    const names = new Map<string, string>();
+    for (const id of ids) {
+      try {
+        const { data: u } = await supabaseAdmin.auth.admin.getUserById(id as string);
+        const email = u?.user?.email;
+        if (email) names.set(id as string, email);
+      } catch {
+        // Deleted account — leave it unresolved rather than failing the whole panel.
+      }
+    }
+
+    return {
+      entries: (rows ?? []).map((r: any) => ({
+        action: r.action as AuditEntry["action"],
+        detail: r.detail ?? {},
+        at: r.created_at as string,
+        // "Система" covers the AI assistant, the cron jobs and the edge functions —
+        // everything that runs under the service role, where auth.uid() is NULL.
+        actor:
+          r.actor_kind === "system"
+            ? "Система"
+            : (names.get(r.actor_id) ?? "Администратор"),
+      })) as AuditEntry[],
+    };
+  });
+
+export type AuditEntry = {
+  action:
+    | "created"
+    | "status_changed"
+    | "rescheduled"
+    | "master_changed"
+    | "contact_changed"
+    | "deleted";
+  detail: Record<string, unknown>;
+  at: string;
+  actor: string;
+};
+
 export const rescheduleAppointment = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) =>

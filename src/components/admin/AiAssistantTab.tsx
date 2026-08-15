@@ -48,6 +48,8 @@ type Assistant = {
   languages: string[];
   manage_cutoff_hours: number;
   reminder_lead_hours: number;
+  /** За сколько минут до визита закрывается онлайн-запись. 0 — без ограничения. */
+  min_lead_minutes: number;
   engine: "v3" | "v4";
   knowledge_base: string | null;
   ai_rules: string | null;
@@ -176,6 +178,7 @@ export function AiAssistantTab({
     languages: ["ru", "ky"],
     manage_cutoff_hours: 0,
     reminder_lead_hours: 2,
+    min_lead_minutes: 0,
     engine: "v4",
     knowledge_base: "",
     ai_rules: "",
@@ -223,6 +226,7 @@ export function AiAssistantTab({
           languages: row.languages?.length ? row.languages : ["ru", "ky"],
           manage_cutoff_hours: (row as any).manage_cutoff_hours ?? 0,
           reminder_lead_hours: (row as any).reminder_lead_hours ?? 2,
+          min_lead_minutes: (row as any).min_lead_minutes ?? 0,
           engine: (row as any).engine === "v3" ? "v3" : "v4",
           knowledge_base: (row as any).knowledge_base ?? "",
           ai_rules: (row as any).ai_rules ?? "",
@@ -316,6 +320,7 @@ export function AiAssistantTab({
         languages: data.languages,
         manage_cutoff_hours: data.manage_cutoff_hours,
         reminder_lead_hours: data.reminder_lead_hours,
+        min_lead_minutes: data.min_lead_minutes,
         engine: data.engine,
         knowledge_base: data.knowledge_base || null,
         ai_rules: data.ai_rules || null,
@@ -917,6 +922,35 @@ export function AiAssistantTab({
           <p className="text-xs text-muted-foreground">
             Если до визита осталось меньше указанного времени, ассистент не будет отменять или
             переносить запись сам, а попросит клиента позвонить в салон. 0 — без ограничений.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <Label>Закрывать онлайн-запись перед визитом</Label>
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              min={0}
+              max={1440}
+              className="w-24"
+              value={data.min_lead_minutes}
+              onChange={(e) =>
+                setData({
+                  ...data,
+                  min_lead_minutes: Math.max(
+                    0,
+                    Math.min(1440, Math.floor(Number(e.target.value) || 0)),
+                  ),
+                })
+              }
+            />
+            <span className="text-sm text-muted-foreground">минут до визита</span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Ближайшие слоты перестают показываться и на сайте, и у ассистента, чтобы клиент не
+            занял время, к которому мастер уже не успеет подготовиться. На ручную запись из
+            календаря не влияет — администратор по-прежнему может записать кого угодно и когда
+            угодно. 0 — без ограничений.
           </p>
         </div>
 

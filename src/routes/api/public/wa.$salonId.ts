@@ -158,6 +158,32 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         const waEngine: "v3" | "v4" = (assistant as any)?.engine === "v3" ? "v3" : "v4";
 
         const webhookType = payload?.typeWebhook;
+
+        // ---- Delivery outcome of a confirmation we sent.
+        // This is the honest replacement for the pre-booking checkWhatsapp probe: instead of
+        // guessing whether a number exists BEFORE booking (which only Green-API could do, and
+        // which Cloud-API salons cannot do at all), we let the provider tell us what actually
+        // happened AFTER sending. `noAccount` is a fact — the number is not on WhatsApp —
+        // rather than a prediction, and it reaches the owner as a badge in the calendar.
+        if (webhookType === "outgoingMessageStatus") {
+          const mapped = mapGreenApiDeliveryStatus(payload?.status);
+          const idMessage: string | undefined = payload?.idMessage;
+          if (mapped && idMessage) {
+            const { error: markErr } = await supabaseAdmin
+              .from("appointments")
+              .update({
+                confirmation_status: mapped.status,
+                confirmation_detail: mapped.detail,
+                confirmation_at: new Date().toISOString(),
+              })
+              .eq("salon_id", salonId)
+              .eq("confirmation_message_id", idMessage);
+            if (markErr) errLog("delivery status update failed", markErr);
+            else log(`delivery status ${payload?.status} → ${mapped.status} for ${idMessage}`);
+          }
+          return ack();
+        }
+
         if (
           webhookType !== "incomingMessageReceived" &&
           webhookType !== "outgoingMessageReceived"
@@ -1298,6 +1324,33 @@ async function stillHoldingLock(db: any, convId: string, lockId: string): Promis
   if (!data) return false;
   const untilMs = data.processing_lock_until ? new Date(data.processing_lock_until).getTime() : 0;
   return data.processing_lock_id === lockId && untilMs > Date.now();
+}
+
+// Green-API `outgoingMessageStatus` → what we store on the appointment.
+//
+// Only terminal outcomes are mapped. `sent` is deliberately ignored: send-whatsapp already
+// wrote that when the provider accepted the message, and re-writing it would overwrite a
+// later `delivered` if webhooks arrive out of order (they do).
+//
+// `noAccount` is the one that answers the original question — «почему запись создаётся с
+// номером, которого нет в WhatsApp». Now it is not prevented, it is REPORTED, with the
+// provider as the source of truth instead of a pre-booking guess.
+export function mapGreenApiDeliveryStatus(
+  raw: unknown,
+): { status: "delivered" | "failed"; detail: string | null } | null {
+  switch (raw) {
+    case "delivered":
+    case "read":
+      return { status: "delivered", detail: null };
+    case "noAccount":
+      return { status: "failed", detail: "У этого номера нет WhatsApp" };
+    case "notDelivered":
+      return { status: "failed", detail: "Сообщение не доставлено" };
+    case "failed":
+      return { status: "failed", detail: "Провайдер не смог отправить сообщение" };
+    default:
+      return null;
+  }
 }
 
 // Constant-time string equality — used for the per-salon webhook token check so an attacker
