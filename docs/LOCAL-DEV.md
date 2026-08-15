@@ -54,6 +54,17 @@ Docker.
 
 ## Шаг 3. Проверить, что всё встало
 
+⚠️ **Сначала закройте и заново откройте приложение, из которого запускаете
+команды.** Терминал держит список путей к программам на момент своего запуска, и
+про установленный после этого Docker он не знает. Симптом — `docker : The term
+'docker' is not recognized`, хотя Docker стоит и работает. Новая вкладка
+терминала может не помочь: она наследует окружение от родительского процесса,
+нужен именно перезапуск приложения.
+
+На Windows Docker ставится в `%LOCALAPPDATA%\Programs\DockerDesktop\resources\bin`
+и прописывается в PATH пользователя автоматически — вручную ничего добавлять не
+нужно, достаточно перезапуска.
+
 ```bash
 docker --version
 ```
@@ -129,8 +140,9 @@ npx supabase stop
 
 | Симптом | Причина |
 |---|---|
-| `docker: command not found` | Docker Desktop не установлен или не запущен |
-| `Cannot connect to the Docker daemon` | Docker Desktop закрыт — откройте его и дождитесь кита в трее |
+| `docker : The term 'docker' is not recognized` | терминал открыт до установки — перезапустите приложение целиком (см. шаг 3) |
+| `Cannot connect to the Docker daemon` | Docker Desktop закрыт или ещё стартует — дождитесь статуса «Engine running» |
+| Внизу окна Docker висит «Engine starting» | первый запуск поднимает виртуальную машину, это пара минут |
 | `WSL 2 installation is incomplete` | не перезагрузились после `wsl --install` |
 | `supabase start` висит на скачивании | первый запуск, 2–3 ГБ образов, это нормально |
 | порт 54322 занят | уже запущен другой проект Supabase — `npx supabase stop --all` |
