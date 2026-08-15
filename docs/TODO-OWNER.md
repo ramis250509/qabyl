@@ -85,13 +85,28 @@ supabase db push.` Займёт секунд тридцать.
 → Settings → Database.
 
 ```bash
-npx supabase db push --db-url "postgresql://postgres.bfxexnpyfslfuelfkhzr:ПАРОЛЬ@aws-1-eu-central-1.pooler.supabase.com:5432/postgres"
+npx supabase db push --db-url "postgresql://postgres.bfxexnpyfslfuelfkhzr:ПАРОЛЬ@aws-0-eu-central-1.pooler.supabase.com:5432/postgres"
 ```
 
 **Что должно получиться.** `Finished supabase db push.`
 
 **Проверьте перед запуском:** здесь должно быть `eu-central-1`. Это тот
 единственный шаг, где вы намеренно целитесь в боевую базу.
+
+**Обратите внимание на `aws-0`, а не `aws-1`.** Адрес пулера различается от
+проекта к проекту: Токио живёт на `aws-1`, Франкфурт на `aws-0`. Ошибка
+`tenant/user ... not found` означает ровно это — адрес существует, но нужного
+проекта на нём нет. Если не подойдёт, не подбирайте вручную, возьмите адрес из
+самого проекта:
+
+```bash
+npx supabase link --project-ref bfxexnpyfslfuelfkhzr
+```
+
+После линка достаточно `npx supabase db push` без `--db-url`: правильная строка
+подключения уже записана. Здесь это безопасно, потому что в
+`supabase/config.toml` прописан тот же Франкфурт — расхождения, из-за которого
+push на Токио целился в прод, не будет.
 
 ---
 
