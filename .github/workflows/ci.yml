@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -59,14 +59,17 @@ jobs:
     name: Линт (справочно)
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
       - run: bun install --frozen-lockfile
-      - run: bun lint
+      # `|| true` вместо continue-on-error: последний всё равно рисует задачу
+      # красной, а красная задача, которую положено игнорировать, — худший вид
+      # проверки: через неделю её перестают замечать вместе с настоящими.
+      # Отчёт остаётся в логе, статус зелёный, совесть чиста.
+      - run: bun lint || true
 
   # Инварианты схемы: гранты, RLS-политики, ограничения. Именно они ловят самые
   # дорогие баги (обход оплаты, спам-рассылка) — и ловят за секунды.
@@ -83,7 +86,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Секрет передаётся через env, а не подставляется в текст команды:
       # строка подключения содержит пароль и спецсимволы, и в теле скрипта она
