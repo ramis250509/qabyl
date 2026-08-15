@@ -301,6 +301,10 @@ export type Database = {
           client_name: string
           client_notes: string | null
           client_phone: string
+          confirmation_at: string | null
+          confirmation_detail: string | null
+          confirmation_message_id: string | null
+          confirmation_status: string
           created_at: string
           ends_at: string
           hold_expires_at: string | null
@@ -323,6 +327,10 @@ export type Database = {
           client_name: string
           client_notes?: string | null
           client_phone: string
+          confirmation_at?: string | null
+          confirmation_detail?: string | null
+          confirmation_message_id?: string | null
+          confirmation_status?: string
           created_at?: string
           ends_at: string
           hold_expires_at?: string | null
@@ -345,6 +353,10 @@ export type Database = {
           client_name?: string
           client_notes?: string | null
           client_phone?: string
+          confirmation_at?: string | null
+          confirmation_detail?: string | null
+          confirmation_message_id?: string | null
+          confirmation_status?: string
           created_at?: string
           ends_at?: string
           hold_expires_at?: string | null

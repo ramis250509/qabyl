@@ -16,6 +16,11 @@ export type ErrorSource =
   // whether a spike is the WhatsApp transport or the Instagram one — they fail for different
   // reasons (Green-API instance unpaid vs a 60-day Meta token that expired).
   | "ig-webhook"
+  // Official WhatsApp Cloud API transport, separate from the Green-API "wa-webhook" for the same
+  // reason Instagram is: during the migration both are live at once, and the whole question an
+  // owner asks when replies stop is WHICH transport broke. They also fail differently — a revoked
+  // Meta system-user token and the 24-hour-window rejection have no Green-API equivalent.
+  | "wacloud-webhook"
   | "server-fn"
   | "edge-fn"
   | "client"
