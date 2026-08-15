@@ -34,3 +34,4 @@ supabase/.temp/
 *.sln
 *.sw?
 .env
+supabase/.branches/

@@ -117,13 +117,18 @@ WITH checks AS (
 
   UNION ALL
 
-  -- ── A9. Публичная запись обязана уважать график мастера ───────────────────
+  -- ── A9/A10. Публичная запись обязана уважать график мастера ───────────────
   -- get_available_slots фильтрует по master_schedules / master_day_overrides /
-  -- master_time_off, а create_appointment — нет. То есть список слотов честный,
-  -- но записаться можно в обход: на выходной, в отпуск, в 3 часа ночи.
+  -- master_time_off, а create_appointment этого не делала. То есть список слотов
+  -- честный, но записаться можно было в обход: на выходной, в отпуск, в 3 ночи.
+  --
+  -- Проверки разделены на две, потому что и защита разделена: create_appointment
+  -- только ЗОВЁТ assert_master_available, а вся логика графика живёт внутри неё.
+  -- Искать «master_time_off» прямо в теле create_appointment бессмысленно — так
+  -- эти две проверки и падали на исправной схеме до 2026-08-15.
   SELECT
-    'A9 create_appointment проверяет master_time_off',
-    CASE WHEN bool_or(pg_get_functiondef(p.oid) LIKE '%master_time_off%') THEN 'PASS' ELSE 'FAIL' END,
+    'A9 create_appointment зовёт assert_master_available',
+    CASE WHEN bool_or(pg_get_functiondef(p.oid) LIKE '%assert_master_available%') THEN 'PASS' ELSE 'FAIL' END,
     NULL
   FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
   WHERE n.nspname = 'public' AND p.proname = 'create_appointment'
@@ -131,11 +136,28 @@ WITH checks AS (
   UNION ALL
 
   SELECT
-    'A10 create_appointment проверяет master_schedules',
-    CASE WHEN bool_or(pg_get_functiondef(p.oid) LIKE '%master_schedules%') THEN 'PASS' ELSE 'FAIL' END,
+    'A10 assert_master_available проверяет отпуск и график',
+    CASE WHEN bool_or(pg_get_functiondef(p.oid) LIKE '%master_time_off%'
+                  AND pg_get_functiondef(p.oid) LIKE '%get_available_slots%') THEN 'PASS' ELSE 'FAIL' END,
     NULL
   FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-  WHERE n.nspname = 'public' AND p.proname = 'create_appointment'
+  WHERE n.nspname = 'public' AND p.proname = 'assert_master_available'
+
+  UNION ALL
+
+  -- ── A22. Буфер уборки действует в обе стороны ─────────────────────────────
+  -- До 20260815120000 проверка пересечения сравнивала блок НОВОЙ записи с голым
+  -- интервалом существующих, игнорируя их буфер. Результат зависел от порядка
+  -- бронирования, а при обычном (по возрастанию времени) буфер не работал вовсе.
+  SELECT
+    'A22 буфер симметричен во всех трёх функциях',
+    CASE WHEN count(*) FILTER (WHERE pg_get_functiondef(p.oid) LIKE '%sv.buffer_after_min%') = 3
+         THEN 'PASS' ELSE 'FAIL' END,
+    'есть в: ' || COALESCE(string_agg(p.proname, ', ')
+                  FILTER (WHERE pg_get_functiondef(p.oid) LIKE '%sv.buffer_after_min%'), 'нигде')
+  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public'
+    AND p.proname IN ('get_available_slots', 'create_appointment', 'reschedule_appointment_v2')
 
   UNION ALL
 

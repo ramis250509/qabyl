@@ -9,15 +9,31 @@
 #   SUPABASE_DB_URL='postgresql://...' bash scripts/check-invariants.sh
 set -euo pipefail
 
-if [ -z "${SUPABASE_DB_URL:-}" ]; then
-  echo "SUPABASE_DB_URL не задан." >&2
+# Код выхода 2 означает «проверку не удалось запустить», в отличие от 1 —
+# «проверки провалились». Различать их важно: первое чинится настройкой, второе
+# означает регрессию в схеме. Поэтому причина всегда называется вслух.
+fail_setup() {
+  echo "" >&2
+  echo "НЕ УДАЛОСЬ ЗАПУСТИТЬ ПРОВЕРКУ: $1" >&2
+  # На GitHub то же самое попадает в сводку прогона, чтобы причина была видна
+  # без раскрытия логов.
+  if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+    echo "Проверка инвариантов не запустилась: $1" >> "$GITHUB_STEP_SUMMARY"
+  fi
   exit 2
+}
+
+if [ -z "${SUPABASE_DB_URL:-}" ]; then
+  fail_setup "переменная SUPABASE_DB_URL пуста или не задана"
+fi
+
+if ! command -v psql >/dev/null 2>&1; then
+  fail_setup "на машине нет клиента psql"
 fi
 
 SQL_FILE="$(dirname "$0")/../supabase/tests/schema_invariants.sql"
 if [ ! -f "$SQL_FILE" ]; then
-  echo "Не найден $SQL_FILE" >&2
-  exit 2
+  fail_setup "не найден файл $SQL_FILE"
 fi
 
 OUT="$(mktemp)"
