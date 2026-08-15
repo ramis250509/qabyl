@@ -1,0 +1,170 @@
+# Миграция WhatsApp: Green-API → официальный Cloud API
+
+Ветка: `feat/whatsapp-cloud-api`. Дата плана: 2026-08-15.
+
+Принцип: Green-API **не удаляется и не ломается**. Cloud API — отдельный адаптер и отдельный
+вебхук; переключение пер-салон через настройку. Пока салон не переключён, для него ничего не
+меняется.
+
+---
+
+## 1. Что уже есть в рабочей копии (не закоммичено, из сессии 12.08)
+
+| Файл | Состояние |
+|---|---|
+| `src/lib/wa-cloud.server.ts` (470 стр.) | Транспорт целиком: текст с разбиением на 3900 симв., картинка по URL, шаблон, read+typing, скачивание медиа, проверка подписи, разбор вебхука. Сверен с документацией Meta — **корректен** |
+| `src/lib/wa-chats.functions.ts` | Ручной ответ администратора из панели, знает три канала: `instagram` / `whatsapp_cloud` / Green-API |
+| `src/components/admin/WaChatsTab.tsx` | +82 строки — поле ответа в чате |
+
+**Дыра:** `wa-chats.functions.ts` читает `salon_secrets.whatsapp_cloud_phone_number_id` и
+`whatsapp_cloud_token` — таких колонок в БД **нет**. В текущем виде код упадёт в рантайме.
+
+---
+
+## 2. Карта текущей интеграции Green-API
+
+| Что | Где | Механизм Green-API |
+|---|---|---|
+| Приём сообщений | `src/routes/api/public/wa.$salonId.ts` (1391 стр.) | `?token=`, `typeWebhook` |
+| Отправка текста | `greenApiSendMessage` (`wa-agent.server.ts:305`) | `waInstance{id}/sendMessage/{token}` |
+| Индикатор «печатает» | `greenApiSendTyping:345` | `sendTyping`, потолок 20 с |
+| Файл / QR предоплаты | `greenApiSendFileByUrl:368` | |
+| Медиа входящее | `downloadUrl` в вебхуке + `greenApiDownloadFile:401` | один шаг, URL готов |
+| Голосовые | `audioMessage` → `downloadUrl` → `transcribeAudio` (Gemini) | только V4 |
+| **Пауза ИИ при ответе владельца** | `outgoingMessageReceived` | эхо с телефона владельца |
+| Статус доставки | `outgoingMessageStatus` → `mapGreenApiDeliveryStatus` → `appointments.confirmation_status` | |
+| Исходящие уведомления | `supabase/functions/send-whatsapp/index.ts` | подтверждения, напоминания за 2 ч, перенос, отмена, алерты владельцу |
+| Проверка «есть ли WhatsApp» | `src/lib/wa-check.functions.ts` | `checkWhatsapp` |
+| Учётные данные | `salon_secrets.greenapi_*` | |
+| Дедуп | `wa_messages.green_api_message_id` + уникальный индекс | |
+| Блокировка диалога | RPC `wa_try_acquire_lock` / `wa_release_lock` | канал-независима |
+| Ошибки | `error-log.server.ts` → `error_logs` → `/admin/errors` | |
+
+Канал-независимое уже готово: `wa_conversations.channel` и `external_id` появились с Instagram,
+`chat-lock.server.ts` общий, агент V4 общий.
+
+---
+
+## 3. Что подтверждено в документации Meta (и что из этого следует)
+
+1. **Окно 24 часа.** Свободный текст — только в течение 24 ч с последнего сообщения клиента.
+   Вне окна — только заранее одобренный шаблон. → **Ломаются подтверждения записи, напоминания
+   за 2 ч, уведомления о переносе/отмене, алерты владельцу.** Это главный функциональный разрыв.
+2. **Пауза ИИ при ответе владельца.** Номер, зарегистрированный в Cloud API, в приложении
+   WhatsApp Business больше не работает — *кроме* режима **coexistence** (онбординг через
+   Embedded Signup для пользователей Business app): там оба канала живут одновременно, история
+   синхронизируется, а сообщения владельца с телефона приходят вебхуком **`smb_message_echoes`**
+   (другое поле, не `messages`). То есть функция сохраняема, но только при coexistence.
+   Ограничение coexistence: пропускная способность фиксируется на 20 сообщений/сек.
+3. **Медиа в два шага.** В вебхуке приходит *id*, не URL: `GET /{media-id}` → `url`, затем
+   скачивание **с тем же Bearer-токеном** (без токена Meta отдаёт HTML-страницу с кодом 200).
+4. **«Печатает» и прочитано — один запрос**, живёт 25 с, гасится само. Адаптер совпадает точь-в-точь.
+5. **Аутентификация вебхука** — `X-Hub-Signature-256` по сырому телу (app secret), а не `?token=`.
+   GET-хендшейк проверяется verify-токеном.
+6. **Версия Graph API** — в адаптере зашита `v23.0`, в актуальной документации примеры на `v25.0`.
+7. **Интерактивные кнопки/списки в Cloud API есть** (в отличие от Instagram), но отправители V3
+   написаны под Green-API. Первой очередью — **только V4**, как сделано для Instagram.
+8. **Статусы доставки** — массив `statuses` (`sent`/`delivered`/`read`/`failed` + ошибки),
+   ложится на существующую логику `mapGreenApiDeliveryStatus` почти без изменений.
+
+Источники: [Отправка сообщений](https://developers.facebook.com/docs/whatsapp/cloud-api/guides/send-messages),
+[Индикатор набора](https://developers.facebook.com/docs/whatsapp/cloud-api/typing-indicators/),
+[Онбординг пользователей Business app](https://developers.facebook.com/documentation/business-messaging/whatsapp/embedded-signup/onboarding-business-app-users/),
+[smb_message_echoes](https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/smb_message_echoes),
+[Миграция существующего номера](https://developers.facebook.com/docs/whatsapp/cloud-api/get-started/migrate-existing-whatsapp-number-to-a-business-account/).
+
+---
+
+## 4. Принятые решения (15.08.2026)
+
+**Р1. Вне окна 24 ч — гибрид.** Салон на Cloud API принимает и отвечает через Meta, а
+business-initiated сообщения (напоминание за 2 ч, перенос, отмена, алерт владельцу) продолжают
+уходить **через Green-API**, пока шаблоны Meta не одобрены. Green-API инстанс салона обязан
+оставаться живым — это одновременно и путь отката. Когда шаблоны одобрят, переключаем
+пер-салон флагом, код отправки шаблонов пишется сразу (`waCloudSendTemplate` уже готов).
+
+**Р2. Онбординг — coexistence.** Номер остаётся рабочим в приложении WhatsApp Business.
+Значит `smb_message_echoes` **обрабатывать обязательно**: это и есть сохранение паузы ИИ при
+ответе владельца с телефона. Потолок пропускной способности 20 сообщений/сек — для салона
+несущественно. Комментарий в шапке `wa-cloud.server.ts` (пункт 2, «такого сигнала быть не
+может») подлежит исправлению — он неверен для coexistence.
+
+## 4b. Что временно не поддерживается на Cloud API
+
+| Функция | Причина | Обходной путь |
+|---|---|---|
+| Движок V3 | Интерактивные отправители написаны под Green-API | Салон на Cloud API принудительно на V4 |
+| Шаблоны вне окна 24 ч | Нет одобрения Meta | Р1: гибрид через Green-API |
+| Проверка «есть ли WhatsApp» до записи | Нет аналога `checkWhatsapp` | Уже заменено на постфактум-статус доставки |
+
+---
+
+## 5. Поэтапный план
+
+### Фаза 1 — БД и настройка (миграция `20260815120000_whatsapp_cloud_api.sql`)
+- `salon_secrets`: `whatsapp_cloud_phone_number_id`, `whatsapp_cloud_token`,
+  `whatsapp_cloud_app_secret`, `whatsapp_cloud_verify_token`, `whatsapp_cloud_waba_id`,
+  `whatsapp_cloud_templates` (JSONB, по Р1).
+- `salons.wa_provider text not null default 'green_api'` — `'green_api' | 'cloud'`. Это и есть
+  рубильник: он решает, каким транспортом уходит исходящее и какой вебхук считается «своим».
+  Дефолт `'green_api'` означает: **ни один действующий салон не меняет поведения**, пока его
+  явно не переключат.
+- `salons.wa_cloud_templates_ready boolean not null default false` (по Р1).
+- Индекс под дедуп `wamid` — переиспользуем `wa_messages.green_api_message_id`
+  (колонка уже уникальна пер-салон; wamid кладём туда же, чтобы не плодить схему).
+- Перегенерировать `src/integrations/supabase/types.ts`.
+
+### Фаза 2 — приём (новый роут `src/routes/api/public/wacloud.$salonId.ts`)
+Зеркало Instagram-роута, а не копия WhatsApp-роута:
+- `GET` — хендшейк `hub.challenge` + verify-токен;
+- `POST` — `X-Hub-Signature-256` по сырому телу; без app secret — 403;
+- дедуп по `wamid`, блокировка через общий `chat-lock.server.ts`, слияние очереди (coalescing),
+  дренаж непрочитанных, один прогон V4, один ответ;
+- медиа: `waCloudFetchMedia` → бакет `wa-media` (тот же путь, что у Green-API);
+- голосовые: те же байты → `transcribeAudio`;
+- `statuses` → `appointments.confirmation_status` (новая функция `mapCloudDeliveryStatus`);
+- **`smb_message_echoes` — обязательно (решение Р2):** сообщение владельца с телефона ставит
+  `ai_paused`, ровно как сейчас это делает `outgoingMessageReceived`. Переносится и защита от
+  гонки с нативным авто-приветствием (`isLikelyNativeGreetingRace`), иначе ИИ будет глохнуть
+  на первом же сообщении каждого нового диалога.
+
+### Фаза 3 — исходящие (`supabase/functions/send-whatsapp/index.ts`), по решению Р1
+- Читать `salons.wa_provider` **и** `salons.wa_cloud_templates_ready` (по умолчанию `false`).
+- `wa_provider = 'cloud'` и шаблоны не готовы → business-initiated уходит **через Green-API**,
+  как сейчас. Ни строчки поведения для действующих салонов не меняется.
+- `wa_provider = 'cloud'` и `wa_cloud_templates_ready = true` → `waCloudSendTemplate`,
+  имена шаблонов и язык — в `salon_secrets.whatsapp_cloud_templates` (JSONB: kind → {name, lang}).
+- Если у салона на Cloud API **нет** живого Green-API и шаблоны не готовы — не молчать:
+  `error_logs` + `confirmation_detail`, чтобы владелец видел причину в календаре.
+
+### Фаза 4 — админка
+- В настройках салона: переключатель провайдера + поля Cloud API + готовый URL вебхука
+  (`/api/public/wacloud/{salonId}`) и verify-токен для вставки в Meta.
+- Диагностика «проверить подключение» по образцу вкладки Instagram.
+- Симулятор и чаты — без изменений, они канал-независимы.
+
+### Фаза 5 — проверка и выкатка
+- Тестовый номер, тестовый салон, `wa_provider = 'cloud'`.
+- Сценарии из `docs/TEST-PLAN.md` целиком.
+- Пер-салон переключение. Green-API остаётся рабочим и остаётся путём отката.
+
+---
+
+## 6. Переменные окружения
+
+Новых **обязательных** — нет: всё пер-салон в `salon_secrets` (как Instagram). Уже используемые:
+`SUPABASE_SERVICE_ROLE_KEY`, `GEMINI_API_KEY`, `PUBLIC_APP_URL`.
+Опционально: `WA_CLOUD_API_VERSION` (по умолчанию `v25.0`), чтобы поднимать версию Graph без
+передеплоя кода.
+
+---
+
+## 7. Тесты после каждой фазы
+
+| Фаза | Проверка |
+|---|---|
+| 1 | миграция применяется на чистой базе; `bun lint`; типы собираются |
+| 2 | новый `wa-cloud-transport.test.ts` (по образцу `ig-transport.test.ts`): разбиение текста, нормализация номера, разбор вебхука, подпись, разбор `statuses` |
+| 3 | `wa-agent.scenarios.test.ts` + `booking-integrity.test.ts` — не должны сломаться |
+| 4 | сборка, ручная проверка формы |
+| 5 | реальный тестовый номер |

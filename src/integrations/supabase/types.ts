@@ -1785,6 +1785,12 @@ export type Database = {
           owner_notify_phone: string | null
           salon_id: string
           updated_at: string
+          whatsapp_cloud_app_secret: string | null
+          whatsapp_cloud_phone_number_id: string | null
+          whatsapp_cloud_templates: Json | null
+          whatsapp_cloud_token: string | null
+          whatsapp_cloud_verify_token: string | null
+          whatsapp_cloud_waba_id: string | null
         }
         Insert: {
           greenapi_instance?: string | null
@@ -1797,6 +1803,12 @@ export type Database = {
           owner_notify_phone?: string | null
           salon_id: string
           updated_at?: string
+          whatsapp_cloud_app_secret?: string | null
+          whatsapp_cloud_phone_number_id?: string | null
+          whatsapp_cloud_templates?: Json | null
+          whatsapp_cloud_token?: string | null
+          whatsapp_cloud_verify_token?: string | null
+          whatsapp_cloud_waba_id?: string | null
         }
         Update: {
           greenapi_instance?: string | null
@@ -1809,6 +1821,12 @@ export type Database = {
           owner_notify_phone?: string | null
           salon_id?: string
           updated_at?: string
+          whatsapp_cloud_app_secret?: string | null
+          whatsapp_cloud_phone_number_id?: string | null
+          whatsapp_cloud_templates?: Json | null
+          whatsapp_cloud_token?: string | null
+          whatsapp_cloud_verify_token?: string | null
+          whatsapp_cloud_waba_id?: string | null
         }
         Relationships: [
           {
@@ -1862,6 +1880,8 @@ export type Database = {
           tiktok_url: string | null
           timezone: string
           updated_at: string
+          wa_cloud_templates_ready: boolean
+          wa_provider: string
           whatsapp_enabled: boolean
           whatsapp_url: string | null
           working_hours: Json
@@ -1900,6 +1920,8 @@ export type Database = {
           tiktok_url?: string | null
           timezone?: string
           updated_at?: string
+          wa_cloud_templates_ready?: boolean
+          wa_provider?: string
           whatsapp_enabled?: boolean
           whatsapp_url?: string | null
           working_hours?: Json
@@ -1938,6 +1960,8 @@ export type Database = {
           tiktok_url?: string | null
           timezone?: string
           updated_at?: string
+          wa_cloud_templates_ready?: boolean
+          wa_provider?: string
           whatsapp_enabled?: boolean
           whatsapp_url?: string | null
           working_hours?: Json
