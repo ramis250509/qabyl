@@ -2,8 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
-import { MessageCircle, Search, ImageIcon } from "lucide-react";
+import { sendManualChatMessage } from "@/lib/wa-chats.functions";
+import { MessageCircle, Search, ImageIcon, SendHorizonal } from "lucide-react";
 import { format } from "date-fns";
 
 type Conversation = {
@@ -25,7 +28,14 @@ type Message = {
   text_body: string | null;
   media_path: string | null;
   created_at: string;
+  // `manual` marks a reply an admin typed here, as opposed to the assistant's own bookkeeping
+  // notes — both are stored as kind "system" so the agent picks them up as handoff context.
+  meta: { manual?: boolean } | null;
 };
+
+// A human answer is drawn as a real outgoing bubble; anything else stored as "system" stays a
+// quiet centred note (that is the assistant's own bookkeeping, not something the client sees here).
+const isManualReply = (m: Message) => m.kind === "system" && m.meta?.manual === true;
 
 function statusBadge(s: Conversation["status"]) {
   if (s === "booked") return <Badge>Записан</Badge>;
@@ -43,7 +53,36 @@ export function WaChatsTab({ salonId }: { salonId: string }) {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [mediaUrls, setMediaUrls] = useState<Record<string, string>>({});
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Switching chats must not carry a half-typed answer into someone else's conversation.
+  useEffect(() => {
+    setDraft("");
+    setSendError(null);
+  }, [activeId]);
+
+  async function handleSend() {
+    const text = draft.trim();
+    if (!text || !activeId || sending) return;
+    setSending(true);
+    setSendError(null);
+    try {
+      await sendManualChatMessage({ data: { conversationId: activeId, text } });
+      // The sent message arrives through the realtime subscription like any other, so nothing is
+      // appended here — doing both would show it twice.
+      setDraft("");
+    } catch (e: any) {
+      // The server deliberately refuses to store a message the provider rejected, so this is the
+      // only place the admin learns it did not go out. Showing the provider's own wording matters:
+      // "outside the 24-hour window" and "token expired" need completely different fixes.
+      setSendError(e?.message ?? "Не удалось отправить сообщение");
+    } finally {
+      setSending(false);
+    }
+  }
 
   // load conversations + subscribe
   useEffect(() => {
@@ -230,7 +269,8 @@ export function WaChatsTab({ salonId }: { salonId: string }) {
               <div ref={scrollRef} className="flex-1 overflow-auto p-4 space-y-2">
                 {messages.map((m) => {
                   const mine = m.direction === "out";
-                  if (m.kind === "system") {
+                  const manual = isManualReply(m);
+                  if (m.kind === "system" && !manual) {
                     return (
                       <div key={m.id} className="text-center text-xs text-muted-foreground py-1">
                         {m.text_body}
@@ -249,6 +289,11 @@ export function WaChatsTab({ salonId }: { salonId: string }) {
                             : "bg-background border rounded-bl-sm"
                         }`}
                       >
+                        {manual ? (
+                          <div className="text-[10px] font-medium opacity-80 mb-0.5">
+                            Администратор
+                          </div>
+                        ) : null}
                         {m.kind === "image" && m.media_path ? (
                           mediaUrls[m.media_path] ? (
                             <a href={mediaUrls[m.media_path]} target="_blank" rel="noreferrer">
@@ -280,8 +325,41 @@ export function WaChatsTab({ salonId }: { salonId: string }) {
                   );
                 })}
               </div>
-              <div className="px-4 py-2.5 border-t bg-background text-xs text-muted-foreground text-center">
-                Только просмотр — ассистент ведёт диалог самостоятельно.
+              <div className="border-t bg-background p-3">
+                {sendError ? (
+                  <div className="mb-2 text-xs text-destructive">{sendError}</div>
+                ) : null}
+                <div className="flex items-end gap-2">
+                  <Textarea
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    // Enter sends, Shift+Enter makes a new line — the habit every messenger has
+                    // trained. An admin answering a waiting client should not have to reach for
+                    // the mouse.
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        void handleSend();
+                      }
+                    }}
+                    placeholder="Напишите ответ клиенту..."
+                    rows={2}
+                    className="resize-none min-h-[44px] max-h-32"
+                    disabled={sending}
+                  />
+                  <Button
+                    onClick={() => void handleSend()}
+                    disabled={sending || !draft.trim()}
+                    size="icon"
+                    className="h-11 w-11 shrink-0"
+                    aria-label="Отправить"
+                  >
+                    <SendHorizonal className="h-4 w-4" />
+                  </Button>
+                </div>
+                <div className="mt-1.5 text-[11px] text-muted-foreground">
+                  Пока вы отвечаете, ассистент молчит 5 минут, чтобы не перебивать.
+                </div>
               </div>
             </>
           )}

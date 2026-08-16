@@ -33,6 +33,7 @@ import { MasterDayOverrides } from "@/components/admin/MasterDayOverrides";
 import { SalonDayOverridesCard } from "@/components/admin/SalonDayOverridesCard";
 import { AiAssistantTab } from "@/components/admin/AiAssistantTab";
 import { InstagramTab } from "@/components/admin/InstagramTab";
+import { WaCloudCard } from "@/components/admin/WaCloudCard";
 import { PrepaymentTab } from "@/components/admin/PrepaymentTab";
 import { ScheduleImportTab } from "@/components/admin/ScheduleImportTab";
 import { ServiceExportDialog } from "@/components/admin/ServiceExportDialog";
@@ -2507,6 +2508,11 @@ function IntegrationsTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => 
         </div>
         <Button onClick={save} disabled={saving || loading}>{saving ? "..." : "Сохранить"}</Button>
       </Card>
+
+      {/* The official transport, in the SAME tab rather than its own: WhatsApp is one channel with
+          two possible providers, and separating them would let an owner set up Cloud API without
+          ever noticing the salon is still sending over Green-API. */}
+      <WaCloudCard salonId={salon.id} />
     </div>
   );
 }
