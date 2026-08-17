@@ -40,6 +40,7 @@ import {
   classifyReadiness,
   detectCloseAttempt,
   detectObjections,
+  furthestFunnelStage,
   hasSchedulingSignal,
   nextSalesState,
   parseSalesPlaybook,
@@ -866,8 +867,7 @@ function dowOf(date: string): number {
 // when it never actually called get_services and is guessing what an id "should look like".
 // Catching it at the tool boundary lets us return a specific reason ("unknown_service") instead
 // of the misleading "hours_not_configured" the merged-slots pipeline used to produce.
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function isUuid(x: unknown): x is string {
   return typeof x === "string" && UUID_RE.test(x);
 }
@@ -1667,8 +1667,7 @@ export async function executeV4Tool(
         return {
           success: false,
           reason: "need_explicit_confirmation",
-          note:
-            "Клиент ещё НЕ подтвердил запись явно. Не создавай запись. Покажи ПОЛНУЮ сводку записи в требуемом формате (услуга/мастер/дата/время/длительность/цена/имя) на языке клиента и ЖДИ явного «да / ооба / макул / yes / подтверждаю». В следующем вызове create_appointment в поле client_confirmation процитируй именно это подтверждающее сообщение клиента дословно. Не считай подтверждением вопросы, изменения деталей и молчание.",
+          note: "Клиент ещё НЕ подтвердил запись явно. Не создавай запись. Покажи ПОЛНУЮ сводку записи в требуемом формате (услуга/мастер/дата/время/длительность/цена/имя) на языке клиента и ЖДИ явного «да / ооба / макул / yes / подтверждаю». В следующем вызове create_appointment в поле client_confirmation процитируй именно это подтверждающее сообщение клиента дословно. Не считай подтверждением вопросы, изменения деталей и молчание.",
         };
       }
 
@@ -1827,7 +1826,9 @@ export async function executeV4Tool(
           .maybeSingle();
         prepayCfg = data ?? null;
       } catch (e: any) {
-        console.warn(`[wa-v4] prepayment_settings unreadable, booking without prepayment: ${e?.message ?? e}`);
+        console.warn(
+          `[wa-v4] prepayment_settings unreadable, booking without prepayment: ${e?.message ?? e}`,
+        );
       }
       const prepayOn = Boolean(prepayCfg?.enabled);
 
@@ -2294,7 +2295,8 @@ export async function executeV4Tool(
         .select("id, name, price, price_max, price_type")
         .eq("id", serviceId)
         .maybeSingle();
-      if (svcErr || !svcRow) return { error: `Услуга не найдена: ${svcErr?.message ?? "не найдена"}` };
+      if (svcErr || !svcRow)
+        return { error: `Услуга не найдена: ${svcErr?.message ?? "не найдена"}` };
       if ((svcRow as any).price_type !== "range") {
         return {
           error: `Услуга «${(svcRow as any).name}» — с фиксированной ценой (${(svcRow as any).price} сом). Для fixed цен инструмент не нужен, называй цену прямо.`,
@@ -2725,7 +2727,10 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     sn: INDUSTRY_EXPERT[industryForSales].specialistNoun,
     todayIso: nowInTz(input.salon.timezone).isoLocalDate,
     hasBookingLink: Boolean(
-      bookingUrl({ slug: input.salon.slug ?? null, custom_domain: input.salon.customDomain ?? null }),
+      bookingUrl({
+        slug: input.salon.slug ?? null,
+        custom_domain: input.salon.customDomain ?? null,
+      }),
     ),
     clientText: lastText,
   });
@@ -2881,7 +2886,8 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
                 for (const t of (r.free_times ?? []) as string[]) verifiedFreeTimes.add(t);
                 for (const t of (r.nearby_free_times ?? []) as string[]) verifiedFreeTimes.add(t);
                 // check_time's own hit: the asked time is confirmed free.
-                if (r.available && typeof r.requested === "string") verifiedFreeTimes.add(r.requested);
+                if (r.available && typeof r.requested === "string")
+                  verifiedFreeTimes.add(r.requested);
               }
               // A booking/reschedule that the server ACCEPTED legitimises that clock time in the
               // confirmation message — resolveRequestedSlot already matched it to a real free slot.
@@ -3052,11 +3058,7 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   const slotToolCalledThisTurn = debug.actions
     .slice()
     .reverse()
-    .some(
-      (a) =>
-        a.startsWith("tool:get_available_slots") ||
-        a.startsWith("tool:check_time"),
-    );
+    .some((a) => a.startsWith("tool:get_available_slots") || a.startsWith("tool:check_time"));
   if (FAKE_BUSY_RE.test(reply) && !slotToolCalledThisTurn) {
     debug.errors.push("fake_busy_without_tool_call_forcing_retry");
     contents.push({
@@ -3261,6 +3263,18 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   const nextStateData: WaAgentStateData = {
     language,
     greeted: true,
+    // Funnel position, recorded so it can be REPORTED on. The stage was already computed every turn
+    // to shape the reply, but it lived only inside this function — which is why "310 разговоров дали
+    // 1 запись" could be seen while "where do they stop" could not be answered at all. Written into
+    // state_data rather than its own column on purpose: all three channel routes already persist
+    // this object wholesale, so no route (least of all the live Green-API one) has to change.
+    //
+    // `funnel_stage` is where the conversation is now; `funnel_stage_best` is the furthest it ever
+    // got. The report needs the second one — see furthestFunnelStage.
+    ...({
+      funnel_stage: stage,
+      funnel_stage_best: furthestFunnelStage((input.stateData as any)?.funnel_stage_best, stage),
+    } as any),
     ...(flags.needsHuman ? { needs_human: true } : {}),
     ...({ v4_history: historyToSave } as any),
     // Keep the most recent photo analyses so a follow-up ("а сколько за это?") a turn later

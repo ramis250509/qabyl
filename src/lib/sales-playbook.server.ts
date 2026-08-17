@@ -481,6 +481,43 @@ export function classifyFunnelStage(
 }
 
 /**
+ * How far along the funnel each stage sits — for REPORTING, not for choosing a reply.
+ *
+ * This is a different question from the one classifyFunnelStage answers. That function returns the
+ * stage that should shape THIS turn, in priority order: a client who has objected gets the objection
+ * treatment even if a service is already picked. For a funnel report the question is instead "how
+ * far did this conversation ever get", so the stages need a monotonic order.
+ *
+ * `objection` is ranked ABOVE `consulting` deliberately. An objection means the client engaged with
+ * a concrete proposal — that is further than merely being told about a service. It also makes the
+ * report actionable in the way that matters: a pile-up at `objection` is a script problem with a
+ * known fix, while a pile-up at `discovery` means clients are leaving before anything was offered.
+ */
+export const FUNNEL_STAGE_RANK: Record<FunnelStage, number> = {
+  new_lead: 0,
+  discovery: 1,
+  consulting: 2,
+  objection: 3,
+  offer_booking: 4,
+  prepayment: 5,
+  booked: 6,
+};
+
+/**
+ * The further along of two stages. Used to keep a "furthest reached" marker on the conversation, so
+ * a client who reached `offer_booking` and then drifted back to `discovery` is still counted as
+ * having got that far — otherwise the report only ever shows where conversations ENDED, which
+ * systematically understates how well the assistant is doing.
+ */
+export function furthestFunnelStage(
+  a: FunnelStage | null | undefined,
+  b: FunnelStage,
+): FunnelStage {
+  if (!a || !(a in FUNNEL_STAGE_RANK)) return b;
+  return FUNNEL_STAGE_RANK[a] >= FUNNEL_STAGE_RANK[b] ? a : b;
+}
+
+/**
  * One short block per stage, each ending in the ONE next step for this turn.
  *
  * Kept to a handful of lines on purpose. The system prompt is already ~12k tokens; the value
