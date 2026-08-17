@@ -144,6 +144,39 @@ export type Database = {
         }
         Relationships: []
       }
+      appointment_audit: {
+        Row: {
+          action: string
+          actor_id: string | null
+          actor_kind: string
+          appointment_id: string
+          created_at: string
+          detail: Json
+          id: string
+          salon_id: string
+        }
+        Insert: {
+          action: string
+          actor_id?: string | null
+          actor_kind: string
+          appointment_id: string
+          created_at?: string
+          detail?: Json
+          id?: string
+          salon_id: string
+        }
+        Update: {
+          action?: string
+          actor_id?: string | null
+          actor_kind?: string
+          appointment_id?: string
+          created_at?: string
+          detail?: Json
+          id?: string
+          salon_id?: string
+        }
+        Relationships: []
+      }
       appointment_import_batches: {
         Row: {
           created_at: string
@@ -1526,6 +1559,24 @@ export type Database = {
           },
         ]
       }
+      rate_limit_counters: {
+        Row: {
+          bucket: string
+          hits: number
+          window_start: string
+        }
+        Insert: {
+          bucket: string
+          hits?: number
+          window_start: string
+        }
+        Update: {
+          bucket?: string
+          hits?: number
+          window_start?: string
+        }
+        Relationships: []
+      }
       rbac_audit: {
         Row: {
           action: string
@@ -1595,17 +1646,23 @@ export type Database = {
           created_at: string
           enabled: boolean
           engine: string
+          entry_service_id: string | null
+          followup_delay_hours: number
+          followup_enabled: boolean
+          followup_text: string | null
           greeting: string | null
           industry: string
           knowledge_answers: Json
           knowledge_base: string | null
           languages: string[]
           manage_cutoff_hours: number
+          min_lead_minutes: number
           pricing_rules: string | null
           reminder_lead_hours: number
           rich_formatting: boolean
           sales_mode: boolean
           sales_objections: Json
+          sales_price_framing: string | null
           sales_promos: Json
           sales_style: string
           sales_usp: Json
@@ -1625,17 +1682,23 @@ export type Database = {
           created_at?: string
           enabled?: boolean
           engine?: string
+          entry_service_id?: string | null
+          followup_delay_hours?: number
+          followup_enabled?: boolean
+          followup_text?: string | null
           greeting?: string | null
           industry?: string
           knowledge_answers?: Json
           knowledge_base?: string | null
           languages?: string[]
           manage_cutoff_hours?: number
+          min_lead_minutes?: number
           pricing_rules?: string | null
           reminder_lead_hours?: number
           rich_formatting?: boolean
           sales_mode?: boolean
           sales_objections?: Json
+          sales_price_framing?: string | null
           sales_promos?: Json
           sales_style?: string
           sales_usp?: Json
@@ -1655,17 +1718,23 @@ export type Database = {
           created_at?: string
           enabled?: boolean
           engine?: string
+          entry_service_id?: string | null
+          followup_delay_hours?: number
+          followup_enabled?: boolean
+          followup_text?: string | null
           greeting?: string | null
           industry?: string
           knowledge_answers?: Json
           knowledge_base?: string | null
           languages?: string[]
           manage_cutoff_hours?: number
+          min_lead_minutes?: number
           pricing_rules?: string | null
           reminder_lead_hours?: number
           rich_formatting?: boolean
           sales_mode?: boolean
           sales_objections?: Json
+          sales_price_framing?: string | null
           sales_promos?: Json
           sales_style?: string
           sales_usp?: Json
@@ -1681,6 +1750,13 @@ export type Database = {
             columns: ["assistant_branch_id"]
             isOneToOne: false
             referencedRelation: "branches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "salon_ai_assistant_entry_service_id_fkey"
+            columns: ["entry_service_id"]
+            isOneToOne: false
+            referencedRelation: "services"
             referencedColumns: ["id"]
           },
           {
@@ -2142,6 +2218,7 @@ export type Database = {
           client_phone: string
           created_at: string
           external_id: string | null
+          followup_sent_at: string | null
           id: string
           last_appointment_at: string | null
           last_message_at: string
@@ -2165,6 +2242,7 @@ export type Database = {
           client_phone: string
           created_at?: string
           external_id?: string | null
+          followup_sent_at?: string | null
           id?: string
           last_appointment_at?: string | null
           last_message_at?: string
@@ -2188,6 +2266,7 @@ export type Database = {
           client_phone?: string
           created_at?: string
           external_id?: string | null
+          followup_sent_at?: string | null
           id?: string
           last_appointment_at?: string | null
           last_message_at?: string
@@ -2348,6 +2427,15 @@ export type Database = {
     Functions: {
       alert_silent_salons: { Args: never; Returns: undefined }
       archive_old_appointments: { Args: never; Returns: number }
+      assert_master_available: {
+        Args: {
+          _ends_at: string
+          _master_id: string
+          _service_id: string
+          _starts_at: string
+        }
+        Returns: undefined
+      }
       cancel_appointment_by_token: { Args: { _token: string }; Returns: Json }
       confirm_prepayment: {
         Args: { _appointment_id: string }
@@ -2501,6 +2589,11 @@ export type Database = {
       }
       prepayment_expire_holds: { Args: never; Returns: number }
       prune_error_logs: { Args: never; Returns: undefined }
+      prune_rate_limit_counters: { Args: never; Returns: undefined }
+      rate_limit_hit: {
+        Args: { _bucket: string; _limit: number; _window: string }
+        Returns: boolean
+      }
       reschedule_appointment: {
         Args: { _appointment_id: string; _new_starts_at: string }
         Returns: string
@@ -2519,6 +2612,7 @@ export type Database = {
       }
       user_manager_salon_id: { Args: { _user_id: string }; Returns: string }
       user_master_ids: { Args: { _user_id: string }; Returns: string[] }
+      wa_check_rate_limit: { Args: { _salon_id: string }; Returns: boolean }
       wa_release_lock: {
         Args: { _conversation_id: string; _lock_id: string }
         Returns: undefined

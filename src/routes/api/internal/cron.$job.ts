@@ -65,6 +65,17 @@ export const Route = createFileRoute("/api/internal/cron/$job")({
         try {
           // Prepayment hold expiry — nothing to do with Telegram or the ops
           // agents, so it is dispatched before their guards.
+          // One nudge to leads who went quiet, inside the platform messaging window. Nothing to
+          // do with Telegram or the ops agents, so it is dispatched before their guards.
+          if (job === "followups") {
+            const { runFollowups } = await import("@/lib/followups.server");
+            const report = await runFollowups();
+            // Logged in full every run: a job whose whole purpose is "usually send nothing"
+            // is indistinguishable from a broken one unless it says why it sent nothing.
+            console.log(`[cron followups] ${JSON.stringify(report)}`);
+            return json({ ok: true, ...report });
+          }
+
           if (job === "prepayment-expired") {
             const body = await request.json().catch(() => null);
             const appointmentId = String((body as any)?.appointment_id ?? "");

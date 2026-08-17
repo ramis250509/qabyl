@@ -75,6 +75,10 @@ type Assistant = {
   entry_service_id: string | null;
   /** Слова владельца о том, из чего складывается крупная цена. Подставляются дословно. */
   sales_price_framing: string;
+  /** Одно догоняющее сообщение тем, кто перестал отвечать. */
+  followup_enabled: boolean;
+  followup_delay_hours: number;
+  followup_text: string;
 };
 
 // ── Режимы продаж ────────────────────────────────────────────────────────────
@@ -200,6 +204,9 @@ export function AiAssistantTab({
     booking_link_mode: "auto",
     entry_service_id: null,
     sales_price_framing: "",
+    followup_enabled: false,
+    followup_delay_hours: 3,
+    followup_text: "",
   });
   const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
   const [services, setServices] = useState<{ id: string; name: string; price: number }[]>([]);
@@ -266,6 +273,9 @@ export function AiAssistantTab({
               : "auto",
           entry_service_id: (row as any).entry_service_id ?? null,
           sales_price_framing: (row as any).sales_price_framing ?? "",
+          followup_enabled: !!(row as any).followup_enabled,
+          followup_delay_hours: (row as any).followup_delay_hours ?? 3,
+          followup_text: (row as any).followup_text ?? "",
         });
       }
       setLoading(false);
@@ -367,6 +377,9 @@ export function AiAssistantTab({
         booking_link_mode: data.booking_link_mode,
         entry_service_id: data.entry_service_id,
         sales_price_framing: data.sales_price_framing.trim() || null,
+        followup_enabled: data.followup_enabled,
+        followup_delay_hours: data.followup_delay_hours,
+        followup_text: data.followup_text.trim() || null,
       } as any,
       { onConflict: "salon_id" },
     );
@@ -1128,6 +1141,55 @@ function SalesPlaybookSection({
           она складывается и на какой срок. Ассистент передаст этот смысл, когда речь зайдёт о цене,
           и <b>ничего сюда не добавит от себя</b> — ни рассрочки, ни скидки, ни расчётов, которых вы
           здесь не написали.
+        </p>
+      </div>
+
+      {/* Догоняющее сообщение */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-3">
+          <Switch
+            checked={data.followup_enabled}
+            onCheckedChange={(v) => patch({ followup_enabled: v })}
+          />
+          <Label className="text-sm">Написать ещё раз, если клиент замолчал</Label>
+        </div>
+        {data.followup_enabled && (
+          <div className="space-y-2 pl-1">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Написать через</span>
+              <Input
+                type="number"
+                min={1}
+                max={20}
+                className="h-8 w-20"
+                value={data.followup_delay_hours}
+                onChange={(e) =>
+                  patch({
+                    followup_delay_hours: Math.min(20, Math.max(1, Number(e.target.value) || 3)),
+                  })
+                }
+              />
+              <span className="text-xs text-muted-foreground">часа(ов) молчания</span>
+            </div>
+            <Textarea
+              rows={3}
+              value={data.followup_text}
+              onChange={(e) => patch({ followup_text: e.target.value })}
+              placeholder="Например: Здравствуйте! Вы спрашивали про программу — остались вопросы? Готова ответить."
+            />
+          </div>
+        )}
+        <p className="text-xs text-muted-foreground">
+          Отправляется <b>один раз за диалог</b> и только тем, кто не ответил на последнее
+          сообщение. Не отправляется тем, кто уже записан, кому отвечает живой администратор, и
+          ночью (с 21:00 до 9:00 по вашему времени). Текст уходит <b>ровно как написан</b> —
+          ассистент его не переписывает.
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Важное ограничение Instagram и WhatsApp: писать клиенту можно только{" "}
+          <b>в течение 24 часов</b> после его последнего сообщения. Если человек молчит дольше,
+          сообщение не отправится — это правило Meta, обойти его нельзя. Поэтому ставьте 2–5 часов,
+          а не сутки.
         </p>
       </div>
 

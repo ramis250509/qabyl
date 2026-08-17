@@ -68,51 +68,11 @@ export const sendManualChatMessage = createServerFn({ method: "POST" })
       .maybeSingle();
 
     const text = data.text.trim();
-    const channel = (conv.channel ?? "whatsapp") as string;
-    const s = (secrets ?? {}) as Record<string, any>;
 
-    let sent: { ok: boolean; messageId?: string | null; error?: string };
-
-    if (channel === "instagram") {
-      const { igSendMessage } = await import("@/lib/ig-api.server");
-      const recipient = (conv.external_id as string) ?? "";
-      if (!recipient) throw new Error("У диалога нет Instagram-получателя");
-      const res = await igSendMessage(
-        { token: s.instagram_token ?? "", igUserId: s.instagram_user_id ?? null },
-        recipient,
-        text,
-      );
-      sent = res.ok
-        ? { ok: true, messageId: res.messageId ?? null }
-        : { ok: false, error: res.error };
-    } else if (channel === "whatsapp_cloud") {
-      const { waCloudSendMessage } = await import("@/lib/wa-cloud.server");
-      const res = await waCloudSendMessage(
-        {
-          phoneNumberId: s.whatsapp_cloud_phone_number_id ?? "",
-          token: s.whatsapp_cloud_token ?? "",
-        },
-        (conv.external_id as string) || (conv.client_phone as string),
-        text,
-      );
-      sent = res.ok
-        ? { ok: true, messageId: res.messageId ?? null }
-        : { ok: false, error: res.error };
-    } else {
-      const { greenApiSendMessage, normalizeChatIdToPhone } = await import("@/lib/wa-agent.server");
-      if (!s.greenapi_instance || !s.greenapi_token) {
-        throw new Error("WhatsApp не подключён для этого салона");
-      }
-      const phone = normalizeChatIdToPhone(conv.client_phone as string);
-      const res = await greenApiSendMessage(
-        { instance: s.greenapi_instance, token: s.greenapi_token },
-        `${phone}@c.us`,
-        text,
-      );
-      sent = res.ok
-        ? { ok: true, messageId: res.idMessage ?? null }
-        : { ok: false, error: res.error };
-    }
+    // Transport routing lives in chat-send.server.ts — shared with the follow-up cron, so a new
+    // channel cannot get wired into one sender and silently not the other.
+    const { sendChatText } = await import("@/lib/chat-send.server");
+    const sent = await sendChatText(conv as any, secrets as any, text);
 
     // A failed send must NOT be written to the thread: an admin who sees their message in the
     // panel will assume the client got it, and will not try again.
@@ -127,7 +87,7 @@ export const sendManualChatMessage = createServerFn({ method: "POST" })
       direction: "out",
       kind: "system",
       text_body: text,
-      green_api_message_id: sent.messageId ?? null,
+      green_api_message_id: sent.ok ? sent.messageId : null,
       processed_at: nowIso,
       // `manual` is what lets the chat UI draw this as a sent bubble instead of a grey system
       // note, and what distinguishes an admin's reply from the assistant's own bookkeeping.
