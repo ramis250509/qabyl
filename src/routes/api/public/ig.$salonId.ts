@@ -318,6 +318,8 @@ export const Route = createFileRoute("/api/public/ig/$salonId")({
           sales_style: (assistant as any)?.sales_style ?? null,
           sales_mode: (assistant as any)?.sales_mode ?? false,
           start_language: (assistant as any)?.start_language ?? null,
+          entry_service_id: (assistant as any)?.entry_service_id ?? null,
+          sales_price_framing: (assistant as any)?.sales_price_framing ?? null,
           sales_usp: (assistant as any)?.sales_usp ?? null,
           sales_objections: (assistant as any)?.sales_objections ?? null,
           sales_promos: (assistant as any)?.sales_promos ?? null,

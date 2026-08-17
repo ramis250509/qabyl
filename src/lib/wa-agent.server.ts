@@ -123,6 +123,12 @@ export type WaAssistantConfig = {
   // confident language signal (migration 20260811120000). Only decides the first move —
   // the agent still adapts to whatever the client actually writes, exactly as before.
   start_language?: string | null;
+  // Two-step selling: the cheap first step the assistant routes to in chat, instead of pitching
+  // an expensive programme a lead will never buy from a DM. NULL = book what was asked about.
+  entry_service_id?: string | null;
+  // Owner-written explanation of what a large price covers. Injected verbatim so the assistant
+  // never does arithmetic on prices or invents an instalment plan.
+  sales_price_framing?: string | null;
 };
 
 export type WaSalonContext = {

@@ -65,6 +65,14 @@ export type SalesPromo = {
  */
 export type SalesStyle = "light" | "active";
 
+/**
+ * The cheap first step the assistant sells, instead of pitching the expensive service in chat.
+ *
+ * Resolved from salon_ai_assistant.entry_service_id by the caller, so the playbook never needs
+ * to know how services are stored.
+ */
+export type EntryOffer = { name: string; price: number };
+
 export type SalesPlaybookConfig = {
   usp: string[];
   objections: SalesObjectionEntry[];
@@ -72,6 +80,10 @@ export type SalesPlaybookConfig = {
   bookingLinkMode: "off" | "auto" | "eager";
   /** salon_ai_assistant.sales_style. Legacy sales_mode=true maps to 'active'. */
   style: SalesStyle;
+  /** Two-step selling. Absent (the default) = book whatever the client asked about. */
+  entryOffer?: EntryOffer | null;
+  /** The owner's own words for what a large price covers. Injected verbatim, never generated. */
+  priceFraming?: string | null;
 };
 
 /**
@@ -88,6 +100,9 @@ export function parseSalesPlaybook(raw: {
   sales_style?: unknown;
   /** Legacy boolean, still honoured: a row read before the sales_style migration has only this. */
   sales_mode?: unknown;
+  /** Already resolved to a name and price by the caller — this module does no DB work. */
+  entry_offer?: EntryOffer | null;
+  sales_price_framing?: unknown;
 }): SalesPlaybookConfig {
   const usp = asArray(raw.sales_usp)
     .map((x) =>
@@ -127,6 +142,12 @@ export function parseSalesPlaybook(raw: {
     promos,
     bookingLinkMode: mode === "off" || mode === "eager" ? mode : "auto",
     style: parseSalesStyle(raw.sales_style, raw.sales_mode),
+    entryOffer:
+      raw.entry_offer && raw.entry_offer.name ? raw.entry_offer : null,
+    priceFraming:
+      typeof raw.sales_price_framing === "string" && raw.sales_price_framing.trim()
+        ? raw.sales_price_framing.trim()
+        : null,
   };
 }
 
@@ -616,7 +637,11 @@ const STAGE_LABEL: Record<FunnelStage, string> = {
  * `sn` is the industry's specialist noun ("мастер" / "врач"), so a dental clinic never
  * reads a line about "мастера".
  */
-function playFor(kind: ObjectionKind, sn: { nomSg: string; genSg: string }): string {
+function playFor(
+  kind: ObjectionKind,
+  sn: { nomSg: string; genSg: string },
+  opts: { longProgramme: boolean } = { longProgramme: false },
+): string {
   switch (kind) {
     case "price":
       return [
@@ -625,7 +650,23 @@ function playFor(kind: ObjectionKind, sn: { nomSg: string; genSg: string }): str
         `2) Пойми, ЧТО именно за этим стоит — не угадывай. Обычно одно из трёх: не понял, за что платит; сравнил с более дешёвым предложением; сейчас нет такой суммы. Задай ОДИН короткий вопрос, чтобы понять, какое из трёх («Вам важнее уложиться в бюджет или получить максимально стойкий результат?»).`,
         `3) Ответь ФАКТАМИ этого бизнеса: из чего складывается цена (материалы, длительность, квалификация ${sn.genSg}), что входит в услугу, что клиент НЕ платит отдельно. Только реальные факты из прайса и правил салона.`,
         `4) Дай честную альтернативу, если она есть в прайсе: более простой вариант услуги, меньшая зона, другой ${sn.nomSg} с другой ценой. Если альтернативы нет — так и скажи.`,
+        // Only for long programmes. A person who has been fighting a health problem for years has
+        // almost always already paid for attempts that did not work, and that number is usually
+        // bigger than the programme. Letting them arrive at it themselves is far stronger than any
+        // argument we could make — and it is their own arithmetic, not pressure from us.
+        // Deliberately absent for a haircut: "how much have you spent on haircuts" is absurd.
+        ...(opts.longProgramme
+          ? [
+              `5) ЕСЛИ ЧЕЛОВЕК ДАВНО РЕШАЕТ ЭТУ ПРОБЛЕМУ — мягко и с уважением спроси, что он уже пробовал и во что это обошлось: «Скажите, а вы уже что-то пробовали раньше? Обычно к нам приходят после нескольких попыток». Дальше ПРОСТО СЛУШАЙ и признай его опыт. НЕ подсчитывай за него сумму вслух, НЕ говори «вот видите, вы потратили больше» и НЕ обесценивай то, что он делал. Человек сам сопоставит — в этом вся сила приёма, и он ломается, как только начинаешь давить.`,
+              `Задать этот вопрос можно ОДИН раз за диалог. Если человек не ответил или ушёл от темы — тему закрыл, второй раз не поднимай.`,
+            ]
+          : []),
         `ЗАПРЕЩЕНО: выдумывать скидку, рассрочку, «специальную цену для вас», бонус или подарок, которых нет в фактах салона. Скидку можно упомянуть ТОЛЬКО если она есть в списке акций. Если акций нет — не намекай на них вовсе.`,
+        ...(opts.longProgramme
+          ? [
+              `ЗАПРЕЩЕНО ОСОБО (медицина и длительные программы): пугать последствиями для здоровья, чтобы продать («без этого будет хуже», «потом дороже лечить»), и обещать результат. Страх продаёт один раз и возвращается претензией. Работай ценностью и фактами, а не тревогой.`,
+            ]
+          : []),
       ].join("\n");
 
     case "think":
@@ -807,6 +848,42 @@ export function renderSalesBlock(input: SalesBlockInput): string {
 
   parts.push(``, ...(active ? ACTIVE_STYLE_DOCTRINE(sn) : LIGHT_STYLE_DOCTRINE));
 
+  // ── Two-step selling.
+  //
+  // The failure this fixes: a lead asks the price of a 20 000 som programme, gets "20 000", and
+  // vanishes. The number was never the problem — offering it as the thing to buy right now was.
+  // Nobody commits that to a stranger in a DM before anyone has looked at them. So the assistant
+  // answers the price question honestly (hiding it destroys trust and gets asked again anyway)
+  // and then offers the small first step, which is what it can actually close in chat.
+  //
+  // Rendered only when the owner configured an entry service, because for a barbershop the
+  // service asked about IS the service booked, and routing would be nonsense there.
+  const entry = playbook.entryOffer;
+  if (entry) {
+    parts.push(
+      ``,
+      `━━━ ЧТО ИМЕННО ТЫ ПРОДАЁШЬ В ЧАТЕ ━━━`,
+      `Твоя цель в переписке — записать человека на «${entry.name}» (${entry.price.toLocaleString("ru-RU")} сом). Это первый шаг. Дорогие длительные программы в чате НЕ продаются: их предлагает ${sn.nomSg} на приёме, когда уже видит человека и его случай.`,
+      `Если спрашивают цену программы — назови её ЧЕСТНО и сразу, без уклончивости: скрытая цена вызывает недоверие и её всё равно спросят второй раз. Но следующим шагом предлагай именно «${entry.name}», а не программу.`,
+      `Формула ответа: назвал цену программы → одной фразой объяснил, из чего она складывается → сказал, что начинают с «${entry.name}» за ${entry.price.toLocaleString("ru-RU")} сом, и что на нём ${sn.nomSg} скажет, нужна ли вообще программа именно ему → предложил день.`,
+      `Если человек сам уверенно хочет сразу программу — не мешай и записывай на неё. Первый шаг это помощь клиенту, а не препятствие.`,
+    );
+  }
+
+  // ── The owner's own explanation of a big number. Verbatim, because the alternative is the
+  // model doing arithmetic on prices or inventing an instalment plan — and the client turns up
+  // holding whatever number it produced.
+  const priceOnTheTable =
+    objections.includes("price") || objections.includes("competitor") || stage === "consulting";
+  if (playbook.priceFraming && priceOnTheTable) {
+    parts.push(
+      ``,
+      `━━━ КАК ОБЪЯСНЯТЬ ЦЕНУ (слова владельца — только так и не иначе) ━━━`,
+      playbook.priceFraming,
+      `Передай этот смысл своими живыми словами и не зачитывай списком. Ничего к этому не добавляй: другой рассрочки, скидки или расчёта, которых здесь нет, не существует.`,
+    );
+  }
+
   // ── The play(s) for what actually fired this turn.
   const fresh = objections.filter((k) => !state.handled.includes(k));
   const toPlay = (fresh.length ? fresh : objections).slice(0, 2);
@@ -820,7 +897,11 @@ export function renderSalesBlock(input: SalesBlockInput): string {
         ? `ПОРЯДОК РАБОТЫ С ЛЮБЫМ ВОЗРАЖЕНИЕМ: 1) признай сомнение, не спорь с формулировкой; 2) пойми НАСТОЯЩУЮ причину (за «дорого» может стоять «не понял, за что плачу», «сравнил с дешевле», «сейчас нет денег» — это три разных разговора); 3) ответь именно на эту причину, фактами; 4) верни разговор к тому, что человек получит в СВОЕЙ ситуации; 5) предложи ОДИН логичный следующий шаг. Не спорить и не уговаривать — понять и показать смысл.`
         : `ПОРЯДОК РАБОТЫ С ЛЮБЫМ ВОЗРАЖЕНИЕМ: 1) признай сомнение; 2) уточни, что за ним стоит, если это неясно; 3) ответь честно и по фактам; 4) оставь решение за клиентом. Не переубеждай и не возвращайся к предложению записаться в этом же сообщении, если человек сам не сказал, что вопрос снят.`,
     );
-    for (const k of toPlay) parts.push(playFor(k, sn));
+    // An entry offer is the signal that the back end of this business is a long, expensive
+    // programme rather than a single visit — which is exactly when the "what have you already
+    // spent" move belongs, and exactly when scare-selling has to be forbidden by name.
+    const longProgramme = Boolean(playbook.entryOffer);
+    for (const k of toPlay) parts.push(playFor(k, sn, { longProgramme }));
     if (fresh.length === 0) {
       parts.push(
         `ВНИМАНИЕ: это возражение в диалоге УЖЕ звучало и ты на него отвечал. НЕ повторяй тот же ответ другими словами — это раздражает. Либо дай НОВЫЙ аргумент по существу, либо честно признай, что решение за клиентом, и не дави.`,

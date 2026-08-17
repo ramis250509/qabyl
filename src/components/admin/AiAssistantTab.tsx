@@ -71,6 +71,10 @@ type Assistant = {
   sales_objections: { trigger: string; answer: string }[];
   sales_promos: { title: string; details: string; until: string }[];
   booking_link_mode: "off" | "auto" | "eager";
+  /** Услуга-«первый шаг», на которую ассистент ведёт в переписке. null = вести на то, что спросили. */
+  entry_service_id: string | null;
+  /** Слова владельца о том, из чего складывается крупная цена. Подставляются дословно. */
+  sales_price_framing: string;
 };
 
 // ── Режимы продаж ────────────────────────────────────────────────────────────
@@ -194,26 +198,37 @@ export function AiAssistantTab({
     sales_objections: [],
     sales_promos: [],
     booking_link_mode: "auto",
+    entry_service_id: null,
+    sales_price_framing: "",
   });
   const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
+  const [services, setServices] = useState<{ id: string; name: string; price: number }[]>([]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const [{ data: salon }, { data: row }, { data: branchRows }] = await Promise.all([
-        supabase.from("salons").select("ai_assistant_enabled").eq("id", salonId).maybeSingle(),
-        supabase.from("salon_ai_assistant").select("*").eq("salon_id", salonId).maybeSingle(),
-        supabase
-          .from("branches")
-          .select("id, name")
-          .eq("salon_id", salonId)
-          .eq("is_active", true)
-          .order("sort_order"),
-      ]);
+      const [{ data: salon }, { data: row }, { data: branchRows }, { data: serviceRows }] =
+        await Promise.all([
+          supabase.from("salons").select("ai_assistant_enabled").eq("id", salonId).maybeSingle(),
+          supabase.from("salon_ai_assistant").select("*").eq("salon_id", salonId).maybeSingle(),
+          supabase
+            .from("branches")
+            .select("id, name")
+            .eq("salon_id", salonId)
+            .eq("is_active", true)
+            .order("sort_order"),
+          supabase
+            .from("services")
+            .select("id, name, price")
+            .eq("salon_id", salonId)
+            .eq("is_active", true)
+            .order("sort_order"),
+        ]);
       if (cancelled) return;
       setPremiumEnabled(!!(salon as any)?.ai_assistant_enabled);
       setBranches((branchRows as any) ?? []);
+      setServices((serviceRows as any) ?? []);
       if (row) {
         setData({
           salon_id: salonId,
@@ -249,6 +264,8 @@ export function AiAssistantTab({
             (row as any).booking_link_mode === "off" || (row as any).booking_link_mode === "eager"
               ? (row as any).booking_link_mode
               : "auto",
+          entry_service_id: (row as any).entry_service_id ?? null,
+          sales_price_framing: (row as any).sales_price_framing ?? "",
         });
       }
       setLoading(false);
@@ -348,6 +365,8 @@ export function AiAssistantTab({
           }))
           .filter((p) => p.title),
         booking_link_mode: data.booking_link_mode,
+        entry_service_id: data.entry_service_id,
+        sales_price_framing: data.sales_price_framing.trim() || null,
       } as any,
       { onConflict: "salon_id" },
     );
@@ -685,7 +704,7 @@ export function AiAssistantTab({
           </p>
         </div>
 
-        <SalesPlaybookSection data={data} setData={setData} />
+        <SalesPlaybookSection data={data} setData={setData} services={services} />
 
         <div className="space-y-2">
           <Label>Приветствие</Label>
@@ -1041,9 +1060,11 @@ type ExcludedContact = { id: string; phone: string; label: string | null; create
 function SalesPlaybookSection({
   data,
   setData,
+  services,
 }: {
   data: Assistant;
   setData: React.Dispatch<React.SetStateAction<Assistant>>;
+  services: { id: string; name: string; price: number }[];
 }) {
   const patch = (p: Partial<Assistant>) => setData((d) => ({ ...d, ...p }));
 
@@ -1058,6 +1079,55 @@ function SalesPlaybookSection({
           Здесь вы задаёте, чем ваш бизнес силён, что отвечать на частые возражения и какие акции
           сейчас действуют. Ассистент использует ТОЛЬКО то, что здесь написано — он не придумывает
           скидки, преимущества и гарантии сам.
+        </p>
+      </div>
+
+      {/* Двухшаговая продажа */}
+      <div className="space-y-2">
+        <Label className="text-sm">Первый шаг: на что ассистент записывает в переписке</Label>
+        <Select
+          value={data.entry_service_id ?? "__none__"}
+          onValueChange={(v) => patch({ entry_service_id: v === "__none__" ? null : v })}
+        >
+          <SelectTrigger className="h-9">
+            <SelectValue placeholder="На то, о чём спросил клиент" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__none__">На то, о чём спросил клиент</SelectItem>
+            {services.map((s) => (
+              <SelectItem key={s.id} value={s.id}>
+                {s.name} · {s.price.toLocaleString("ru-RU")} сом
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          Если у вас есть дорогая длительная программа, продавать её прямо в переписке почти
+          невозможно: человек слышит большую сумму и уходит. Выберите здесь недорогую услугу —
+          обычно консультацию или осмотр. Ассистент честно назовёт цену программы, если спросят, но
+          записывать будет на этот первый шаг, а программу предложит уже специалист на приёме.
+          Клиента, который сам уверенно просит программу, ассистент запишет на неё.
+        </p>
+      </div>
+
+      {/* Объяснение цены */}
+      <div className="space-y-2">
+        <Label className="text-sm">Как объяснять крупную цену</Label>
+        <Textarea
+          rows={4}
+          value={data.sales_price_framing}
+          onChange={(e) => patch({ sales_price_framing: e.target.value })}
+          placeholder={
+            "Например: Программа 20 000 сом — это 3 месяца ведения, примерно 6 700 сом в месяц.\n" +
+            "Входит: разбор анализов, план питания, коррекция назначений и связь с врачом между приёмами.\n" +
+            "Отдельно за повторные приёмы внутри программы платить не нужно."
+          }
+        />
+        <p className="text-xs text-muted-foreground">
+          Большая сумма пугает, пока непонятно, что за ней стоит. Распишите своими словами, из чего
+          она складывается и на какой срок. Ассистент передаст этот смысл, когда речь зайдёт о цене,
+          и <b>ничего сюда не добавит от себя</b> — ни рассрочки, ни скидки, ни расчётов, которых вы
+          здесь не написали.
         </p>
       </div>
 

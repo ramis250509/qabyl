@@ -2664,12 +2664,35 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
 
   // All four prompt-context queries are independent — run them concurrently to cut round-trips
   // off the latency before the first Gemini call.
-  const [closedDates, mastersRoster, servicesRoster, hasUpcomingAppointment] = await Promise.all([
-    closedDatesP,
-    mastersRosterP,
-    servicesRosterP,
-    upcomingApptP,
-  ]);
+  // The configured "first step" service, resolved to a name and price for the sales block. A
+  // primary-key lookup, and only when the owner set one. An inactive or deleted service resolves
+  // to null and the assistant falls back to booking whatever the client asked about — routing
+  // every lead to a service that no longer exists would be worse than not routing at all.
+  const entryOfferP = (async (): Promise<{ name: string; price: number } | null> => {
+    const id = input.config.entry_service_id;
+    if (!id) return null;
+    try {
+      const { data } = await db
+        .from("services")
+        .select("name, price, is_active")
+        .eq("id", id)
+        .eq("salon_id", input.salon.salonId)
+        .maybeSingle();
+      if (!data || (data as any).is_active === false) return null;
+      return { name: String((data as any).name), price: Number((data as any).price) };
+    } catch {
+      return null;
+    }
+  })();
+
+  const [closedDates, mastersRoster, servicesRoster, hasUpcomingAppointment, entryOffer] =
+    await Promise.all([
+      closedDatesP,
+      mastersRosterP,
+      servicesRosterP,
+      upcomingApptP,
+      entryOfferP,
+    ]);
   // Observability: prove in prod logs whether the closed-list block actually rendered this turn.
   // If servicesRoster is empty here despite the salon having services in the admin, the fault is
   // upstream (loadAiVisibleServicesForSalon), not in the prompt — that changes the debugging path.
@@ -2689,6 +2712,8 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     sales_style: input.config.sales_style,
     // Legacy fallback: a salon row loaded before the sales_style migration carries only this.
     sales_mode: input.config.sales_mode ?? false,
+    entry_offer: entryOffer,
+    sales_price_framing: input.config.sales_price_framing,
   });
   const priorSales = readSalesState((input.stateData as any)?.sales);
   const turnObjections = detectObjections(lastText);

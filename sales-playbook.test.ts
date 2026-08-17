@@ -690,3 +690,98 @@ describe("anti-repetition", () => {
     expect(p).not.toContain("а".repeat(400));
   });
 });
+
+// ---------------------------------------------------------------------------
+// Two-step selling: sell the cheap first step, not the expensive programme
+// ---------------------------------------------------------------------------
+//
+// The problem: a lead asks the price of a 20 000 som programme, hears the number, and vanishes.
+// Quoting it as the thing to buy right now is what loses them, not the number itself.
+
+const ENTRY = { name: "Первичная консультация", price: 7000 };
+
+describe("entry offer", () => {
+  test("tells the assistant to route to the first step and still name the real price", () => {
+    const p = block({ playbook: { ...EMPTY_PLAYBOOK, entryOffer: ENTRY } });
+    expect(p).toContain("ЧТО ИМЕННО ТЫ ПРОДАЁШЬ В ЧАТЕ");
+    expect(p).toContain("Первичная консультация");
+    // toLocaleString("ru-RU") groups with a NON-BREAKING space, so build the expected
+    // string the same way rather than typing a plain space that will never match.
+    expect(p).toContain(ENTRY.price.toLocaleString("ru-RU"));
+    // Hiding the programme price would be worse than quoting it: it reads as evasion.
+    expect(p).toContain("назови её ЧЕСТНО");
+  });
+
+  test("leaves the door open for a client who genuinely wants the programme now", () => {
+    const p = block({ playbook: { ...EMPTY_PLAYBOOK, entryOffer: ENTRY } });
+    expect(p).toContain("не мешай и записывай");
+  });
+
+  test("a salon without one keeps today's behaviour and pays no tokens", () => {
+    const p = block();
+    expect(p).not.toContain("ЧТО ИМЕННО ТЫ ПРОДАЁШЬ В ЧАТЕ");
+  });
+});
+
+describe("price framing", () => {
+  const framing = "Программа 20 000 сом — это 3 месяца, примерно 6 700 сом в месяц.";
+
+  test("is injected verbatim when price is on the table", () => {
+    const p = block({
+      playbook: { ...EMPTY_PLAYBOOK, priceFraming: framing },
+      objections: ["price"],
+      stage: "objection",
+    });
+    expect(p).toContain(framing);
+    expect(p).toContain("КАК ОБЪЯСНЯТЬ ЦЕНУ");
+  });
+
+  test("forbids the assistant adding a discount or plan of its own", () => {
+    const p = block({
+      playbook: { ...EMPTY_PLAYBOOK, priceFraming: framing },
+      objections: ["price"],
+      stage: "objection",
+    });
+    expect(p).toContain("не существует");
+  });
+
+  test("stays out of the prompt when price is not the topic", () => {
+    const p = block({
+      playbook: { ...EMPTY_PLAYBOOK, priceFraming: framing },
+      objections: ["fear"],
+      stage: "discovery",
+    });
+    expect(p).not.toContain("КАК ОБЪЯСНЯТЬ ЦЕНУ");
+  });
+});
+
+describe("the «what have you already spent» move", () => {
+  test("appears on a price objection for a business with a long programme", () => {
+    const p = block({
+      playbook: { ...EMPTY_PLAYBOOK, entryOffer: ENTRY },
+      objections: ["price"],
+      stage: "objection",
+    });
+    expect(p).toContain("что он уже пробовал");
+    // It only works if the client does the arithmetic. Us doing it out loud is pressure.
+    expect(p).toContain("НЕ подсчитывай за него");
+    expect(p).toContain("ОДИН раз за диалог");
+  });
+
+  test("never appears for a business that sells single visits", () => {
+    // "How much have you already spent on haircuts" is an absurd question.
+    const p = block({ objections: ["price"], stage: "objection" });
+    expect(p).not.toContain("что он уже пробовал");
+  });
+
+  test("scare-selling is banned by name wherever the move is available", () => {
+    // In a clinic the tempting move is fear. It converts once and comes back as a complaint.
+    const p = block({
+      playbook: { ...EMPTY_PLAYBOOK, entryOffer: ENTRY },
+      objections: ["price"],
+      stage: "objection",
+    });
+    expect(p).toContain("пугать последствиями для здоровья");
+    expect(p).toContain("обещать результат");
+  });
+});
