@@ -20,6 +20,7 @@ import {
   type WaIncomingMessage,
 } from "@/lib/wa-agent.server";
 import { runWaAgentV4 } from "@/lib/wa-agent-v4.server";
+import { isExcludedContact } from "@/lib/excluded-contacts.server";
 
 // LOCK_TTL is the WORST-CASE ceiling: how long we let a stuck worker hold the conversation
 // before another worker is allowed to take over. Prod incident (2026-07-24) showed a Gemini
@@ -212,13 +213,9 @@ export const Route = createFileRoute("/api/public/wa/$salonId")({
         // 20260728120000). Salon owners add personal/staff phones here so the AI never spends
         // Gemini on them, never sends a reply, never touches conversation state. Also skips
         // storing the message (we'd only be creating noise in an "AI-off" chat).
-        const { data: excluded } = await supabaseAdmin
-          .from("excluded_contacts" as any)
-          .select("id")
-          .eq("salon_id", salonId)
-          .eq("phone", phone)
-          .maybeSingle();
-        if (excluded) {
+        // The lookup fails CLOSED — a database blip must not turn into the assistant answering
+        // the owner's personal chat. See src/lib/excluded-contacts.server.ts.
+        if (await isExcludedContact(supabaseAdmin, salonId, phone, errLog)) {
           return ack();
         }
 

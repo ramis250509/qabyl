@@ -14,10 +14,14 @@
 // own template rules, and wiring it in blind would risk double-messaging.
 
 import { igSendMessage, type IgCreds } from "@/lib/ig-api.server";
+import { isExcludedContact } from "@/lib/excluded-contacts.server";
 
 export type ExpiryNotifyResult =
   | { sent: true }
-  | { sent: false; reason: "not_instagram" | "already_notified" | "no_credentials" };
+  | {
+      sent: false;
+      reason: "not_instagram" | "already_notified" | "no_credentials" | "excluded_contact";
+    };
 
 export async function notifyHoldExpired(appointmentId: string): Promise<ExpiryNotifyResult> {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
@@ -27,12 +31,22 @@ export async function notifyHoldExpired(appointmentId: string): Promise<ExpiryNo
   // appointment id until the client pays or the state is reset.
   const { data: convs } = await db
     .from("wa_conversations")
-    .select("id, salon_id, channel, external_id, state, state_data")
+    .select("id, salon_id, channel, client_phone, external_id, state, state_data")
     .eq("channel", "instagram")
     .contains("state_data", { prepayment_appointment_id: appointmentId })
     .limit(1);
   const conv = (convs ?? [])[0];
   if (!conv?.external_id) return { sent: false, reason: "not_instagram" };
+
+  // The owner silenced this account ("Контакты без Админа"), and an automated "your slot was
+  // released" is still the assistant talking. Fails closed like every other exclusion check.
+  if (
+    await isExcludedContact(db, conv.salon_id, conv.client_phone, (m, ...r) =>
+      console.error(`[prepayment-expiry] ${m}`, ...r),
+    )
+  ) {
+    return { sent: false, reason: "excluded_contact" };
+  }
 
   // Idempotency: pg_cron retries and net.http_post has no delivery guarantee, so
   // a second call for the same appointment must not send a second message.

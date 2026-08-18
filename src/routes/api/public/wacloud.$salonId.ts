@@ -44,6 +44,7 @@ import {
   stillHoldingConversationLock,
 } from "@/lib/chat-lock.server";
 import { runWaAgentV4 } from "@/lib/wa-agent-v4.server";
+import { isExcludedContact } from "@/lib/excluded-contacts.server";
 import {
   greenApiSendMessage,
   isLikelyNativeGreetingRace,
@@ -401,14 +402,9 @@ async function ingestEvent(opts: {
   const nowIso = new Date().toISOString();
 
   // Salon staff / personal numbers the owner never wants the assistant to answer. Earliest possible
-  // bail — no Gemini spend, no reply, no conversation state touched.
-  const { data: excluded } = await db
-    .from("excluded_contacts")
-    .select("id")
-    .eq("salon_id", salonId)
-    .eq("phone", phone)
-    .maybeSingle();
-  if (excluded) return null;
+  // bail — no Gemini spend, no reply, no conversation state touched. Fails closed on a lookup
+  // error: see src/lib/excluded-contacts.server.ts.
+  if (await isExcludedContact(db, salonId, phone, errLog)) return null;
 
   const [{ data: existingConv }, { data: dup }] = await Promise.all([
     db

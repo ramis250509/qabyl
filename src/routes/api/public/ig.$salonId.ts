@@ -47,6 +47,7 @@ import {
   stillHoldingConversationLock,
 } from "@/lib/chat-lock.server";
 import { echoIsOurs } from "@/lib/ig-echo";
+import { isExcludedContact } from "@/lib/excluded-contacts.server";
 import { runWaAgentV4 } from "@/lib/wa-agent-v4.server";
 import {
   greenApiSendMessage,
@@ -436,13 +437,9 @@ async function handleCommentTrigger(opts: {
   // Respect the exclusion list the owner already maintains for DMs — a staff account commenting
   // on the salon's own post must not be pulled into an automated sales conversation.
   const convPhone = igConversationPhone(comment.fromId);
-  const { data: excluded } = await db
-    .from("excluded_contacts")
-    .select("id")
-    .eq("salon_id", salonId)
-    .eq("phone", convPhone)
-    .maybeSingle();
-  if (excluded) return void (await finish("skipped_excluded", undefined, trigger.id));
+  if (await isExcludedContact(db, salonId, convPhone, log)) {
+    return void (await finish("skipped_excluded", undefined, trigger.id));
+  }
 
   // One person, two posts, same keyword. Each comment is a distinct comment_id, so the dedup
   // ledger above happily lets both through — but Meta's rule is per PERSON, not per comment:
@@ -589,14 +586,9 @@ async function ingestEvent(opts: {
   const convPhone = igConversationPhone(ev.clientId);
   const nowIso = new Date().toISOString();
 
-  // Salon staff / personal accounts the owner never wants the assistant to answer.
-  const { data: excluded } = await db
-    .from("excluded_contacts")
-    .select("id")
-    .eq("salon_id", salonId)
-    .eq("phone", convPhone)
-    .maybeSingle();
-  if (excluded) return null;
+  // Salon staff / personal accounts the owner never wants the assistant to answer. Fails closed
+  // on a lookup error: see src/lib/excluded-contacts.server.ts.
+  if (await isExcludedContact(db, salonId, convPhone, errLog)) return null;
 
   const [{ data: existingConv }, { data: dup }] = await Promise.all([
     db

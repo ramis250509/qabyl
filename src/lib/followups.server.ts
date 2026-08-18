@@ -16,6 +16,8 @@
 // A follow-up that misses the window is DROPPED, never deferred. Arriving two days after someone
 // asked a question is worse than staying quiet.
 
+import { isExcludedByLookup, loadExcludedContacts } from "@/lib/excluded-contacts.server";
+
 export type FollowupChannel = "instagram" | "whatsapp_cloud" | "whatsapp";
 
 /**
@@ -53,9 +55,7 @@ export type FollowupSettings = {
   text: string | null;
 };
 
-export type FollowupDecision =
-  | { send: true }
-  | { send: false; reason: string };
+export type FollowupDecision = { send: true } | { send: false; reason: string };
 
 /** Salon-local hour, so a nudge never lands in the middle of the night. */
 export function localHour(nowMs: number, timezone: string): number {
@@ -166,21 +166,30 @@ export async function runFollowups(nowMs = Date.now()): Promise<FollowupRunRepor
       continue;
     }
 
-    const [{ data: salon }, { data: convs }, { data: excluded }] = await Promise.all([
+    const [{ data: salon }, { data: convs }, excludedLookup] = await Promise.all([
       db.from("salons").select("timezone").eq("id", row.salon_id).maybeSingle(),
       db
         .from("wa_conversations")
-        .select("id, salon_id, channel, client_phone, external_id, status, ai_paused, followup_sent_at, last_message_at")
+        .select(
+          "id, salon_id, channel, client_phone, external_id, status, ai_paused, followup_sent_at, last_message_at",
+        )
         .eq("salon_id", row.salon_id)
         .is("followup_sent_at", null)
         .gte("last_message_at", horizon)
         .limit(200),
-      db.from("excluded_contacts").select("phone").eq("salon_id", row.salon_id),
+      loadExcludedContacts(db, row.salon_id),
     ]);
     if (!convs?.length) continue;
 
+    // A list we could not read is not an empty list. Nudging every conversation because the
+    // lookup failed would write into exactly the personal and staff chats the owner silenced,
+    // so the whole salon is skipped for this pass instead.
+    if (!excludedLookup.ok) {
+      skip("excluded_lookup_failed");
+      continue;
+    }
+
     const timezone = (salon as any)?.timezone || "Asia/Bishkek";
-    const excludedSet = new Set((excluded ?? []).map((e: any) => String(e.phone)));
     const secretsRes = await db
       .from("salon_secrets")
       .select("*")
@@ -200,8 +209,7 @@ export async function runFollowups(nowMs = Date.now()): Promise<FollowupRunRepor
         .order("created_at", { ascending: false })
         .limit(20);
       const msgs = (recent ?? []) as any[];
-      const lastClientMessageAt =
-        msgs.find((m) => m.direction === "in")?.created_at ?? null;
+      const lastClientMessageAt = msgs.find((m) => m.direction === "in")?.created_at ?? null;
 
       const decision = decideFollowup(
         {
@@ -212,13 +220,11 @@ export async function runFollowups(nowMs = Date.now()): Promise<FollowupRunRepor
           lastClientMessageAt,
           lastMessageAt: conv.last_message_at,
           lastDirection: (msgs[0]?.direction ?? null) as "in" | "out" | null,
-          hasUnprocessedInbound: msgs.some(
-            (m) => m.direction === "in" && m.processed_at == null,
-          ),
+          hasUnprocessedInbound: msgs.some((m) => m.direction === "in" && m.processed_at == null),
           status: conv.status,
           aiPaused: Boolean(conv.ai_paused),
           followupSentAt: conv.followup_sent_at,
-          excluded: excludedSet.has(String(conv.client_phone ?? "")),
+          excluded: isExcludedByLookup(excludedLookup, conv.client_phone),
         },
         settings,
         { nowMs, timezone },
