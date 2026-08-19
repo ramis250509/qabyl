@@ -181,9 +181,12 @@ function Landing() {
             <p className="mt-2 max-w-sm text-sm text-muted-foreground">
               Платформа онлайн-записи для сферы услуг с WhatsApp-уведомлениями.
             </p>
-            <p className="mt-4 text-sm">
+            <p className="mt-4 flex flex-wrap gap-x-4 gap-y-1 text-sm">
               <Link to="/privacy" className="text-muted-foreground underline hover:text-foreground">
                 Политика конфиденциальности
+              </Link>
+              <Link to="/terms" className="text-muted-foreground underline hover:text-foreground">
+                Условия использования
               </Link>
             </p>
           </div>
@@ -206,8 +209,8 @@ function Landing() {
               </div>
               <div>
                 Email:{" "}
-                <a href="mailto:ramisakbarovvv@gmail.com" className="hover:text-foreground">
-                  ramisakbarovvv@gmail.com
+                <a href="mailto:akbarovramis00@gmail.com" className="hover:text-foreground">
+                  akbarovramis00@gmail.com
                 </a>
               </div>
             </address>

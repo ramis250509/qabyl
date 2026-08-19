@@ -29,7 +29,11 @@ export const Route = createFileRoute("/sitemap.xml")({
     handlers: {
       GET: async ({ request }) => {
         const origin = new URL(request.url).origin;
-        const entries: string[] = [urlEntry(`${origin}/`, undefined, "weekly", "1.0")];
+        const entries: string[] = [
+          urlEntry(`${origin}/`, undefined, "weekly", "1.0"),
+          urlEntry(`${origin}/privacy`, undefined, "yearly", "0.3"),
+          urlEntry(`${origin}/terms`, undefined, "yearly", "0.3"),
+        ];
 
         try {
           // Anon client: salon slug/domain of active salons is public data, and this works in
