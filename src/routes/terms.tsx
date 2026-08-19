@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 
-const CONTACT_EMAIL = "akbarovramis00@gmail.com";
+const CONTACT_EMAIL = "support@qabyl.com";
 const LAST_UPDATED = "19 августа 2026";
 const LAST_UPDATED_EN = "August 19, 2026";
 

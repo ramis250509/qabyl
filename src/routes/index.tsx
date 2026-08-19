@@ -209,8 +209,8 @@ function Landing() {
               </div>
               <div>
                 Email:{" "}
-                <a href="mailto:akbarovramis00@gmail.com" className="hover:text-foreground">
-                  akbarovramis00@gmail.com
+                <a href="mailto:support@qabyl.com" className="hover:text-foreground">
+                  support@qabyl.com
                 </a>
               </div>
             </address>
