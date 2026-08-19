@@ -73,7 +73,8 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
   head: () => ({
     meta: [
       { charSet: "utf-8" },
-      { name: "facebook-domain-verification", content: "y15ivgqnnclzh0s8wu8i19wfsetcjz" },
+      // Подтверждение домена для бизнес-портфолио Qabyl 1 (business_id 1212172691984078).
+      // React дедуплицирует meta по name — второй такой тег молча вытеснит этот.
       { name: "facebook-domain-verification", content: "jxl0lw6rrlvw8aeqka03i008w5x7ds" },
       { name: "viewport", content: "width=device-width, initial-scale=1, viewport-fit=cover" },
       { name: "theme-color", content: "#ffffff" },
