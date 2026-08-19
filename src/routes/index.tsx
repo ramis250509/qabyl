@@ -203,8 +203,8 @@ function Landing() {
               </div>
               <div>
                 Телефон:{" "}
-                <a href="tel:+996707111726" className="hover:text-foreground">
-                  +996 707 111 726
+                <a href="tel:+996556108099" className="hover:text-foreground">
+                  +996 556 108 099
                 </a>
               </div>
               <div>
