@@ -214,6 +214,19 @@ function Landing() {
                 </a>
               </div>
             </address>
+            {/* Латиница для ревью Meta: свидетельство ИП и поданная анкета — на кириллице,
+                поэтому это дополнение для проверяющего, а не замена реквизитов выше. */}
+            <p className="mt-4 text-xs leading-relaxed text-muted-foreground/80" lang="en">
+              Sole proprietor Akbarov Ramis Nurgazybekovich · Tax ID 22505200950633 · Registration
+              no. 001-2026-169-2385 · Isakeeva B St. 18/5, apt. 40, Bishkek, Kyrgyz Republic ·{" "}
+              <a href="tel:+996556108099" className="hover:text-foreground">
+                +996 556 108 099
+              </a>{" "}
+              ·{" "}
+              <a href="mailto:support@qabyl.com" className="hover:text-foreground">
+                support@qabyl.com
+              </a>
+            </p>
           </div>
         </div>
 
