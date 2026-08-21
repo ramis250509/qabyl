@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { branchScopeFilter, matchesBranchScope } from "@/lib/branch-scope";
 
 export type AppNotification = {
   id: string;
@@ -34,7 +35,8 @@ export function useNotifications(opts: { salonId: string | null; isSuperAdmin: b
 
       let q = supabase.from("notifications").select("*").order("created_at", { ascending: false }).limit(100);
       if (!isSuperAdmin && salonId) q = q.eq("salon_id", salonId);
-      if (branchId) q = q.eq("branch_id", branchId);
+      // NULL = «на весь салон». .eq() отрезал бы такие строки целиком.
+      if (branchId) q = q.or(branchScopeFilter(branchId));
       const { data } = await q;
 
       setItems((data ?? []) as AppNotification[]);
@@ -66,7 +68,7 @@ export function useNotifications(opts: { salonId: string | null; isSuperAdmin: b
           const n = payload.new as AppNotification;
           // Defensive tenant isolation: drop any event outside current salon/branch scope.
           if (!isSuperAdmin && salonId && n.salon_id !== salonId) return;
-          if (branchId && n.branch_id && n.branch_id !== branchId) return;
+          if (!matchesBranchScope(n.branch_id, branchId ?? null)) return;
           setItems((prev) => (prev.some((p) => p.id === n.id) ? prev : [n, ...prev]));
         },
       )
@@ -76,7 +78,7 @@ export function useNotifications(opts: { salonId: string | null; isSuperAdmin: b
         (payload) => {
           const n = payload.new as AppNotification;
           if (!isSuperAdmin && salonId && n.salon_id !== salonId) return;
-          if (branchId && n.branch_id && n.branch_id !== branchId) return;
+          if (!matchesBranchScope(n.branch_id, branchId ?? null)) return;
           setItems((prev) => prev.map((p) => (p.id === n.id ? { ...p, ...n } : p)));
         },
       )

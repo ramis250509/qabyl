@@ -17,6 +17,7 @@ import { useSalonTimezone, formatInTz, dayKeyInTz } from "@/lib/tz";
 import { LoadingState } from "@/components/ui/loading-state";
 import { useRegisterRefresh } from "@/lib/refresh-context";
 import { ensurePushSubscription, isPushSupported, isIos, isStandalonePWA } from "@/lib/push";
+import { matchesBranchScope } from "@/lib/branch-scope";
 
 export const Route = createFileRoute("/admin/notifications")({
   head: () => ({ meta: [{ title: "Уведомления — Qabyl" }] }),
@@ -197,8 +198,12 @@ function NotificationsPage() {
     return items.filter((n: any) => {
       if (filters.salonId !== "all" && n.salon_id !== filters.salonId) return false;
       if (filters.branchId !== "all") {
-        const b = n.appointment_id ? apptBranch[n.appointment_id] : null;
-        if (b !== filters.branchId) return false;
+        // Филиал самого уведомления, а если его нет — филиал записи (строки,
+        // созданные до фикса триггера, приходят с branch_id = NULL).
+        // null = «на весь салон», undefined = ещё не догрузилось: и то и другое
+        // показываем, иначе список молча пустеет — см. matchesBranchScope.
+        const b = n.branch_id ?? (n.appointment_id ? apptBranch[n.appointment_id] : null);
+        if (!matchesBranchScope(b, filters.branchId)) return false;
       }
       return true;
     });

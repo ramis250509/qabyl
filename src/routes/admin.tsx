@@ -46,6 +46,18 @@ function AdminLayout() {
     const subSalonId = isSuperAdmin ? null : salonId ?? null;
     const subBranchId = masterScope ? branchId ?? null : null;
     ensurePushSubscription({ salonId: subSalonId, branchId: subBranchId, skipPermissionRequest: true }).catch(() => {});
+
+    // Браузер может отозвать подписку в любой момент (см. pushsubscriptionchange
+    // в public/sw.js). Без этого слушателя новый endpoint попадёт в базу только
+    // при следующем заходе в /admin — а до тех пор пуши тихо не приходят.
+    if (!("serviceWorker" in navigator)) return;
+    const onSwMessage = (event: MessageEvent) => {
+      if (event.data?.source !== "qabyl-sw") return;
+      if (event.data.event !== "subscription-renew") return;
+      ensurePushSubscription({ salonId: subSalonId, branchId: subBranchId, skipPermissionRequest: true }).catch(() => {});
+    };
+    navigator.serviceWorker.addEventListener("message", onSwMessage);
+    return () => navigator.serviceWorker.removeEventListener("message", onSwMessage);
   }, [user, isSuperAdmin, isSalonAdmin, isMaster, salonId, branchId]);
 
   const { unreadCount } = useNotifications({ salonId, isSuperAdmin, branchId: isMaster && !isSuperAdmin && !isSalonAdmin ? branchId : null });

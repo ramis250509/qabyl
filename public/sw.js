@@ -81,6 +81,37 @@ self.addEventListener("push", (event) => {
   );
 });
 
+// iOS и Chrome периодически отзывают подписку и выдают новую (переустановка
+// PWA, ротация токена, долгое молчание). Старый endpoint после этого мёртв:
+// send-push получает 410 и удаляет строку из push_subscriptions — а браузер об
+// этом ничего не сообщает. Пока владелец салона не зайдёт на /admin, пуши молча
+// не приходят, и выглядит это как «уведомления сломались».
+//
+// Здесь мы переподписываемся сразу и просим любую открытую вкладку записать
+// новый endpoint в базу (сам SW этого не может — у него нет сессии Supabase,
+// а RLS требует user_id = auth.uid()).
+self.addEventListener("pushsubscriptionchange", (event) => {
+  event.waitUntil(
+    (async () => {
+      await notifyClients("subscription-change", { hadOld: !!event.oldSubscription });
+      let fresh = null;
+      try {
+        const key =
+          (event.oldSubscription && event.oldSubscription.options &&
+            event.oldSubscription.options.applicationServerKey) || null;
+        if (key) fresh = await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+      } catch (_) {}
+      if (!fresh) {
+        try { fresh = await self.registration.pushManager.getSubscription(); } catch (_) {}
+      }
+      await notifyClients("subscription-renew", {
+        oldEndpoint: (event.oldSubscription && event.oldSubscription.endpoint) || null,
+        subscription: fresh ? fresh.toJSON() : null,
+      });
+    })(),
+  );
+});
+
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const targetUrl =
