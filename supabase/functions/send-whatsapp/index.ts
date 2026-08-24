@@ -3,7 +3,8 @@ import { chooseTransport, explainNoTransport } from "../_shared/wa-transport.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-cron-secret",
 };
 
 function jsonResponse(body: Record<string, unknown>, status = 200) {
@@ -149,14 +150,20 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
 
     // Authenticate internal caller (DB trigger / send-reminders) with vault-stored secret.
     const { data: expected, error: secretError } = await supabase.rpc("internal_get_cron_secret");
     if (secretError) console.error("send-whatsapp cron secret lookup failed", secretError);
     const provided = req.headers.get("x-cron-secret");
     if (!expected || !provided || provided !== expected) {
-      console.error("send-whatsapp unauthorized internal call", { hasExpected: Boolean(expected), hasProvided: Boolean(provided) });
+      console.error("send-whatsapp unauthorized internal call", {
+        hasExpected: Boolean(expected),
+        hasProvided: Boolean(provided),
+      });
       return jsonResponse({ error: "unauthorized" }, 401);
     }
 
@@ -210,7 +217,8 @@ Deno.serve(async (req) => {
         .update(patch)
         .eq("id", appointment_id);
       // Never fail the send because bookkeeping failed.
-      if (markErr) console.error("send-whatsapp confirmation mark failed", { appointment_id, markErr });
+      if (markErr)
+        console.error("send-whatsapp confirmation mark failed", { appointment_id, markErr });
     }
 
     // ---- Which transport carries THIS message.
@@ -303,7 +311,13 @@ Deno.serve(async (req) => {
 
       const viaGreen = async () => {
         const chatId = normalizeGreenApiChatId(rawPhone);
-        if (!chatId) return { ok: false, messageId: null, detail: "Номер телефона нераспознаваем", via: "green_api" };
+        if (!chatId)
+          return {
+            ok: false,
+            messageId: null,
+            detail: "Номер телефона нераспознаваем",
+            via: "green_api",
+          };
         const res = await sendGreenApi(chatId, text, target);
         return {
           ok: res.ok,
@@ -337,7 +351,13 @@ Deno.serve(async (req) => {
       };
 
       const decision = chooseTransport(inputs);
-      console.log("send-whatsapp transport decision", { appointment_id, target, templateKind, decision, inWindow });
+      console.log("send-whatsapp transport decision", {
+        appointment_id,
+        target,
+        templateKind,
+        decision,
+        inWindow,
+      });
 
       if (decision === "cloud_text") {
         const res = await sendCloudApi({ ...cloudCreds, toPhone, text });
@@ -368,29 +388,65 @@ Deno.serve(async (req) => {
       // Nothing could carry it. This case must never look like success: the owner needs to know
       // their client heard nothing, and exactly why.
       const why = explainNoTransport(inputs, templateKind);
-      console.error("send-whatsapp: no legal transport", { appointment_id, target, templateKind, why });
+      console.error("send-whatsapp: no legal transport", {
+        appointment_id,
+        target,
+        templateKind,
+        why,
+      });
       return { ok: false, messageId: null, detail: why, via: "none" };
     }
 
     // Validated as digits rather than as a Green-API chat id: the same rule applies to both
     // transports, and a cloud salon has no chat ids at all.
     if (!normalizePhone(appt.client_phone as string)) {
-      console.error("send-whatsapp invalid client phone", { appointment_id, client_phone: appt.client_phone });
+      console.error("send-whatsapp invalid client phone", {
+        appointment_id,
+        client_phone: appt.client_phone,
+      });
       await markConfirmation("failed", "Номер телефона нераспознаваем");
       return jsonResponse({ error: "Invalid phone" }, 400);
     }
 
     const start = new Date(appt.starts_at);
     const tz = salon.timezone ?? "Asia/Bishkek";
-    const when = start.toLocaleString("ru-RU", { dateStyle: "full", timeStyle: "short", timeZone: tz });
-    const timeStr = start.toLocaleString("ru-RU", { hour: "2-digit", minute: "2-digit", timeZone: tz });
+    const when = start.toLocaleString("ru-RU", {
+      dateStyle: "full",
+      timeStyle: "short",
+      timeZone: tz,
+    });
+    const timeStr = start.toLocaleString("ru-RU", {
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: tz,
+    });
     const weekday = start.toLocaleString("ru-RU", { weekday: "long", timeZone: tz });
-    const dateStr = start.toLocaleString("ru-RU", { day: "numeric", month: "long", year: "numeric", timeZone: tz });
+    const dateStr = start.toLocaleString("ru-RU", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+      timeZone: tz,
+    });
     const serviceName = (appt.services as any)?.name ?? "услугу";
     const masterName = (appt.masters as any)?.name ?? "—";
     const priceStr = `${Number(appt.price ?? 0).toLocaleString("ru-RU")} сом`;
-    const clientFirstName = String(appt.client_name ?? "").trim().split(/\s+/)[0] || "клиент";
+    const clientFirstName =
+      String(appt.client_name ?? "")
+        .trim()
+        .split(/\s+/)[0] || "клиент";
     const manage = manageUrl((appt as any).manage_token as string | undefined);
+    // ── Values used ONLY by templates ──────────────────────────────────────────────────────────
+    // Free-form text can afford "19:00 — понедельник, 12 августа 2026 г." on its own line. Inside a
+    // template it lands mid-sentence ("Записали вас к Бегимай на маникюр, …"), where that form reads
+    // like a train timetable, so templates get a short human date instead.
+    const whenShort = `${start.toLocaleString("ru-RU", { day: "numeric", month: "long", timeZone: tz })} в ${timeStr}`;
+    // Service names are stored capitalised ("Маникюр") because they head their own line elsewhere.
+    // In a template they sit mid-phrase, where the capital reads as a typo.
+    const serviceLower = serviceName.charAt(0).toLowerCase() + serviceName.slice(1);
+    // The self-service link is inside the template BODY (a dynamic URL button would need a
+    // components entry of type "button", which sendCloudApi does not build), so the template
+    // carries the static https://qabyl.com/manage/ prefix and we pass only the token.
+    const manageToken = String((appt as any).manage_token ?? "");
     // Appended to messages the CLIENT receives, so they can self-manage without the assistant.
     const manageLine = manage ? `\n\n🔗 Перенести или отменить запись: ${manage}` : "";
 
@@ -414,11 +470,11 @@ Deno.serve(async (req) => {
         target: "owner",
         templateKind: "owner_alert",
         templateParams: [
-          String(salon.name ?? ""),
           String(appt.client_name ?? ""),
+          serviceLower,
+          masterName,
+          whenShort,
           String(appt.client_phone ?? ""),
-          serviceName,
-          when,
         ],
       });
       if (!res.ok) {
@@ -482,7 +538,12 @@ Deno.serve(async (req) => {
             requestBody: body,
           });
         } else {
-          console.log("GreenAPI response ok", { appointment_id, target, status: resp.status, response: result.parsed ?? result.raw });
+          console.log("GreenAPI response ok", {
+            appointment_id,
+            target,
+            status: resp.status,
+            response: result.parsed ?? result.raw,
+          });
         }
         return { ok: resp.ok, status: resp.status, result };
       } catch (err: any) {
@@ -508,16 +569,17 @@ Deno.serve(async (req) => {
           : kind === "cancellation"
             ? "cancellation"
             : "confirmation";
+    // Each kind has its OWN parameter list — they are not interchangeable. The approved templates
+    // phrase the time differently: the reminder says "сегодня в {{2}}" and wants a bare clock
+    // reading, while confirmation and reschedule name the day too.
     const clientTemplateParams =
       clientTemplateKind === "cancellation"
-        ? [clientFirstName, String(salon.name ?? ""), `${timeStr} — ${weekday}, ${dateStr}`, serviceName]
-        : [
-            clientFirstName,
-            String(salon.name ?? ""),
-            serviceName,
-            masterName,
-            `${timeStr} — ${weekday}, ${dateStr}`,
-          ];
+        ? [clientFirstName, whenShort]
+        : clientTemplateKind === "confirmation"
+          ? [clientFirstName, masterName, serviceLower, whenShort, manageToken]
+          : clientTemplateKind === "reminder"
+            ? [clientFirstName, timeStr, masterName, manageToken]
+            : [clientFirstName, whenShort, masterName, manageToken];
 
     let clientRes: Awaited<ReturnType<typeof deliver>>;
     try {
@@ -562,18 +624,22 @@ Deno.serve(async (req) => {
           target: "owner",
           templateKind: "owner_alert",
           templateParams: [
-            String(salon.name ?? ""),
             String(appt.client_name ?? ""),
+            serviceLower,
+            masterName,
+            whenShort,
             String(appt.client_phone ?? ""),
-            serviceName,
-            when,
           ],
         });
         // The owner's own alert failing is not a reason to fail the request — the client already got
         // their confirmation — but it must not be silent either.
-        if (!ownerRes.ok) console.error("owner notify failed", { appointment_id, detail: ownerRes.detail });
+        if (!ownerRes.ok)
+          console.error("owner notify failed", { appointment_id, detail: ownerRes.detail });
       } else {
-        console.error("send-whatsapp invalid owner phone", { appointment_id, owner_notify_phone: salon.owner_notify_phone });
+        console.error("send-whatsapp invalid owner phone", {
+          appointment_id,
+          owner_notify_phone: salon.owner_notify_phone,
+        });
       }
     }
 
