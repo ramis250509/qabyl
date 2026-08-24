@@ -40,12 +40,14 @@ const KIND_LABELS: Record<string, string> = {
 // The placeholder contract from docs/WA-CLOUD-MIGRATION.md. Shown next to each field because the
 // count must match the approved template EXACTLY — Meta answers 132000 otherwise, and the owner has
 // no other way to know what we will send.
+// Каждый вид получает СВОЙ список — они не взаимозаменяемы, и число плейсхолдеров у трёх из пяти
+// разное. Напоминанию достаточно голого времени («сегодня в 19:30»), остальным нужна дата.
 const KIND_PLACEHOLDERS: Record<string, string> = {
-  confirmation: "{{1}} имя · {{2}} салон · {{3}} услуга · {{4}} мастер · {{5}} время",
-  reminder: "{{1}} имя · {{2}} салон · {{3}} услуга · {{4}} мастер · {{5}} время",
-  reschedule: "{{1}} имя · {{2}} салон · {{3}} услуга · {{4}} мастер · {{5}} время",
-  cancellation: "{{1}} имя · {{2}} салон · {{3}} время · {{4}} услуга",
-  owner_alert: "{{1}} салон · {{2}} клиент · {{3}} телефон · {{4}} услуга · {{5}} время",
+  confirmation: "{{1}} имя · {{2}} мастер · {{3}} услуга · {{4}} дата и время · {{5}} токен ссылки",
+  reminder: "{{1}} имя · {{2}} время · {{3}} мастер · {{4}} токен ссылки",
+  reschedule: "{{1}} имя · {{2}} новые дата и время · {{3}} мастер · {{4}} токен ссылки",
+  cancellation: "{{1}} имя · {{2}} дата и время",
+  owner_alert: "{{1}} клиент · {{2}} услуга · {{3}} мастер · {{4}} дата и время · {{5}} телефон",
 };
 
 function whenLabel(iso: string | null): string {
