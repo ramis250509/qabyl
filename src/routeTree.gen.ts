@@ -28,6 +28,7 @@ import { Route as AdminCalendarRouteImport } from './routes/admin/calendar'
 import { Route as AdminAccountRouteImport } from './routes/admin/account'
 import { Route as AdminSalonsIndexRouteImport } from './routes/admin/salons/index'
 import { Route as PreviewSalonSalonIdRouteImport } from './routes/preview.salon.$salonId'
+import { Route as ApiPublicWacloudRouteImport } from './routes/api/public/wacloud'
 import { Route as ApiInternalTelegramRouteImport } from './routes/api/internal/telegram'
 import { Route as AdminSalonsSalonIdRouteImport } from './routes/admin/salons/$salonId'
 import { Route as ApiPublicWacloudSalonIdRouteImport } from './routes/api/public/wacloud.$salonId'
@@ -130,6 +131,11 @@ const PreviewSalonSalonIdRoute = PreviewSalonSalonIdRouteImport.update({
   path: '/preview/salon/$salonId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicWacloudRoute = ApiPublicWacloudRouteImport.update({
+  id: '/api/public/wacloud',
+  path: '/api/public/wacloud',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiInternalTelegramRoute = ApiInternalTelegramRouteImport.update({
   id: '/api/internal/telegram',
   path: '/api/internal/telegram',
@@ -141,9 +147,9 @@ const AdminSalonsSalonIdRoute = AdminSalonsSalonIdRouteImport.update({
   getParentRoute: () => AdminRoute,
 } as any)
 const ApiPublicWacloudSalonIdRoute = ApiPublicWacloudSalonIdRouteImport.update({
-  id: '/api/public/wacloud/$salonId',
-  path: '/api/public/wacloud/$salonId',
-  getParentRoute: () => rootRouteImport,
+  id: '/$salonId',
+  path: '/$salonId',
+  getParentRoute: () => ApiPublicWacloudRoute,
 } as any)
 const ApiPublicWaSalonIdRoute = ApiPublicWaSalonIdRouteImport.update({
   id: '/api/public/wa/$salonId',
@@ -181,6 +187,7 @@ export interface FileRoutesByFullPath {
   '/admin/': typeof AdminIndexRoute
   '/admin/salons/$salonId': typeof AdminSalonsSalonIdRoute
   '/api/internal/telegram': typeof ApiInternalTelegramRoute
+  '/api/public/wacloud': typeof ApiPublicWacloudRouteWithChildren
   '/preview/salon/$salonId': typeof PreviewSalonSalonIdRoute
   '/admin/salons/': typeof AdminSalonsIndexRoute
   '/api/internal/cron/$job': typeof ApiInternalCronJobRoute
@@ -207,6 +214,7 @@ export interface FileRoutesByTo {
   '/admin': typeof AdminIndexRoute
   '/admin/salons/$salonId': typeof AdminSalonsSalonIdRoute
   '/api/internal/telegram': typeof ApiInternalTelegramRoute
+  '/api/public/wacloud': typeof ApiPublicWacloudRouteWithChildren
   '/preview/salon/$salonId': typeof PreviewSalonSalonIdRoute
   '/admin/salons': typeof AdminSalonsIndexRoute
   '/api/internal/cron/$job': typeof ApiInternalCronJobRoute
@@ -235,6 +243,7 @@ export interface FileRoutesById {
   '/admin/': typeof AdminIndexRoute
   '/admin/salons/$salonId': typeof AdminSalonsSalonIdRoute
   '/api/internal/telegram': typeof ApiInternalTelegramRoute
+  '/api/public/wacloud': typeof ApiPublicWacloudRouteWithChildren
   '/preview/salon/$salonId': typeof PreviewSalonSalonIdRoute
   '/admin/salons/': typeof AdminSalonsIndexRoute
   '/api/internal/cron/$job': typeof ApiInternalCronJobRoute
@@ -264,6 +273,7 @@ export interface FileRouteTypes {
     | '/admin/'
     | '/admin/salons/$salonId'
     | '/api/internal/telegram'
+    | '/api/public/wacloud'
     | '/preview/salon/$salonId'
     | '/admin/salons/'
     | '/api/internal/cron/$job'
@@ -290,6 +300,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/admin/salons/$salonId'
     | '/api/internal/telegram'
+    | '/api/public/wacloud'
     | '/preview/salon/$salonId'
     | '/admin/salons'
     | '/api/internal/cron/$job'
@@ -317,6 +328,7 @@ export interface FileRouteTypes {
     | '/admin/'
     | '/admin/salons/$salonId'
     | '/api/internal/telegram'
+    | '/api/public/wacloud'
     | '/preview/salon/$salonId'
     | '/admin/salons/'
     | '/api/internal/cron/$job'
@@ -337,11 +349,11 @@ export interface RootRouteChildren {
   CatalogSlugRoute: typeof CatalogSlugRoute
   ManageTokenRoute: typeof ManageTokenRoute
   ApiInternalTelegramRoute: typeof ApiInternalTelegramRoute
+  ApiPublicWacloudRoute: typeof ApiPublicWacloudRouteWithChildren
   PreviewSalonSalonIdRoute: typeof PreviewSalonSalonIdRoute
   ApiInternalCronJobRoute: typeof ApiInternalCronJobRoute
   ApiPublicIgSalonIdRoute: typeof ApiPublicIgSalonIdRoute
   ApiPublicWaSalonIdRoute: typeof ApiPublicWaSalonIdRoute
-  ApiPublicWacloudSalonIdRoute: typeof ApiPublicWacloudSalonIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -479,6 +491,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PreviewSalonSalonIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/wacloud': {
+      id: '/api/public/wacloud'
+      path: '/api/public/wacloud'
+      fullPath: '/api/public/wacloud'
+      preLoaderRoute: typeof ApiPublicWacloudRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/internal/telegram': {
       id: '/api/internal/telegram'
       path: '/api/internal/telegram'
@@ -495,10 +514,10 @@ declare module '@tanstack/react-router' {
     }
     '/api/public/wacloud/$salonId': {
       id: '/api/public/wacloud/$salonId'
-      path: '/api/public/wacloud/$salonId'
+      path: '/$salonId'
       fullPath: '/api/public/wacloud/$salonId'
       preLoaderRoute: typeof ApiPublicWacloudSalonIdRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof ApiPublicWacloudRoute
     }
     '/api/public/wa/$salonId': {
       id: '/api/public/wa/$salonId'
@@ -550,6 +569,17 @@ const AdminRouteChildren: AdminRouteChildren = {
 
 const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
 
+interface ApiPublicWacloudRouteChildren {
+  ApiPublicWacloudSalonIdRoute: typeof ApiPublicWacloudSalonIdRoute
+}
+
+const ApiPublicWacloudRouteChildren: ApiPublicWacloudRouteChildren = {
+  ApiPublicWacloudSalonIdRoute: ApiPublicWacloudSalonIdRoute,
+}
+
+const ApiPublicWacloudRouteWithChildren =
+  ApiPublicWacloudRoute._addFileChildren(ApiPublicWacloudRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRouteWithChildren,
@@ -562,11 +592,11 @@ const rootRouteChildren: RootRouteChildren = {
   CatalogSlugRoute: CatalogSlugRoute,
   ManageTokenRoute: ManageTokenRoute,
   ApiInternalTelegramRoute: ApiInternalTelegramRoute,
+  ApiPublicWacloudRoute: ApiPublicWacloudRouteWithChildren,
   PreviewSalonSalonIdRoute: PreviewSalonSalonIdRoute,
   ApiInternalCronJobRoute: ApiInternalCronJobRoute,
   ApiPublicIgSalonIdRoute: ApiPublicIgSalonIdRoute,
   ApiPublicWaSalonIdRoute: ApiPublicWaSalonIdRoute,
-  ApiPublicWacloudSalonIdRoute: ApiPublicWacloudSalonIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

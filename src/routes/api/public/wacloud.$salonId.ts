@@ -178,116 +178,7 @@ export const Route = createFileRoute("/api/public/wacloud/$salonId")({
           return new Response("Forbidden", { status: 403 });
         }
 
-        if (!salon) return ack();
-
-        // The salon has not been switched over yet. Its Green-API route is still the authoritative
-        // one, and answering here as well would give the client two replies from two engines. Meta
-        // may legitimately be calling because the owner pasted the URL early while testing, so this
-        // is recorded rather than silently dropped.
-        if ((salon as any).wa_provider !== "cloud") {
-          await record(
-            "Webhook Cloud API получен, но салон ещё на Green-API (wa_provider = green_api). Сообщение не обработано.",
-          );
-          return ack();
-        }
-
-        let payload: any;
-        try {
-          payload = JSON.parse(rawBody);
-        } catch {
-          return new Response("Bad request", { status: 400 });
-        }
-        if (payload?.object && payload.object !== "whatsapp_business_account") return ack();
-
-        const creds: WaCloudCreds = {
-          phoneNumberId: s.whatsapp_cloud_phone_number_id ?? "",
-          token: s.whatsapp_cloud_token ?? "",
-        };
-
-        const { events, statuses } = parseWaCloudWebhook(payload);
-        // Echoes ride the SAME URL under a different field, so both parsers run over every payload
-        // and either may come back empty.
-        const { echoes } = parseWaCloudEchoes(payload);
-        if (events.length === 0 && statuses.length === 0 && echoes.length === 0) return ack();
-
-        // ---- Delivery outcomes for messages WE sent. The honest replacement for a pre-booking
-        // "is this number on WhatsApp" probe: the provider reports what actually happened after the
-        // send, instead of us predicting it beforehand.
-        for (const st of statuses) {
-          const mapped = mapWaCloudDeliveryStatus(st.status, st.errorCode);
-          if (!mapped) continue;
-          const { error: markErr } = await supabaseAdmin
-            .from("appointments")
-            .update({
-              confirmation_status: mapped.status,
-              confirmation_detail: mapped.detail,
-              confirmation_at: new Date().toISOString(),
-            } as any)
-            .eq("salon_id", salonId)
-            .eq("confirmation_message_id", st.wamid);
-          if (markErr) errLog("delivery status update failed", markErr);
-          else log(`delivery ${st.status} → ${mapped.status} for ${st.wamid}`);
-          // A failed send is the owner's problem to see, not just ours.
-          if (mapped.status === "failed") {
-            await record(
-              `Сообщение не доставлено: ${mapped.detail ?? st.error ?? "причина неизвестна"}`,
-              {
-                wamid: st.wamid,
-                recipient: st.recipientPhone,
-              },
-            );
-          }
-        }
-
-        // ---- Human takeover (coexistence): the owner answered from their phone.
-        for (const echo of echoes) {
-          await handleEcho({ db: supabaseAdmin, salonId, echo, log, errLog });
-        }
-
-        if (events.length === 0) return ack();
-
-        // ---- Ingest each client message, then run at most one agent turn per conversation.
-        const toRun = new Set<string>();
-        for (const ev of events) {
-          const convId = await ingestEvent({
-            db: supabaseAdmin,
-            salonId,
-            ev,
-            creds,
-            salon,
-            assistant,
-            errLog,
-          });
-          if (convId) toRun.add(convId);
-        }
-
-        const runtime = resolveAssistantRuntimeConfig(salon, assistant, secrets);
-        if (!runtime.assistantEnabled) return ack();
-        if (!creds.phoneNumberId || !creds.token) {
-          await record(
-            "Ассистент не может ответить: не заданы Phone Number ID или токен Cloud API",
-          );
-          return ack();
-        }
-
-        for (const convId of toRun) {
-          await runAgentTurn({
-            db: supabaseAdmin,
-            salonId,
-            convId,
-            creds,
-            salon,
-            assistant,
-            assistantConfig: runtime.assistantConfig,
-            secrets,
-            log,
-            errLog,
-            record,
-            ms,
-          });
-        }
-
-        return ack();
+        return await processWaCloudPayload({ salonId, rawBody, secrets, salon, assistant, rid });
       },
     },
   },
@@ -1054,4 +945,162 @@ export function safeStringEquals(a: string, b: string): boolean {
     diff |= (i < a.length ? a.charCodeAt(i) : 0) ^ (i < b.length ? b.charCodeAt(i) : 0);
   }
   return diff === 0;
+}
+
+
+/**
+ * Обработка полезной нагрузки Cloud API для одного салона.
+ *
+ * Вынесено из обработчика маршрута, потому что вебхуков теперь два и они отличаются только тем,
+ * КАК находят салон и ЧЕЙ секрет проверяют:
+ *   • /api/public/wacloud/$salonId — салон в адресе, подпись по его собственному app secret.
+ *     Так подключены салоны со своим приложением Meta.
+ *   • /api/public/wacloud — общий вебхук приложения Qabyl: салон ищется по phone_number_id из
+ *     самой полезной нагрузки, подпись проверяется секретом платформы. Сюда попадают все, кто
+ *     подключился через Embedded Signup.
+ * Всё, что происходит ПОСЛЕ опознания салона, одинаково — и живёт здесь.
+ *
+ * Аутентификация остаётся на стороне вызывающего: сюда payload попадает уже с проверенной
+ * подписью. Функция сама по себе никого не пускает.
+ */
+export async function processWaCloudPayload(opts: {
+  salonId: string;
+  rawBody: string;
+  secrets: Record<string, any> | null | undefined;
+  salon: any;
+  assistant: any;
+  /** Короткий идентификатор запроса — сшивает строки логов одного вебхука. */
+  rid: string;
+}): Promise<Response> {
+  const { salonId, rawBody, secrets, salon, assistant, rid } = opts;
+  const log = (msg: string, ...more: unknown[]) => console.log(`[wacloud ${rid}] ${msg}`, ...more);
+  const errLog = (msg: string, ...more: unknown[]) =>
+    console.error(`[wacloud ${rid}] ${msg}`, ...more);
+  const t0 = Date.now();
+  const ms = () => Date.now() - t0;
+  const ack = () => new Response("ok", { status: 200 });
+
+  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  const record = async (message: string, context: Record<string, unknown> = {}) => {
+    const { logError } = await import("@/lib/error-log.server");
+    await logError({
+      source: "wacloud-webhook",
+      level: "warn",
+      message,
+      salonId,
+      context: { rid, ...context },
+    });
+  };
+  const s = (secrets ?? {}) as Record<string, any>;
+
+  if (!salon) return ack();
+
+  // The salon has not been switched over yet. Its Green-API route is still the authoritative
+  // one, and answering here as well would give the client two replies from two engines. Meta
+  // may legitimately be calling because the owner pasted the URL early while testing, so this
+  // is recorded rather than silently dropped.
+  if ((salon as any).wa_provider !== "cloud") {
+    await record(
+      "Webhook Cloud API получен, но салон ещё на Green-API (wa_provider = green_api). Сообщение не обработано.",
+    );
+    return ack();
+  }
+
+  let payload: any;
+  try {
+    payload = JSON.parse(rawBody);
+  } catch {
+    return new Response("Bad request", { status: 400 });
+  }
+  if (payload?.object && payload.object !== "whatsapp_business_account") return ack();
+
+  const creds: WaCloudCreds = {
+    phoneNumberId: s.whatsapp_cloud_phone_number_id ?? "",
+    token: s.whatsapp_cloud_token ?? "",
+  };
+
+  const { events, statuses } = parseWaCloudWebhook(payload);
+  // Echoes ride the SAME URL under a different field, so both parsers run over every payload
+  // and either may come back empty.
+  const { echoes } = parseWaCloudEchoes(payload);
+  if (events.length === 0 && statuses.length === 0 && echoes.length === 0) return ack();
+
+  // ---- Delivery outcomes for messages WE sent. The honest replacement for a pre-booking
+  // "is this number on WhatsApp" probe: the provider reports what actually happened after the
+  // send, instead of us predicting it beforehand.
+  for (const st of statuses) {
+    const mapped = mapWaCloudDeliveryStatus(st.status, st.errorCode);
+    if (!mapped) continue;
+    const { error: markErr } = await supabaseAdmin
+      .from("appointments")
+      .update({
+        confirmation_status: mapped.status,
+        confirmation_detail: mapped.detail,
+        confirmation_at: new Date().toISOString(),
+      } as any)
+      .eq("salon_id", salonId)
+      .eq("confirmation_message_id", st.wamid);
+    if (markErr) errLog("delivery status update failed", markErr);
+    else log(`delivery ${st.status} → ${mapped.status} for ${st.wamid}`);
+    // A failed send is the owner's problem to see, not just ours.
+    if (mapped.status === "failed") {
+      await record(
+        `Сообщение не доставлено: ${mapped.detail ?? st.error ?? "причина неизвестна"}`,
+        {
+          wamid: st.wamid,
+          recipient: st.recipientPhone,
+        },
+      );
+    }
+  }
+
+  // ---- Human takeover (coexistence): the owner answered from their phone.
+  for (const echo of echoes) {
+    await handleEcho({ db: supabaseAdmin, salonId, echo, log, errLog });
+  }
+
+  if (events.length === 0) return ack();
+
+  // ---- Ingest each client message, then run at most one agent turn per conversation.
+  const toRun = new Set<string>();
+  for (const ev of events) {
+    const convId = await ingestEvent({
+      db: supabaseAdmin,
+      salonId,
+      ev,
+      creds,
+      salon,
+      assistant,
+      errLog,
+    });
+    if (convId) toRun.add(convId);
+  }
+
+  const runtime = resolveAssistantRuntimeConfig(salon, assistant, secrets);
+  if (!runtime.assistantEnabled) return ack();
+  if (!creds.phoneNumberId || !creds.token) {
+    await record(
+      "Ассистент не может ответить: не заданы Phone Number ID или токен Cloud API",
+    );
+    return ack();
+  }
+
+  for (const convId of toRun) {
+    await runAgentTurn({
+      db: supabaseAdmin,
+      salonId,
+      convId,
+      creds,
+      salon,
+      assistant,
+      assistantConfig: runtime.assistantConfig,
+      secrets,
+      log,
+      errLog,
+      record,
+      ms,
+    });
+  }
+
+  return ack();
 }
