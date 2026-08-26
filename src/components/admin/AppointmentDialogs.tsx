@@ -17,7 +17,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { CalendarIcon } from "lucide-react";
 import { dayKeyInTz, zonedTimeToUtc, formatInTz, startOfDayKeyInTz } from "@/lib/tz";
-import { checkPhoneWhatsapp } from "@/lib/wa-check.functions";
 
 type Master = { id: string; name: string };
 type Service = { id: string; name: string; duration_min: number; price: number };
@@ -239,7 +238,6 @@ export function CreateAppointmentDialog({
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   // Phone (digits only) the admin was already warned about — second submit proceeds.
-  const [waWarnedPhone, setWaWarnedPhone] = useState<string | null>(null);
 
   // Reset form fields ONLY when the dialog transitions from closed → open.
   // Depending on defaultDayKey here caused the inputs (Имя клиента / Телефон)
@@ -316,23 +314,9 @@ export function CreateAppointmentDialog({
       return toast.error("Нельзя создать запись на уже прошедшее время");
 
     setSaving(true);
-    // Admins may book walk-ins with non-WhatsApp numbers, so a failed check only warns —
-    // a second click on «Создать» with the same number proceeds anyway.
-    const phoneDigits = clientPhone.replace(/\D/g, "");
-    if (waWarnedPhone !== phoneDigits) {
-      try {
-        const { status } = await checkPhoneWhatsapp({ data: { salonId, phone: clientPhone } });
-        if (status === "not_registered") {
-          setWaWarnedPhone(phoneDigits);
-          setSaving(false);
-          return toast.error(
-            "Этот номер не зарегистрирован в WhatsApp — уведомления клиенту не дойдут. Нажмите «Создать» ещё раз, чтобы записать всё равно.",
-          );
-        }
-      } catch {
-        // Check unavailable — don't block the admin.
-      }
-    }
+    // Предварительной проверки «есть ли номер в WhatsApp» больше нет: её умел только Green-API,
+    // у Cloud API аналога не существует. Исход теперь сообщает сам провайдер после отправки —
+    // статус доставки приезжает вебхуком и виден владельцу в календаре.
     try {
       const { error } = await supabase.rpc("create_appointment", {
         _salon_id: salonId,

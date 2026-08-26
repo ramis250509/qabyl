@@ -48,7 +48,9 @@ export async function sendChatText(
       recipient,
       text,
     );
-    return res.ok ? { ok: true, messageId: res.messageId ?? null } : { ok: false, error: res.error };
+    return res.ok
+      ? { ok: true, messageId: res.messageId ?? null }
+      : { ok: false, error: res.error };
   }
 
   if (channel === "whatsapp_cloud") {
@@ -61,20 +63,16 @@ export async function sendChatText(
       conv.external_id || conv.client_phone || "",
       text,
     );
-    return res.ok ? { ok: true, messageId: res.messageId ?? null } : { ok: false, error: res.error };
+    return res.ok
+      ? { ok: true, messageId: res.messageId ?? null }
+      : { ok: false, error: res.error };
   }
 
-  const { greenApiSendMessage, normalizeChatIdToPhone } = await import("@/lib/wa-agent.server");
-  if (!s.greenapi_instance || !s.greenapi_token) {
-    return { ok: false, error: "WhatsApp не подключён для этого салона" };
-  }
-  const phone = normalizeChatIdToPhone(conv.client_phone ?? "");
-  const res = await greenApiSendMessage(
-    { instance: s.greenapi_instance, token: s.greenapi_token },
-    `${phone}@c.us`,
-    text,
-  );
-  return res.ok
-    ? { ok: true, messageId: res.idMessage ?? null }
-    : { ok: false, error: res.error ?? "Green-API отклонил отправку" };
+  // Сюда попадает канал whatsapp у салона без облачных учётных данных. Раньше на этом месте был
+  // откат на Green-API — неофициальный транспорт поверх обычного аккаунта, за который Meta банит
+  // номера. Отката больше нет: салон либо подключён официально, либо не подключён вовсе.
+  return {
+    ok: false,
+    error: "WhatsApp не подключён. Откройте настройки салона и нажмите «Подключить WhatsApp».",
+  };
 }

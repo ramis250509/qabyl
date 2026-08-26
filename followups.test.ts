@@ -107,13 +107,12 @@ describe("the platform window is a hard limit", () => {
     ).toEqual({ send: false, reason: "outside_messaging_window" });
   });
 
-  test("Green-API has no platform window, but we still cap ourselves", () => {
-    // No rule forces this one. Messaging days later from a real account is what gets it banned.
-    expect(windowHoursFor("whatsapp")).toBe(48);
+  test("канал «whatsapp» живёт по тому же окну, что и облачный", () => {
+    // Раньше это имя означало Green-API, где платформа окно не навязывала, и мы держали свои
+    // 48 часов. Транспорт удалён, имя канала осталось у салонов, заведённых до перехода —
+    // но уходит такое сообщение уже через Meta, с её жёсткими сутками.
+    expect(windowHoursFor("whatsapp")).toBe(23);
     expect(decide({ channel: "whatsapp", lastClientMessageAt: hoursAgo(30) })).toEqual({
-      send: true,
-    });
-    expect(decide({ channel: "whatsapp", lastClientMessageAt: hoursAgo(60) })).toEqual({
       send: false,
       reason: "outside_messaging_window",
     });

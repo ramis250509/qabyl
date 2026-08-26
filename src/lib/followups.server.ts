@@ -10,8 +10,8 @@
 //                       Meta's HUMAN_AGENT tag, which requires App Review and is meant for a
 //                       human who needs more time, not for automated follow-ups.
 //   WhatsApp Cloud    — the same 24-hour service window; outside it only approved templates.
-//   WhatsApp (Green)  — unofficial, no window enforced, but late messages from a real account are
-//                       what gets that account banned, so we impose our own cap.
+//   WhatsApp           — тот же официальный транспорт: канал в базе может называться «whatsapp»
+//                       у салонов, заведённых до перехода, но окно у него ровно то же.
 //
 // A follow-up that misses the window is DROPPED, never deferred. Arriving two days after someone
 // asked a question is worse than staying quiet.
@@ -27,9 +27,12 @@ export type FollowupChannel = "instagram" | "whatsapp_cloud" | "whatsapp";
  * computed at 23:59 could be sent minutes later and be refused. The margin is the difference
  * between "we cut it fine" and "the transport errors in production".
  */
-export function windowHoursFor(channel: FollowupChannel): number {
-  if (channel === "instagram" || channel === "whatsapp_cloud") return 23;
-  return 48; // Green-API: our own restraint, not a platform rule.
+export function windowHoursFor(_channel: FollowupChannel): number {
+  // 23 часа на всех каналах. Раньше «whatsapp» означал Green-API, где платформа окно не
+  // навязывала, и мы держали свои 48 — теперь этот транспорт удалён, и любое сообщение уходит
+  // через Meta с её жёстким суточным окном. Оставить 48 значило бы копить догонялки, которые
+  // Meta гарантированно отвергнет.
+  return 23;
 }
 
 export type FollowupCandidate = {

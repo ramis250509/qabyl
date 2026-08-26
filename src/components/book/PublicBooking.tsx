@@ -23,7 +23,6 @@ import {
 import { toast } from "sonner";
 import { formatPrice } from "@/lib/price";
 import { normalizeWhatsApp } from "@/lib/social";
-import { checkPhoneWhatsapp } from "@/lib/wa-check.functions";
 import { useT, LanguageSwitcher } from "@/lib/i18n";
 
 type Salon = {
@@ -706,24 +705,9 @@ export function PublicBooking({
               onClick={async () => {
                 setSubmitting(true);
                 try {
-                  // Confirmation goes out via WhatsApp — reject numbers that aren't
-                  // registered there. Any check failure ("unavailable", network error)
-                  // fails open: the booking must never be blocked by the check itself.
-                  if (waOn) {
-                    try {
-                      const { status } = await checkPhoneWhatsapp({
-                        data: { salonId: salon.id, phone: clientPhone },
-                      });
-                      if (status === "not_registered") {
-                        setPhoneWaError(true);
-                        toast.error(t("phoneNotWhatsapp"));
-                        setSubmitting(false);
-                        return;
-                      }
-                    } catch (checkErr) {
-                      console.error("wa check failed", checkErr);
-                    }
-                  }
+                  // Проверять до записи, есть ли номер в WhatsApp, больше нечем: это умел
+                  // только Green-API. Отказывать клиенту в записи из-за недоступной проверки
+                  // всё равно было бы хуже, чем записать и узнать исход из статуса доставки.
                   const { data, error } = await supabase.rpc("create_appointment", {
                     _salon_id: salon.id,
                     _master_id: selectedMaster!.id,
