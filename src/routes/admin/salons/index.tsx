@@ -28,6 +28,9 @@ function SalonsList() {
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
+  // Автоподстановка slug идёт по названию, пока владелец сам его не правил. Судить по «поле
+  // пустое» нельзя: после первой же буквы оно перестаёт быть пустым, и slug замирал на «т».
+  const [slugTouched, setSlugTouched] = useState(false);
   const [address, setAddress] = useState("");
   const [phone, setPhone] = useState("");
   const [description, setDescription] = useState("");
@@ -50,7 +53,7 @@ function SalonsList() {
     });
     if (error) return toast.error(error.message);
     toast.success("Салон создан");
-    setOpen(false); setName(""); setSlug(""); setAddress(""); setPhone(""); setDescription("");
+    setOpen(false); setName(""); setSlug(""); setSlugTouched(false); setAddress(""); setPhone(""); setDescription("");
     load();
   }
 
@@ -66,8 +69,8 @@ function SalonsList() {
           <DialogContent>
             <DialogHeader><DialogTitle>Создать салон</DialogTitle></DialogHeader>
             <div className="space-y-3">
-              <div><Label>Название</Label><Input value={name} onChange={(e) => { setName(e.target.value); if (!slug) setSlug(slugify(e.target.value)); }} /></div>
-              <div><Label>Slug (для URL)</Label><Input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="my-salon" /></div>
+              <div><Label>Название</Label><Input value={name} onChange={(e) => { setName(e.target.value); if (!slugTouched) setSlug(slugify(e.target.value)); }} /></div>
+              <div><Label>Slug (для URL)</Label><Input value={slug} onChange={(e) => { setSlugTouched(true); setSlug(e.target.value); }} placeholder="my-salon" /></div>
               <div><Label>Адрес</Label><Input value={address} onChange={(e) => setAddress(e.target.value)} /></div>
               <div><Label>Телефон</Label><Input value={phone} onChange={(e) => setPhone(e.target.value)} /></div>
               <div><Label>Описание</Label><Textarea value={description} onChange={(e) => setDescription(e.target.value)} /></div>
