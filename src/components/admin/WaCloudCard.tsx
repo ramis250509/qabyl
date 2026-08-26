@@ -16,7 +16,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { AlertCircle, CheckCircle2, Copy, RefreshCw, ShieldCheck } from "lucide-react";
+import { AlertCircle, RefreshCw, ShieldCheck } from "lucide-react";
 import {
   getWaCloudConfig,
   getWaCloudDiagnostics,
@@ -25,6 +25,8 @@ import {
   testWaCloudConnection,
   upsertWaCloudConfig,
 } from "@/lib/wa-cloud.functions";
+import { finishWaOnboarding } from "@/lib/wa-onboarding.functions";
+import { WaConnectButton } from "@/components/admin/WaConnectButton";
 
 type Diagnostics = Awaited<ReturnType<typeof getWaCloudDiagnostics>>;
 type TemplateMap = Record<string, { name?: string; lang?: string } | undefined>;
@@ -97,42 +99,8 @@ function diagnose(d: Diagnostics, isCloud: boolean) {
   return {
     tone: "warn" as const,
     title: "От Meta не пришло ни одного сообщения",
-    body: "Значит дело в настройке на стороне Meta, а не у нас. Проверьте: в разделе WhatsApp → Configuration подписано поле messages (и smb_message_echoes, если номер остаётся в приложении WhatsApp Business); Callback URL и Verify Token совпадают с указанными ниже; номер добавлен в приложение.",
+    body: "Значит Meta до нас не достучалась. Если салон подключали кнопкой выше — попробуйте «Переподключить WhatsApp»: подписка на вебхуки оформляется именно в этот момент, и её мог оборвать закрытый раньше времени попап.",
   };
-}
-
-function CopyField({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  const [copied, setCopied] = useState(false);
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      toast.error("Не удалось скопировать — выделите и скопируйте вручную");
-    }
-  }
-  return (
-    <div>
-      <Label>{label}</Label>
-      <div className="flex gap-2 mt-1">
-        <Input
-          readOnly
-          value={value}
-          className="font-mono text-xs"
-          onFocus={(e) => e.currentTarget.select()}
-        />
-        <Button type="button" variant="outline" size="icon" onClick={copy} title="Скопировать">
-          {copied ? (
-            <CheckCircle2 className="h-4 w-4 text-green-600" />
-          ) : (
-            <Copy className="h-4 w-4" />
-          )}
-        </Button>
-      </div>
-      {hint && <p className="text-xs text-muted-foreground mt-1">{hint}</p>}
-    </div>
-  );
 }
 
 export function WaCloudCard({ salonId }: { salonId: string }) {
@@ -142,6 +110,7 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
   const setTemplatesReady = useServerFn(setWaCloudTemplatesReady);
   const testConnection = useServerFn(testWaCloudConnection);
   const loadDiagnostics = useServerFn(getWaCloudDiagnostics);
+  const onboard = useServerFn(finishWaOnboarding);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -157,8 +126,6 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
   const [templatesReady, setTemplatesReadyState] = useState(false);
   const [hasGreenApi, setHasGreenApi] = useState(false);
   const [kinds, setKinds] = useState<string[]>([]);
-  const [webhookUrl, setWebhookUrl] = useState("");
-  const [verifyToken, setVerifyToken] = useState("");
   const [diag, setDiag] = useState<Diagnostics | null>(null);
 
   useEffect(() => {
@@ -176,8 +143,6 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
         setTemplatesReadyState(cfg.templates_ready);
         setHasGreenApi(cfg.has_green_api);
         setKinds(cfg.template_kinds ?? []);
-        setWebhookUrl(cfg.webhook_url);
-        setVerifyToken(cfg.verify_token);
       } catch (e: any) {
         if (!cancelled) toast.error(e?.message ?? "Не удалось загрузить настройки Cloud API");
       } finally {
@@ -262,6 +227,37 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
     }
   }
 
+  // Салон считается подключённым по паре «номер + токен»: именно их требует отправка. WABA ID
+  // сам по себе ничего не открывает, поэтому судить по нему было бы враньём.
+  const connected = Boolean(phoneNumberId && token);
+
+  async function onConnected(v: { code: string; wabaId: string; phoneNumberId: string }) {
+    setBusy(true);
+    try {
+      const res = await onboard({ data: { salonId, ...v } });
+      const failed = res.steps.filter((s) => !s.ok);
+      if (failed.length === 0) {
+        toast.success("WhatsApp подключён, шаблоны созданы");
+      } else {
+        // Подключение состоялось — молчать о недоделанном нельзя, но и пугать красным незачем.
+        toast.warning(
+          `Подключено, но не всё: ${failed.map((f) => f.detail ?? f.step).join("; ")}`,
+        );
+      }
+      const cfg = await loadConfig({ data: { salonId } });
+      setPhoneNumberId(cfg.phone_number_id);
+      setToken(cfg.token);
+      setAppSecret(cfg.app_secret);
+      setWabaId(cfg.waba_id);
+      setTemplates(cfg.templates ?? {});
+      setTemplatesReadyState(cfg.templates_ready);
+    } catch (e: any) {
+      toast.error(e?.message ?? "Не удалось завершить подключение");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function onTest() {
     setTesting(true);
     try {
@@ -329,92 +325,36 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
       {/* ---- Credentials. */}
       <Card className="p-6 space-y-4">
         <div>
-          <h3 className="font-semibold">Учётные данные</h3>
+          <h3 className="font-semibold">Подключение</h3>
           <p className="text-sm text-muted-foreground">
-            Meta Business Settings → WhatsApp Accounts. Токен нужен постоянный, от системного
-            пользователя, с правом whatsapp_business_messaging.
+            Одна кнопка вместо кабинета Meta: владелец входит в свой Facebook, подтверждает номер, и
+            всё остальное — токен, подписка на вебхуки, пять шаблонов уведомлений — настраивается
+            само. Приложение WhatsApp Business на телефоне при этом остаётся рабочим.
           </p>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <Label>Phone Number ID</Label>
-            <Input
-              value={phoneNumberId}
-              onChange={(e) => setPhoneNumberId(e.target.value)}
-              placeholder="106540352242922"
-              className="font-mono text-xs mt-1"
-            />
-            <p className="text-xs text-muted-foreground mt-1">
-              Это <b>идентификатор</b> номера из панели Meta, а не сам номер телефона.
-            </p>
+        {connected ? (
+          <div className="rounded-md border p-3 text-sm space-y-1">
+            <div className="font-medium">WhatsApp подключён</div>
+            <div className="text-muted-foreground font-mono text-xs">
+              Номер: {phoneNumberId || "—"}
+            </div>
+            <div className="text-muted-foreground font-mono text-xs">
+              Аккаунт: {wabaId || "—"}
+            </div>
           </div>
-          <div>
-            <Label>WhatsApp Business Account ID</Label>
-            <Input
-              value={wabaId}
-              onChange={(e) => setWabaId(e.target.value)}
-              placeholder="необязательно"
-              className="font-mono text-xs mt-1"
-            />
-            <p className="text-xs text-muted-foreground mt-1">
-              Для отправки не нужен — пригодится для шаблонов и обращений в поддержку.
-            </p>
-          </div>
-        </div>
-
-        <div>
-          <Label>Access Token</Label>
-          <Input
-            type="password"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            placeholder="EAAG…"
-            className="font-mono text-xs mt-1"
-          />
-        </div>
-
-        <div>
-          <Label>App Secret</Label>
-          <Input
-            type="password"
-            value={appSecret}
-            onChange={(e) => setAppSecret(e.target.value)}
-            placeholder="Meta App → Settings → Basic → App Secret"
-            className="font-mono text-xs mt-1"
-          />
-          <p className="text-xs text-muted-foreground mt-1">
-            Обязателен. Подпись по нему — единственная защита входящего вебхука; без него все
-            сообщения от Meta отклоняются.
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            Пока не подключён. Клиенты пишут через прежний транспорт.
           </p>
-        </div>
+        )}
 
         <div className="flex gap-2 flex-wrap">
-          <Button onClick={onSave} disabled={saving}>
-            {saving ? "Сохранение…" : "Сохранить"}
-          </Button>
+          <WaConnectButton connected={connected} onConnected={onConnected} />
           <Button variant="outline" onClick={onTest} disabled={testing}>
             {testing ? "Проверяем…" : "Проверить подключение"}
           </Button>
         </div>
-      </Card>
-
-      {/* ---- What must be pasted into Meta. */}
-      <Card className="p-6 space-y-4">
-        <div>
-          <h3 className="font-semibold">Настройка вебхука в Meta</h3>
-          <p className="text-sm text-muted-foreground">
-            Meta App → WhatsApp → Configuration. Подпишите поле <b>messages</b>. Если номер остаётся
-            рабочим и в приложении WhatsApp Business, подпишите также <b>smb_message_echoes</b> — по
-            нему ассистент понимает, что вы ответили клиенту сами, и замолкает.
-          </p>
-        </div>
-        <CopyField label="Callback URL" value={webhookUrl} hint="Вставьте в поле «Callback URL»." />
-        <CopyField
-          label="Verify Token"
-          value={verifyToken}
-          hint="Вставьте в поле «Verify token». Сгенерирован автоматически, менять не нужно."
-        />
       </Card>
 
       {/* ---- Templates. */}
