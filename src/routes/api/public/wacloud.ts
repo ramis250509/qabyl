@@ -94,18 +94,48 @@ export const Route = createFileRoute("/api/public/wacloud")({
         }
 
         const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-        const { data: secrets } = await supabaseAdmin
+        // limit(2), а не maybeSingle(): на колонке нет уникального индекса, и один номер можно
+        // привязать к двум салонам. maybeSingle() в этом случае бросает исключение, вебхук
+        // отвечает 500, Meta начинает пересылать пачку по кругу — и всё это без единой строки о
+        // настоящей причине. Забираем два и разбираемся сами.
+        const { data: matches } = await supabaseAdmin
           .from("salon_secrets")
           .select("*")
           .eq("whatsapp_cloud_phone_number_id", phoneNumberId)
-          .maybeSingle();
+          .limit(2);
+
+        const rows = matches ?? [];
 
         // Номер, которого мы не знаем. Штатная ситуация: салон отключился, но подписка на
         // стороне Meta ещё жива. Пишем в лог, а не в error_log — салона для привязки записи нет.
-        if (!secrets) {
+        if (rows.length === 0) {
           errLog(`неизвестный phone_number_id=${phoneNumberId}, салон не найден`);
           return ack();
         }
+
+        // Один номер у двух салонов. Гадать, кому адресовано сообщение, нельзя: ответить не тому
+        // — значит показать чужую переписку. Отказываемся обрабатывать и пишем в error_log
+        // ОБОИМ, чтобы владелец увидел причину у себя, а не только мы в консоли.
+        if (rows.length > 1) {
+          const ids = rows.map((r: any) => r.salon_id);
+          errLog(
+            `phone_number_id=${phoneNumberId} привязан к нескольким салонам: ${ids.join(", ")}`,
+          );
+          const { logError } = await import("@/lib/error-log.server");
+          for (const salonId of ids) {
+            await logError({
+              source: "wacloud-webhook",
+              level: "error",
+              message:
+                "Один и тот же номер WhatsApp привязан к нескольким салонам — сообщения не обрабатываются. Отключите номер у лишнего салона.",
+              salonId,
+              context: { rid, phoneNumberId, salonIds: ids },
+            });
+          }
+          return ack();
+        }
+
+        const secrets = rows[0];
 
         const salonId = (secrets as any).salon_id as string;
         const [{ data: salon }, { data: assistant }] = await Promise.all([

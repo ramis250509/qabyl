@@ -61,6 +61,21 @@ export const finishWaOnboarding = createServerFn({ method: "POST" })
 
     const steps: { step: string; ok: boolean; detail?: string }[] = [];
 
+    // Один номер у двух салонов ломает общий вебхук: он ищет салон ИМЕННО по phone_number_id и с
+    // двумя совпадениями не знает, кому адресовано сообщение. Ловим здесь, где ещё можно назвать
+    // причину владельцу, а не в вебхуке, где остаётся только развести руками.
+    const { data: taken } = await supabaseAdmin
+      .from("salon_secrets")
+      .select("salon_id")
+      .eq("whatsapp_cloud_phone_number_id", data.phoneNumberId)
+      .neq("salon_id", data.salonId)
+      .limit(1);
+    if (taken && taken.length > 0) {
+      throw new Error(
+        "Этот номер WhatsApp уже подключён к другому салону. Отключите его там или подключите сюда другой номер.",
+      );
+    }
+
     const exchanged = await exchangeCodeForToken(data.code);
     if (!exchanged.ok) {
       throw new Error(`Не удалось получить токен от Meta: ${exchanged.error}`);
