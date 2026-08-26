@@ -10,7 +10,7 @@
 // Bun test entrypoint: `bun test audit-regressions.test.ts`. No network, no DB.
 import { test, expect, describe } from "bun:test";
 import { buildSystemPromptV4 } from "@/lib/wa-agent-v4.server";
-import { safeStringEquals } from "@/routes/api/public/wa.$salonId";
+import { safeStringEquals } from "@/routes/api/public/wacloud.$salonId";
 import { INDUSTRY_ORDER } from "@/lib/industries";
 
 const TZ = "Asia/Bishkek";

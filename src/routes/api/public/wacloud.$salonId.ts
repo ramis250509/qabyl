@@ -56,7 +56,7 @@ import {
   type WaBranchInfo,
   type WaIncomingMessage,
 } from "@/lib/wa-agent.server";
-import { resolveAssistantRuntimeConfig } from "@/routes/api/public/wa.$salonId";
+import { resolveAssistantRuntimeConfig } from "@/lib/assistant-runtime.server";
 
 const MAX_LOOP_ITERATIONS = 3;
 // See the Green-API route for the reasoning: clients type one thought as several short bubbles, and

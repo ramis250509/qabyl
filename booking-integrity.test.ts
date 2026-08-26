@@ -25,11 +25,9 @@ import {
   onlyDigits,
   toE164,
 } from "@/lib/phone-countries";
-import {
-  safeStringEquals,
-  resolveAssistantRuntimeConfig,
-  mapGreenApiDeliveryStatus,
-} from "@/routes/api/public/wa.$salonId";
+import { safeStringEquals } from "@/routes/api/public/wacloud.$salonId";
+import { resolveAssistantRuntimeConfig } from "@/lib/assistant-runtime.server";
+import { mapWaCloudDeliveryStatus } from "@/lib/wa-cloud.server";
 import { classifyDateVsToday, isIsoDate, isUuid } from "@/lib/wa-agent-v4.server";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -196,39 +194,25 @@ describe("границы инструментов ассистента", () => {
 // Замена невозможной предварительной проверки номера. Раньше Qabyl пытался
 // угадать до записи, есть ли номер в WhatsApp (умел только Green-API, у Cloud
 // API аналога нет). Теперь провайдер сам сообщает исход после отправки.
-describe("mapGreenApiDeliveryStatus", () => {
-  test("noAccount — это и есть «номера нет в WhatsApp»", () => {
-    // Ровно тот случай, ради которого всё затевалось: факт от провайдера,
-    // а не догадка до отправки.
-    expect(mapGreenApiDeliveryStatus("noAccount")).toEqual({
-      status: "failed",
-      detail: "У этого номера нет WhatsApp",
-    });
+describe("mapWaCloudDeliveryStatus", () => {
+  test("131026 — это и есть «номера нет в WhatsApp»", () => {
+    const r = mapWaCloudDeliveryStatus("failed", 131026);
+    expect(r?.status).toBe("failed");
+    expect(r?.detail).toBeTruthy();
   });
 
-  test("delivered и read считаются доставкой", () => {
-    expect(mapGreenApiDeliveryStatus("delivered")?.status).toBe("delivered");
-    expect(mapGreenApiDeliveryStatus("read")?.status).toBe("delivered");
+  test("delivered и read — доставлено", () => {
+    expect(mapWaCloudDeliveryStatus("delivered")?.status).toBe("delivered");
+    expect(mapWaCloudDeliveryStatus("read")?.status).toBe("delivered");
   });
 
-  test("недоставка и отказ провайдера различимы в тексте", () => {
-    expect(mapGreenApiDeliveryStatus("notDelivered")?.status).toBe("failed");
-    expect(mapGreenApiDeliveryStatus("failed")?.status).toBe("failed");
-    expect(mapGreenApiDeliveryStatus("notDelivered")?.detail).not.toBe(
-      mapGreenApiDeliveryStatus("failed")?.detail,
-    );
+  test("sent — ещё не исход, статуса не меняем", () => {
+    expect(mapWaCloudDeliveryStatus("sent")).toBeNull();
   });
 
-  test("sent игнорируется — иначе перезапишет более поздний delivered", () => {
-    // Вебхуки Green-API приходят не по порядку. send-whatsapp уже записал
-    // «sent», когда провайдер принял сообщение; повторная запись того же
-    // статуса способна затереть уже полученный delivered.
-    expect(mapGreenApiDeliveryStatus("sent")).toBeNull();
-  });
-
-  test("неизвестный статус ничего не меняет", () => {
-    expect(mapGreenApiDeliveryStatus("somethingNew")).toBeNull();
-    expect(mapGreenApiDeliveryStatus(undefined)).toBeNull();
-    expect(mapGreenApiDeliveryStatus(null)).toBeNull();
+  test("неизвестное значение не трогает статус записи", () => {
+    expect(mapWaCloudDeliveryStatus("somethingNew")).toBeNull();
+    expect(mapWaCloudDeliveryStatus(undefined as any)).toBeNull();
   });
 });
+

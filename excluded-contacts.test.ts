@@ -160,7 +160,8 @@ describe("every inbound channel goes through the guard", () => {
   // fail-open behaviour is back with no test failing anywhere.
   const { readFileSync } = require("node:fs");
   const channels = [
-    "src/routes/api/public/wa.$salonId.ts",
+    // Общий вебхук приложения опознаёт салон и передаёт нагрузку дальше — сама проверка
+    // исключений живёт в processWaCloudPayload, то есть в файле пер-салонного маршрута.
     "src/routes/api/public/wacloud.$salonId.ts",
     "src/routes/api/public/ig.$salonId.ts",
   ];
