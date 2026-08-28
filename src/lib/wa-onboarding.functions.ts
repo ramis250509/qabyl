@@ -129,3 +129,70 @@ export const finishWaOnboarding = createServerFn({ method: "POST" })
       phoneNumberId: data.phoneNumberId,
     };
   });
+
+/**
+ * Заводит пять шаблонов уведомлений на УЖЕ подключённом салоне.
+ *
+ * Тот же код, что отрабатывает внутри `finishWaOnboarding`, но с отдельной ручкой. До этой кнопки
+ * шаблоны можно было создать ровно один раз — в момент прохождения Embedded Signup. Если Meta
+ * отклонила шаблон, владелец удалил его в WhatsApp Manager или мы добавили шестой, единственным
+ * выходом было переподключить салон целиком.
+ *
+ * Реквизиты берём из базы, а не из формы: токен на клиент не отдаём, а WABA ID в форме владелец
+ * мог и не заполнить — при подключении кнопкой он приходит от Meta и сохраняется сам.
+ */
+export const createWaTemplates = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => z.object({ salonId: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    await assertSalonAccess(context.supabase, context.userId, data.salonId);
+
+    const { createNotificationTemplates } = await import("@/lib/wa-onboarding.server");
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+    const { data: row, error: readErr } = await supabaseAdmin
+      .from("salon_secrets")
+      .select("whatsapp_cloud_waba_id, whatsapp_cloud_token, whatsapp_cloud_templates")
+      .eq("salon_id", data.salonId)
+      .maybeSingle();
+    if (readErr) throw new Error(readErr.message);
+
+    const wabaId = (row as any)?.whatsapp_cloud_waba_id ?? "";
+    const token = (row as any)?.whatsapp_cloud_token ?? "";
+    // Разные причины — разные подсказки: без токена чинится подключением, без WABA ID вписыванием
+    // одного поля. Общее «не настроено» отправило бы владельца искать не там.
+    if (!token) {
+      throw new Error("Сначала подключите WhatsApp — без токена шаблоны создавать негде.");
+    }
+    if (!wabaId) {
+      throw new Error(
+        "Не заполнен ID аккаунта WhatsApp (WABA). Он приходит сам при подключении кнопкой; если салон настраивали руками — впишите его в поле выше и сохраните.",
+      );
+    }
+
+    const { steps, templates } = await createNotificationTemplates(wabaId, token);
+
+    // Мержим, а не заменяем: за пятью нашими видами может стоять шестой, заведённый салоном под
+    // свою отрасль. Он к этой кнопке отношения не имеет и переживать её должен.
+    const merged = { ...((row as any)?.whatsapp_cloud_templates ?? {}), ...templates };
+
+    const { error: saveErr } = await supabaseAdmin
+      .from("salon_secrets")
+      .upsert({ salon_id: data.salonId, whatsapp_cloud_templates: merged } as any, {
+        onConflict: "salon_id",
+      });
+    if (saveErr) throw new Error(`Шаблоны созданы, но не сохранились: ${saveErr.message}`);
+
+    // Флаг поднимаем только на полном комплекте — ровно по той же причине, что и при подключении:
+    // частичный набор заставит код слать шаблон, которого нет. Опускать его тут нельзя: салон мог
+    // включить переключатель руками под свои имена, и наша неудача не повод это отменять.
+    const allOk = steps.every((s) => s.ok);
+    if (allOk) {
+      await supabaseAdmin
+        .from("salons")
+        .update({ wa_cloud_templates_ready: true } as any)
+        .eq("id", data.salonId);
+    }
+
+    return { ok: true, steps, templatesReady: allOk };
+  });

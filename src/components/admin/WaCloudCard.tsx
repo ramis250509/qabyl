@@ -21,7 +21,7 @@ import {
   testWaCloudConnection,
   upsertWaCloudConfig,
 } from "@/lib/wa-cloud.functions";
-import { finishWaOnboarding } from "@/lib/wa-onboarding.functions";
+import { createWaTemplates, finishWaOnboarding } from "@/lib/wa-onboarding.functions";
 import { WaConnectButton } from "@/components/admin/WaConnectButton";
 
 type Diagnostics = Awaited<ReturnType<typeof getWaCloudDiagnostics>>;
@@ -106,11 +106,13 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
   const testConnection = useServerFn(testWaCloudConnection);
   const loadDiagnostics = useServerFn(getWaCloudDiagnostics);
   const onboard = useServerFn(finishWaOnboarding);
+  const makeTemplates = useServerFn(createWaTemplates);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [makingTemplates, setMakingTemplates] = useState(false);
 
   const [phoneNumberId, setPhoneNumberId] = useState("");
   const [token, setToken] = useState("");
@@ -210,9 +212,7 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
         toast.success("WhatsApp подключён, шаблоны созданы");
       } else {
         // Подключение состоялось — молчать о недоделанном нельзя, но и пугать красным незачем.
-        toast.warning(
-          `Подключено, но не всё: ${failed.map((f) => f.detail ?? f.step).join("; ")}`,
-        );
+        toast.warning(`Подключено, но не всё: ${failed.map((f) => f.detail ?? f.step).join("; ")}`);
       }
       const cfg = await loadConfig({ data: { salonId } });
       setPhoneNumberId(cfg.phone_number_id);
@@ -249,6 +249,35 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
     }
   }
 
+  // Создать пять шаблонов на уже подключённом салоне. До этой кнопки они заводились ровно один
+  // раз — при подключении, — и отклонённый Meta шаблон чинился только переподключением салона.
+  async function onCreateTemplates() {
+    setMakingTemplates(true);
+    try {
+      const res = await makeTemplates({ data: { salonId } });
+      const failed = res.steps.filter((s) => !s.ok);
+      if (failed.length === 0) {
+        toast.success("Пять шаблонов заведены и отправлены на модерацию Meta");
+      } else {
+        // Частичный успех — самый частый исход: часть шаблонов уже существует, часть отклонена.
+        // Называем именно отказавшие, иначе владельцу нечего показать поддержке.
+        toast.warning(
+          `Создано не всё: ${failed.map((f) => `${f.step} — ${f.detail ?? "отклонён"}`).join("; ")}`,
+          { duration: 12000 },
+        );
+      }
+      // Имена шаблонов пишутся на сервере, поэтому форму перечитываем, а не правим на месте.
+      const cfg = await loadConfig({ data: { salonId } });
+      setTemplates(cfg.templates ?? {});
+      setTemplatesReadyState(cfg.templates_ready);
+      setKinds(cfg.template_kinds ?? []);
+    } catch (e: any) {
+      toast.error(e?.message ?? "Не удалось создать шаблоны", { duration: 10000 });
+    } finally {
+      setMakingTemplates(false);
+    }
+  }
+
   function setTemplate(kind: string, patch: { name?: string; lang?: string }) {
     setTemplates((t) => ({ ...t, [kind]: { ...(t[kind] ?? {}), ...patch } }));
   }
@@ -281,8 +310,8 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
         {connected && !templatesReady && (
           <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
             <AlertCircle className="h-4 w-4 inline mr-1.5 -mt-0.5" />
-            Шаблоны Meta ещё не одобрены. Внутри 24 часов после сообщения клиента ассистент
-            отвечает свободно, но напоминания, перенос и отмена не дойдут до тех, кто писал давно.
+            Шаблоны Meta ещё не одобрены. Внутри 24 часов после сообщения клиента ассистент отвечает
+            свободно, но напоминания, перенос и отмена не дойдут до тех, кто писал давно.
           </div>
         )}
       </Card>
@@ -304,9 +333,7 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
             <div className="text-muted-foreground font-mono text-xs">
               Номер: {phoneNumberId || "—"}
             </div>
-            <div className="text-muted-foreground font-mono text-xs">
-              Аккаунт: {wabaId || "—"}
-            </div>
+            <div className="text-muted-foreground font-mono text-xs">Аккаунт: {wabaId || "—"}</div>
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
@@ -375,11 +402,30 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
             запросом. Кнопка продублирована здесь потому, что владелец заполняет пять полей и ищет
             «Сохранить» под ними, а не парой экранов выше — переключатель при этом требует уже
             сохранённые имена и без сохранения отказывает. */}
-        <div>
+        <div className="flex gap-2 flex-wrap">
           <Button onClick={onSave} disabled={saving}>
             {saving ? "Сохранение…" : "Сохранить шаблоны"}
           </Button>
+          {/* Рядом с «Сохранить», а не в карточке подключения: владелец приходит сюда, когда
+              видит пустые поля или отклонённый шаблон, и решение должно лежать там же. */}
+          <Button
+            variant="outline"
+            onClick={onCreateTemplates}
+            disabled={makingTemplates || !connected}
+            title={
+              connected
+                ? undefined
+                : "Сначала подключите WhatsApp — шаблоны создаются на аккаунте салона"
+            }
+          >
+            {makingTemplates ? "Создаём…" : "Создать шаблоны заново"}
+          </Button>
         </div>
+        <p className="text-xs text-muted-foreground">
+          «Создать шаблоны заново» заводит пять стандартных шаблонов на аккаунте салона и отправляет
+          их на модерацию Meta — обычно она занимает несколько минут. Уже существующие шаблоны
+          пропускаются, так что нажать повторно безопасно.
+        </p>
       </Card>
 
       {/* ---- Diagnostics. */}
