@@ -19,13 +19,11 @@ export const getSalonSecrets = createServerFn({ method: "POST" })
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { data: row, error } = await supabaseAdmin
       .from("salon_secrets")
-      .select("greenapi_instance, greenapi_token, owner_notify_phone")
+      .select("owner_notify_phone")
       .eq("salon_id", data.salonId)
       .maybeSingle();
     if (error) throw new Error(error.message);
     return {
-      greenapi_instance: row?.greenapi_instance ?? "",
-      greenapi_token: row?.greenapi_token ?? "",
       owner_notify_phone: row?.owner_notify_phone ?? "",
     };
   });
@@ -35,8 +33,6 @@ export const upsertSalonSecrets = createServerFn({ method: "POST" })
   .inputValidator((input) =>
     z.object({
       salonId: z.string().uuid(),
-      greenapi_instance: z.string().max(64).nullable(),
-      greenapi_token: z.string().max(256).nullable(),
       owner_notify_phone: z.string().max(20).nullable(),
     }).parse(input),
   )
@@ -46,8 +42,6 @@ export const upsertSalonSecrets = createServerFn({ method: "POST" })
     const { error } = await supabaseAdmin.from("salon_secrets").upsert(
       {
         salon_id: data.salonId,
-        greenapi_instance: data.greenapi_instance || null,
-        greenapi_token: data.greenapi_token || null,
         owner_notify_phone: data.owner_notify_phone || null,
       },
       { onConflict: "salon_id" },

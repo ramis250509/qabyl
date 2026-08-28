@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-client";
+import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import {
   Sparkles,
@@ -29,6 +30,7 @@ import {
   Flame,
 } from "lucide-react";
 import { getWaWebhookConfig, regenerateWaWebhookToken } from "@/lib/wa-config.functions";
+import { getWaCloudConfig } from "@/lib/wa-cloud.functions";
 import {
   INDUSTRIES_META,
   INDUSTRY_PRICING,
@@ -172,6 +174,10 @@ export function AiAssistantTab({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [premiumEnabled, setPremiumEnabled] = useState(false);
+  // Подключён ли канал WhatsApp. Ассистент без канала — включённый выключатель, за которым
+  // ничего нет: клиент пишет салону и не получает ответа, а владелец уверен, что всё работает.
+  const [waConnected, setWaConnected] = useState(true);
+  const loadWaCloudConfig = useServerFn(getWaCloudConfig);
   const [webhookUrl, setWebhookUrl] = useState<string | null>(null);
   const [webhookBusy, setWebhookBusy] = useState(false);
   // Knowledge book: show only the essential questions first; the rest expand on demand.
@@ -234,6 +240,16 @@ export function AiAssistantTab({
         ]);
       if (cancelled) return;
       setPremiumEnabled(!!(salon as any)?.ai_assistant_enabled);
+      // Через серверную функцию, а не запросом из браузера: у salon_secrets нет прав на SELECT
+      // для роли authenticated, и прямой запрос молча вернул бы пустоту — то есть заблокировал
+      // бы ассистента у всех салонов разом.
+      try {
+        const wa = await loadWaCloudConfig({ data: { salonId } });
+        if (!cancelled) setWaConnected(Boolean(wa.phone_number_id && wa.token));
+      } catch {
+        // Не смогли выяснить — считаем подключённым. Ошибочно разрешить включение мягче, чем
+        // ошибочно запретить: во втором случае владелец упирается в стену без объяснений.
+      }
       setBranches((branchRows as any) ?? []);
       setServices((serviceRows as any) ?? []);
       if (row) {
@@ -533,11 +549,28 @@ export function AiAssistantTab({
           <div className="flex items-center gap-2">
             <Switch
               checked={data.enabled}
-              onCheckedChange={(v) => setData({ ...data, enabled: v })}
+              disabled={!waConnected}
+              onCheckedChange={(v) => {
+                // Включать ассистента без канала бессмысленно и вредно: он «работает», клиент
+                // пишет, ответа нет. Выключить можно всегда — запрет только на включение.
+                if (v && !waConnected) {
+                  toast.error("Сначала подключите WhatsApp на вкладке «WhatsApp»");
+                  return;
+                }
+                setData({ ...data, enabled: v });
+              }}
             />
             <Label className="text-sm whitespace-nowrap">Активен</Label>
           </div>
         </div>
+
+        {!waConnected && (
+          <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            WhatsApp не подключён, поэтому ассистента нельзя включить. Откройте вкладку
+            «WhatsApp» и нажмите «Подключить WhatsApp» — после этого переключатель станет
+            доступен.
+          </div>
+        )}
 
         <div className="space-y-2">
           <Label>Сфера бизнеса</Label>

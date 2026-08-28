@@ -1,13 +1,10 @@
 // Admin panel → WhatsApp tab → the official Cloud API section.
 //
-// Deliberately NOT a separate top-level tab: WhatsApp is one channel with two possible transports,
-// and splitting them across two tabs would let an owner configure Cloud API while never noticing the
-// salon is still on Green-API (or the reverse). The provider switch is therefore the first thing on
-// this screen, and everything below it describes the transport that switch selects.
+// Транспорт теперь один: Green-API удалён, переключателя провайдера больше нет. Экран отвечает на
+// два вопроса владельца — подключён ли WhatsApp и почему ассистент молчит, если подключён.
 //
-// Like the Instagram tab, this is written for a salon owner rather than a developer: copy buttons on
-// the two values that must be pasted into Meta, and a "check connection" button that calls Meta for
-// real — without it the only way to discover a bad token is to notice clients being ignored.
+// Написан для владельца салона, а не разработчика: «проверить подключение» реально ходит в Meta,
+// потому что иначе о протухшем токене узнают по молчанию ассистента.
 import { useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
@@ -21,7 +18,6 @@ import {
   getWaCloudConfig,
   getWaCloudDiagnostics,
   setWaCloudTemplatesReady,
-  setWaProvider,
   testWaCloudConnection,
   upsertWaCloudConfig,
 } from "@/lib/wa-cloud.functions";
@@ -62,12 +58,12 @@ function whenLabel(iso: string | null): string {
   return d.toLocaleString("ru-RU");
 }
 
-function diagnose(d: Diagnostics, isCloud: boolean) {
-  if (!isCloud) {
+function diagnose(d: Diagnostics, connected: boolean) {
+  if (!connected) {
     return {
-      tone: "info" as const,
-      title: "Салон работает через Green-API",
-      body: "Cloud API можно настроить и проверить заранее — переключатель наверху ничего не меняет, пока вы его не тронете.",
+      tone: "warn" as const,
+      title: "WhatsApp не подключён",
+      body: "Нажмите «Подключить WhatsApp» выше. Пока канал не подключён, сообщения клиентов не доходят, а подтверждения и напоминания не отправляются.",
     };
   }
   const issueAt = d.lastWebhookIssueAt ? new Date(d.lastWebhookIssueAt).getTime() : 0;
@@ -106,7 +102,6 @@ function diagnose(d: Diagnostics, isCloud: boolean) {
 export function WaCloudCard({ salonId }: { salonId: string }) {
   const loadConfig = useServerFn(getWaCloudConfig);
   const saveConfig = useServerFn(upsertWaCloudConfig);
-  const switchProvider = useServerFn(setWaProvider);
   const setTemplatesReady = useServerFn(setWaCloudTemplatesReady);
   const testConnection = useServerFn(testWaCloudConnection);
   const loadDiagnostics = useServerFn(getWaCloudDiagnostics);
@@ -117,14 +112,12 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
 
-  const [provider, setProvider] = useState<"green_api" | "cloud">("green_api");
   const [phoneNumberId, setPhoneNumberId] = useState("");
   const [token, setToken] = useState("");
   const [appSecret, setAppSecret] = useState("");
   const [wabaId, setWabaId] = useState("");
   const [templates, setTemplates] = useState<TemplateMap>({});
   const [templatesReady, setTemplatesReadyState] = useState(false);
-  const [hasGreenApi, setHasGreenApi] = useState(false);
   const [kinds, setKinds] = useState<string[]>([]);
   const [diag, setDiag] = useState<Diagnostics | null>(null);
 
@@ -134,14 +127,12 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
       try {
         const cfg = await loadConfig({ data: { salonId } });
         if (cancelled) return;
-        setProvider(cfg.provider);
         setPhoneNumberId(cfg.phone_number_id);
         setToken(cfg.token);
         setAppSecret(cfg.app_secret);
         setWabaId(cfg.waba_id);
         setTemplates(cfg.templates ?? {});
         setTemplatesReadyState(cfg.templates_ready);
-        setHasGreenApi(cfg.has_green_api);
         setKinds(cfg.template_kinds ?? []);
       } catch (e: any) {
         if (!cancelled) toast.error(e?.message ?? "Не удалось загрузить настройки Cloud API");
@@ -164,7 +155,7 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
 
   useEffect(() => {
     if (!loading) void refreshDiagnostics();
-  }, [loading, provider]);
+  }, [loading]);
 
   async function onSave() {
     setSaving(true);
@@ -184,27 +175,6 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
       toast.error(e?.message ?? "Не удалось сохранить");
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function onSwitchProvider(toCloud: boolean) {
-    const next = toCloud ? "cloud" : "green_api";
-    setBusy(true);
-    const prev = provider;
-    setProvider(next);
-    try {
-      const res = await switchProvider({ data: { salonId, provider: next } });
-      toast.success(
-        next === "cloud"
-          ? "Салон переключён на официальный Cloud API"
-          : "Салон возвращён на Green-API",
-      );
-      for (const w of res.warnings ?? []) toast.warning(w, { duration: 12000 });
-    } catch (e: any) {
-      setProvider(prev);
-      toast.error(e?.message ?? "Не удалось переключить провайдера");
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -287,37 +257,32 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
     return <Card className="p-6 text-sm text-muted-foreground">Загрузка настроек Cloud API…</Card>;
   }
 
-  const isCloud = provider === "cloud";
-  const d = diag ? diagnose(diag, isCloud) : null;
+  const d = diag ? diagnose(diag, connected) : null;
 
   return (
     <div className="space-y-4">
-      {/* ---- The switch itself. First, because everything below depends on it. */}
+      {/* ---- Состояние канала. Первым, потому что от него зависит всё остальное. */}
       <Card className="p-6 space-y-3">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <h2 className="font-semibold flex items-center gap-2">
-              <ShieldCheck className="h-4 w-4" />
-              Официальный WhatsApp Cloud API
-            </h2>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              {isCloud
-                ? "Салон принимает и отправляет сообщения через официальный API Meta."
-                : "Салон работает через Green-API. Настройте поля ниже, проверьте подключение — и только потом переключайте."}
-            </p>
-            <p className="text-xs text-muted-foreground mt-2">
-              Green-API остаётся подключённым и служит путём отката: вернуть переключатель обратно
-              можно в любой момент, без потери истории диалогов.
-            </p>
-          </div>
-          <Switch checked={isCloud} onCheckedChange={onSwitchProvider} disabled={busy} />
+        <div className="min-w-0">
+          <h2 className="font-semibold flex items-center gap-2">
+            <ShieldCheck className="h-4 w-4" />
+            Официальный WhatsApp Cloud API
+          </h2>
+          {/* Переключателя провайдера здесь больше нет: Green-API удалён, выбирать не из чего.
+              Салон либо подключён официально, либо не подключён вовсе — и второе надо говорить
+              прямо, а не прятать за «настройте поля ниже». */}
+          <p className="text-sm text-muted-foreground mt-0.5">
+            {connected
+              ? "Салон принимает и отправляет сообщения через официальный API Meta."
+              : "WhatsApp не подключён. Клиенты, которые пишут салону, остаются без ответа, а подтверждения и напоминания не отправляются."}
+          </p>
         </div>
 
-        {isCloud && !hasGreenApi && !templatesReady && (
+        {connected && !templatesReady && (
           <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
             <AlertCircle className="h-4 w-4 inline mr-1.5 -mt-0.5" />
-            Green-API отключён, а шаблоны Meta ещё не одобрены. Напоминания, перенос и отмена не
-            дойдут до клиентов, которые писали больше 24 часов назад.
+            Шаблоны Meta ещё не одобрены. Внутри 24 часов после сообщения клиента ассистент
+            отвечает свободно, но напоминания, перенос и отмена не дойдут до тех, кто писал давно.
           </div>
         )}
       </Card>

@@ -2390,8 +2390,6 @@ function ServiceDialog({ editing, setEditing, salonId, categories, onSaved }: {
 
 function IntegrationsTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => void }) {
   const { isSuperAdmin } = useAuth();
-  const [instance, setInstance] = useState("");
-  const [token, setToken] = useState("");
   const [ownerPhone, setOwnerPhone] = useState("");
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -2409,8 +2407,6 @@ function IntegrationsTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => 
       try {
         const data = await loadSecrets({ data: { salonId: salon.id } });
         if (cancelled) return;
-        setInstance(data?.greenapi_instance ?? "");
-        setToken(data?.greenapi_token ?? "");
         setOwnerPhone(data?.owner_notify_phone ?? "");
       } catch (e: any) {
         if (!cancelled) toast.error(e.message ?? "Не удалось загрузить настройки");
@@ -2443,8 +2439,6 @@ function IntegrationsTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => 
     try {
       await saveSecrets({ data: {
         salonId: salon.id,
-        greenapi_instance: instance || null,
-        greenapi_token: token || null,
         owner_notify_phone: ownerPhone.replace(/[^\d]/g, "") || null,
       }});
       toast.success("Сохранено");
@@ -2481,8 +2475,11 @@ function IntegrationsTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => 
       <Card className={`p-6 space-y-4 ${!waEnabled ? "opacity-60" : ""}`}>
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div>
-            <h2 className="font-semibold">GreenAPI (WhatsApp)</h2>
-            <p className="text-sm text-muted-foreground">Каждый салон использует свой инстанс GreenAPI. Подтверждения и напоминания клиентам, а также уведомления владельцу будут отправляться с этого номера.</p>
+            <h2 className="font-semibold">Уведомления владельцу</h2>
+            <p className="text-sm text-muted-foreground">
+              Куда писать самому салону: о новой записи и о том, что ассистент передал диалог
+              живому администратору.
+            </p>
           </div>
           {!waEnabled && (
             <span className="text-[11px] uppercase tracking-wide px-2 py-1 rounded bg-muted text-muted-foreground shrink-0">
@@ -2490,11 +2487,9 @@ function IntegrationsTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => 
             </span>
           )}
         </div>
-        <div><Label>Instance ID</Label><Input value={instance} onChange={(e) => setInstance(e.target.value)} placeholder="1101000001" disabled={loading} /></div>
-        <div><Label>API Token</Label><Input type="password" value={token} onChange={(e) => setToken(e.target.value)} disabled={loading} /></div>
         <div>
           <Label>Телефон владельца для уведомлений</Label>
-          <Input value={ownerPhone} onChange={(e) => setOwnerPhone(e.target.value)} placeholder="79991234567" disabled={loading} />
+          <Input value={ownerPhone} onChange={(e) => setOwnerPhone(e.target.value)} placeholder="996700123456" disabled={loading} />
           <p className="text-xs text-muted-foreground mt-1">При каждой новой записи владельцу салона придёт WhatsApp на этот номер. Формат: только цифры с кодом страны.</p>
           {/* An empty field saves as NULL and silently disabled every escalation alert (and the
               /restart test command). Make that consequence visible instead of losing it quietly. */}
@@ -2509,9 +2504,8 @@ function IntegrationsTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => 
         <Button onClick={save} disabled={saving || loading}>{saving ? "..." : "Сохранить"}</Button>
       </Card>
 
-      {/* The official transport, in the SAME tab rather than its own: WhatsApp is one channel with
-          two possible providers, and separating them would let an owner set up Cloud API without
-          ever noticing the salon is still sending over Green-API. */}
+      {/* Подключение к официальному WhatsApp Cloud API. Транспорт теперь один: Green-API удалён,
+          выбирать больше не из чего. */}
       <WaCloudCard salonId={salon.id} />
     </div>
   );
