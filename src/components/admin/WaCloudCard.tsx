@@ -119,6 +119,10 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
   // booking_confirmation. Кнопка заводит их сама и вписывает имена — поля нужны только когда
   // что-то пошло не так и мы разбираемся вместе с ней.
   const [showTemplateNames, setShowTemplateNames] = useState(false);
+  // Ручной ввод реквизитов. Кнопка подключения закрывает 99% случаев, но не все: Embedded Signup
+  // недоступен тому, чьё портфолио владеет приложением, и салону, подключённому через отдельное
+  // приложение Meta. Без этих полей такой салон не подключить вообще ничем, кроме доступа к базе.
+  const [showManual, setShowManual] = useState(false);
 
   const [phoneNumberId, setPhoneNumberId] = useState("");
   const [token, setToken] = useState("");
@@ -347,12 +351,77 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
           </p>
         )}
 
-        <div className="flex gap-2 flex-wrap">
+        <div className="flex gap-2 flex-wrap items-center">
           <WaConnectButton connected={connected} onConnected={onConnected} />
           <Button variant="outline" onClick={onTest} disabled={testing}>
             {testing ? "Проверяем…" : "Проверить подключение"}
           </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowManual((v) => !v)}
+            className="text-muted-foreground"
+          >
+            {showManual ? "Скрыть ручной ввод" : "Подключить вручную"}
+          </Button>
         </div>
+
+        {showManual && (
+          <div className="space-y-3 border-t pt-4">
+            <p className="text-xs text-muted-foreground">
+              Запасной путь для случаев, когда кнопка выше не подходит: номер заведён через
+              отдельное приложение Meta или окно подключения недоступно. Значения берутся в панели
+              приложения Meta, раздел WhatsApp → API Setup.
+            </p>
+            <div>
+              <Label className="text-sm">ID номера (Phone Number ID)</Label>
+              <Input
+                value={phoneNumberId}
+                onChange={(e) => setPhoneNumberId(e.target.value)}
+                placeholder="1152652971275812"
+                className="font-mono text-xs mt-1"
+              />
+            </div>
+            <div>
+              <Label className="text-sm">ID аккаунта WhatsApp (WABA ID)</Label>
+              <Input
+                value={wabaId}
+                onChange={(e) => setWabaId(e.target.value)}
+                placeholder="1032772542716543"
+                className="font-mono text-xs mt-1"
+              />
+            </div>
+            <div>
+              <Label className="text-sm">Токен доступа</Label>
+              {/* type=password: токен даёт полный доступ к переписке салона, и он остаётся на
+                  экране, пока владелец ходит по вкладкам. */}
+              <Input
+                type="password"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                placeholder="EAAG…"
+                className="font-mono text-xs mt-1"
+              />
+            </div>
+            <div>
+              <Label className="text-sm">App Secret приложения</Label>
+              <Input
+                type="password"
+                value={appSecret}
+                onChange={(e) => setAppSecret(e.target.value)}
+                placeholder="оставьте пустым"
+                className="font-mono text-xs mt-1"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Нужен, только если салон подключён через СВОЁ приложение Meta. При подключении через
+                Qabyl оставьте пустым — подпись вебхука проверяется общим секретом платформы.
+              </p>
+            </div>
+            <Button onClick={onSave} disabled={saving}>
+              {saving ? "Сохранение…" : "Сохранить реквизиты"}
+            </Button>
+          </div>
+        )}
       </Card>
 
       {/* ---- Templates. */}
