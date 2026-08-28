@@ -27,13 +27,14 @@ function genToken(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** The five message kinds that can fall outside Meta's 24-hour window and therefore need a template. */
+/** The message kinds that can fall outside Meta's 24-hour window and therefore need a template. */
 const TEMPLATE_KINDS = [
   "confirmation",
   "reminder",
   "reschedule",
   "cancellation",
   "owner_alert",
+  "owner_change",
 ] as const;
 
 // BOTH fields are optional on the way IN, deliberately. The form builds these entries key by key as

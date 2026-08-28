@@ -37,7 +37,13 @@ const WA_GRAPH_VERSION = Deno.env.get("WA_CLOUD_API_VERSION") ?? "v25.0";
  * different count. So the order and count below are what the owner must be told to submit. They are
  * documented for the owner in docs/WA-CLOUD-MIGRATION.md.
  */
-type TemplateKind = "confirmation" | "reminder" | "reschedule" | "cancellation" | "owner_alert";
+type TemplateKind =
+  | "confirmation"
+  | "reminder"
+  | "reschedule"
+  | "cancellation"
+  | "owner_alert"
+  | "owner_change";
 
 async function sendCloudApi(opts: {
   phoneNumberId: string;
@@ -415,19 +421,20 @@ Deno.serve(async (req) => {
         kind === "self_reschedule"
           ? `🔄 Клиент сам перенёс запись (через ссылку) в "${salon.name}"\n\n👤 ${appt.client_name}\n📞 ${appt.client_phone}\n💇 ${serviceName}\n💅 Мастер: ${masterName}\n🕐 Новое время: ${when}`
           : `❌ Клиент сам отменил запись (через ссылку) в "${salon.name}"\n\n👤 ${appt.client_name}\n📞 ${appt.client_phone}\n💇 ${serviceName}\n💅 Мастер: ${masterName}\n🕐 Было: ${when}`;
+      // Одной строкой, потому что в шаблоне это один плейсхолдер: перенос и отмена отличаются
+      // ровно этой фразой, а остальные поля у них общие.
+      const changeLine =
+        kind === "self_reschedule" ? `Перенос на ${whenShort}` : `Отмена записи на ${whenShort}`;
+      // Свой шаблон, а НЕ owner_alert: тот говорит «Новая запись», и вне 24-часового окна владелица
+      // получала его про отменённую запись. Если шаблон не заведён, deliver честно скажет об этом
+      // владельцу вместо того, чтобы доставить противоположный смысл.
       // deliver — hoisted function declaration in this scope, безопасно звать до его текста.
       const res = await deliver({
         rawPhone: ownerPhone as string,
         text: ownerText,
         target: "owner",
-        templateKind: "owner_alert",
-        templateParams: [
-          String(appt.client_name ?? ""),
-          serviceLower,
-          masterName,
-          whenShort,
-          String(appt.client_phone ?? ""),
-        ],
+        templateKind: "owner_change",
+        templateParams: [String(appt.client_name ?? ""), changeLine, serviceLower, masterName],
       });
       if (!res.ok) {
         return jsonResponse(

@@ -33,6 +33,7 @@ const KIND_LABELS: Record<string, string> = {
   reschedule: "Перенос записи",
   cancellation: "Отмена записи",
   owner_alert: "Уведомление владельцу",
+  owner_change: "Клиент сам перенёс или отменил",
 };
 
 // The placeholder contract from docs/WA-CLOUD-MIGRATION.md. Shown next to each field because the
@@ -46,6 +47,7 @@ const KIND_PLACEHOLDERS: Record<string, string> = {
   reschedule: "{{1}} имя · {{2}} новые дата и время · {{3}} мастер · {{4}} токен ссылки",
   cancellation: "{{1}} имя · {{2}} дата и время",
   owner_alert: "{{1}} клиент · {{2}} услуга · {{3}} мастер · {{4}} дата и время · {{5}} телефон",
+  owner_change: "{{1}} клиент · {{2}} что изменилось · {{3}} услуга · {{4}} мастер",
 };
 
 function whenLabel(iso: string | null): string {
@@ -113,6 +115,10 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
   const [makingTemplates, setMakingTemplates] = useState(false);
+  // Имена шаблонов свёрнуты по умолчанию: владелица салона не знает и не должна знать, что такое
+  // booking_confirmation. Кнопка заводит их сама и вписывает имена — поля нужны только когда
+  // что-то пошло не так и мы разбираемся вместе с ней.
+  const [showTemplateNames, setShowTemplateNames] = useState(false);
 
   const [phoneNumberId, setPhoneNumberId] = useState("");
   const [token, setToken] = useState("");
@@ -355,9 +361,9 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
           <div className="min-w-0">
             <h3 className="font-semibold">Шаблоны для сообщений вне окна 24 часов</h3>
             <p className="text-sm text-muted-foreground mt-0.5">
-              Meta разрешает свободный текст только 24 часа с последнего сообщения клиента. Дальше —
-              только одобренный шаблон. Пока переключатель выключен, такие сообщения продолжают
-              уходить через Green-API.
+              Meta разрешает свободный текст только 24 часа с последнего сообщения клиента. Дальше
+              проходят лишь заранее одобренные шаблоны: подтверждение записи, напоминание, перенос,
+              отмена и уведомления вам. Нажмите кнопку ниже, и мы заведём их сами.
             </p>
           </div>
           <Switch
@@ -367,49 +373,8 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
           />
         </div>
 
-        <div className="space-y-3">
-          {kinds.map((kind) => (
-            <div key={kind} className="grid gap-2 sm:grid-cols-[1fr_6rem] sm:items-end">
-              <div>
-                <Label className="text-sm">{KIND_LABELS[kind] ?? kind}</Label>
-                <Input
-                  value={templates[kind]?.name ?? ""}
-                  onChange={(e) => setTemplate(kind, { name: e.target.value })}
-                  placeholder="имя одобренного шаблона"
-                  className="font-mono text-xs mt-1"
-                />
-                <p className="text-xs text-muted-foreground mt-1 font-mono">
-                  {KIND_PLACEHOLDERS[kind]}
-                </p>
-              </div>
-              <div>
-                <Label className="text-xs">Язык</Label>
-                <Input
-                  value={templates[kind]?.lang ?? ""}
-                  onChange={(e) => setTemplate(kind, { lang: e.target.value })}
-                  placeholder="ru"
-                  className="font-mono text-xs mt-1"
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Число плейсхолдеров в одобренном шаблоне должно совпадать с указанным под каждым полем —
-          иначе Meta отклонит отправку с кодом 132000.
-        </p>
-        {/* Тот же onSave, что и в карточке учётных данных: он сохраняет и креды, и шаблоны одним
-            запросом. Кнопка продублирована здесь потому, что владелец заполняет пять полей и ищет
-            «Сохранить» под ними, а не парой экранов выше — переключатель при этом требует уже
-            сохранённые имена и без сохранения отказывает. */}
-        <div className="flex gap-2 flex-wrap">
-          <Button onClick={onSave} disabled={saving}>
-            {saving ? "Сохранение…" : "Сохранить шаблоны"}
-          </Button>
-          {/* Рядом с «Сохранить», а не в карточке подключения: владелец приходит сюда, когда
-              видит пустые поля или отклонённый шаблон, и решение должно лежать там же. */}
+        <div className="flex gap-2 flex-wrap items-center">
           <Button
-            variant="outline"
             onClick={onCreateTemplates}
             disabled={makingTemplates || !connected}
             title={
@@ -418,14 +383,71 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
                 : "Сначала подключите WhatsApp — шаблоны создаются на аккаунте салона"
             }
           >
-            {makingTemplates ? "Создаём…" : "Создать шаблоны заново"}
+            {makingTemplates ? "Создаём…" : "Создать шаблоны"}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowTemplateNames((v) => !v)}
+            className="text-muted-foreground"
+          >
+            {showTemplateNames ? "Скрыть имена шаблонов" : "Дополнительно: имена шаблонов"}
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">
-          «Создать шаблоны заново» заводит пять стандартных шаблонов на аккаунте салона и отправляет
-          их на модерацию Meta — обычно она занимает несколько минут. Уже существующие шаблоны
-          пропускаются, так что нажать повторно безопасно.
+          Уже существующие шаблоны пропускаются, так что нажимать повторно безопасно. Модерация у
+          Meta обычно занимает несколько минут.
         </p>
+
+        {/* Свёрнуто по умолчанию. Владелица салона не знает, что такое booking_confirmation, и
+            заставлять её на это смотреть — значит показывать поле, в которое она может только
+            вписать ошибку. Кнопка выше заполняет эти имена сама. */}
+        {showTemplateNames && (
+          <div className="space-y-3 border-t pt-4">
+            <p className="text-xs text-muted-foreground">
+              Здесь видно, какими именами мы отправляем каждое уведомление. Менять их нужно, только
+              если шаблоны заводились вручную в кабинете Meta под другими названиями. Кнопка
+              «Создать шаблоны» перезапишет эти поля своими именами.
+            </p>
+            {kinds.map((kind) => (
+              <div key={kind} className="grid gap-2 sm:grid-cols-[1fr_6rem] sm:items-end">
+                <div>
+                  <Label className="text-sm">{KIND_LABELS[kind] ?? kind}</Label>
+                  <Input
+                    value={templates[kind]?.name ?? ""}
+                    onChange={(e) => setTemplate(kind, { name: e.target.value })}
+                    placeholder="имя одобренного шаблона"
+                    className="font-mono text-xs mt-1"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1 font-mono">
+                    {KIND_PLACEHOLDERS[kind]}
+                  </p>
+                </div>
+                <div>
+                  <Label className="text-xs">Язык</Label>
+                  <Input
+                    value={templates[kind]?.lang ?? ""}
+                    onChange={(e) => setTemplate(kind, { lang: e.target.value })}
+                    placeholder="ru"
+                    className="font-mono text-xs mt-1"
+                  />
+                </div>
+              </div>
+            ))}
+            <p className="text-xs text-muted-foreground">
+              Число плейсхолдеров в одобренном шаблоне должно совпадать с указанным под каждым полем
+              — иначе Meta отклонит отправку с кодом 132000.
+            </p>
+            {/* Тот же onSave, что и в карточке учётных данных: он сохраняет и креды, и шаблоны одним
+              запросом. Кнопка продублирована здесь потому, что владелец правит поля тут, а не
+              парой экранов выше — переключатель при этом требует уже сохранённые имена. */}
+            <div>
+              <Button onClick={onSave} disabled={saving}>
+                {saving ? "Сохранение…" : "Сохранить имена"}
+              </Button>
+            </div>
+          </div>
+        )}
       </Card>
 
       {/* ---- Diagnostics. */}
