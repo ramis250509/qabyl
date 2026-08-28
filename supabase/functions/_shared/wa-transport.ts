@@ -1,93 +1,74 @@
-// "Which transport may legally carry THIS message?" — for business-initiated WhatsApp notifications.
+// «Чем можно легально доставить ЭТО сообщение?» — для business-initiated уведомлений WhatsApp.
 //
-// Every message send-whatsapp produces is business-INITIATED: a booking confirmation, a 2-hour
-// reminder, a reschedule or cancellation notice, an owner alert. Nobody asked for them. That is what
-// makes the Cloud API hard: free-form text is legal only within 24 hours of the client's last
-// message, and outside that window Meta accepts nothing but a pre-approved template (error 131047).
-// Template approval depends on Meta business verification and takes days, so a salon can be fully
-// live on Cloud API for conversation long before it can send one reminder.
+// Каждое сообщение, которое порождает send-whatsapp, инициировано бизнесом: подтверждение записи,
+// напоминание за два часа, перенос, отмена, уведомление владельцу. Никто их не просил. Отсюда и
+// сложность Cloud API: свободный текст законен только в течение 24 часов с последнего сообщения
+// клиента, а вне окна Meta принимает исключительно заранее одобренный шаблон (ошибка 131047).
 //
-// Getting this wrong is silent in the direction that matters: a salon migrates, its reminders stop,
-// and nobody finds out until clients start no-showing. So the decision lives here as a pure function
-// instead of inline in the request handler — it is the one part of the outbound path worth testing
-// exhaustively, and it was untestable while it sat between two network calls.
+// Ошибиться здесь можно тихо и в худшую сторону: у салона перестают уходить напоминания, и узнают
+// об этом, когда клиенты начинают не приходить. Поэтому решение вынесено в чистую функцию, а не
+// живёт между двумя сетевыми вызовами внутри обработчика.
 //
-// It lives under supabase/functions/_shared/ because it must be importable from BOTH the Deno edge
-// runtime and the bun test runner. It therefore contains no Deno globals, no fetch, and no I/O.
+// Раньше здесь была четвёртая ветка — откат на Green-API для салона, у которого ещё нет одобренных
+// шаблонов. Она и делала миграцию нестрашной. Транспорт удалён (Green-API работает поверх обычного
+// аккаунта и нарушает условия WhatsApp — за это банят номера), поэтому вариантов осталось три, и
+// «нечем отправить» стало реальным исходом, а не теоретическим.
+//
+// Файл лежит в supabase/functions/_shared/, потому что импортируется и рантаймом Deno, и bun-тестами:
+// никаких Deno-глобалов, fetch и ввода-вывода.
 
 export type WaTransportDecision =
-  /** Green-API, exactly as before the migration. */
-  | "green_api"
-  /** Cloud API free-form text — inside the 24-hour window, so the full formatted message is legal. */
+  /** Свободный текст Cloud API — внутри 24-часового окна, поэтому полное форматированное сообщение легально. */
   | "cloud_text"
-  /** Cloud API pre-approved template — outside the window. */
+  /** Одобренный шаблон Cloud API — вне окна. */
   | "cloud_template"
-  /** Nothing may legally carry this message. The caller must report why, never fail silently. */
+  /** Доставить нечем. Вызывающий обязан назвать причину, а не промолчать. */
   | "none";
 
 export type WaTransportInputs = {
-  /** salons.wa_provider */
-  provider: "green_api" | "cloud";
-  /** Are Green-API instance + token both present? */
-  hasGreen: boolean;
-  /** Are Cloud API phone number id + token both present? */
+  /** Заданы ли и Phone Number ID, и токен Cloud API. */
   hasCloud: boolean;
-  /** salons.wa_cloud_templates_ready — has the salon got APPROVED templates at all? */
+  /** salons.wa_cloud_templates_ready — есть ли у салона одобренные шаблоны вообще. */
   templatesReady: boolean;
-  /** Is a template name configured for this specific message kind? */
+  /** Задано ли имя шаблона именно для этого вида сообщения. */
   hasTemplateForKind: boolean;
-  /** Did the client message this business within the last 24 hours? */
+  /** Писал ли клиент этому бизнесу в последние 24 часа. */
   inWindow: boolean;
 };
 
 /**
- * Decide the transport. The order of the rules encodes the migration policy from
- * docs/WA-CLOUD-MIGRATION.md:
+ * Выбор транспорта.
  *
- *   1. A salon that has not been switched over keeps using Green-API. This is the overwhelming
- *      majority of traffic and its behaviour must be bit-identical to before the migration — which
- *      is why `provider === "green_api"` is checked first and nothing below can affect it.
+ *   1. Внутри окна — свободный текст. Предпочтительнее шаблона, даже когда шаблон есть: шаблон
+ *      это жёсткий каркас на пять плейсхолдеров, а свободное сообщение — то самое подробное,
+ *      которое клиенты и получают, вместе со ссылкой на самоуправление.
  *
- *   2. A migrated salon INSIDE the window sends free-form text. Preferred over a template even when
- *      one exists: the template is a rigid five-placeholder skeleton, while the free-form message is
- *      the rich one clients already get, with the self-service management link.
+ *   2. Вне окна — одобренный шаблон для этого вида.
  *
- *   3. Outside the window, an approved template for this kind.
- *
- *   4. Otherwise Green-API, if the salon still has a working instance. THIS IS THE HYBRID, and the
- *      reason a salon does not lose its reminders the day it migrates. Green-API is not bound by
- *      Meta's window at all.
- *
- *   5. Nothing left. The caller must surface the reason to the owner.
+ *   3. Больше ничего. Причину обязан показать вызывающий.
  */
 export function chooseTransport(i: WaTransportInputs): WaTransportDecision {
-  if (i.provider === "green_api") return i.hasGreen ? "green_api" : "none";
-
   if (i.hasCloud && i.inWindow) return "cloud_text";
   if (i.hasCloud && i.templatesReady && i.hasTemplateForKind) return "cloud_template";
-  if (i.hasGreen) return "green_api";
   return "none";
 }
 
 /**
- * Why nothing could carry the message, in words an owner can act on.
+ * Почему доставить нечем — словами, с которыми владелец может что-то сделать.
  *
- * Called only when chooseTransport returned "none". A bare "delivery failed" sends the owner to
- * support; naming the actual blocker lets them fix it themselves, and the three blockers have
- * completely different fixes (wait for Meta, fill in a template name, reconnect Green-API).
+ * Вызывается только когда chooseTransport вернул "none". Сухое «не доставлено» отправляет владельца
+ * в поддержку; названная причина позволяет починить самому, а причины требуют совершенно разных
+ * действий: подключить WhatsApp, дождаться модерации, вписать имя шаблона.
  */
 export function explainNoTransport(i: WaTransportInputs, templateKind: string): string {
-  if (i.provider === "green_api") {
-    return "Green-API не подключён, а салон ещё не переведён на Cloud API";
-  }
   if (!i.hasCloud) {
-    return "не заданы Phone Number ID или токен Cloud API, и Green-API не подключён";
+    return "WhatsApp не подключён — откройте настройки салона и нажмите «Подключить WhatsApp»";
   }
   if (!i.templatesReady) {
-    return "клиент писал больше 24 часов назад, а шаблоны Meta ещё не одобрены (и Green-API не подключён)";
+    return "клиент писал больше 24 часов назад, а шаблоны Meta ещё не одобрены";
   }
   if (!i.hasTemplateForKind) {
-    return `не задан шаблон «${templateKind}» в настройках салона (и Green-API не подключён)`;
+    return `не задан шаблон «${templateKind}» в настройках салона`;
   }
   return "нет доступного канала отправки";
 }

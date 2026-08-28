@@ -14,12 +14,6 @@ function jsonResponse(body: Record<string, unknown>, status = 200) {
   });
 }
 
-function normalizeGreenApiChatId(rawPhone: string | null | undefined) {
-  const phone = normalizePhone(rawPhone);
-  if (!phone) return null;
-  return `${phone}@c.us`;
-}
-
 /** Digits only — the shape wa_conversations.client_phone stores and the Cloud API expects. */
 function normalizePhone(rawPhone: string | null | undefined) {
   const phone = String(rawPhone ?? "").replace(/[^\d]/g, "");
@@ -137,15 +131,6 @@ function manageUrl(token: string | null | undefined) {
   return `${base}/manage/${token}`;
 }
 
-async function readGreenApiBody(resp: Response) {
-  const raw = await resp.text();
-  try {
-    return { raw, parsed: raw ? JSON.parse(raw) : null };
-  } catch {
-    return { raw, parsed: null };
-  }
-}
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -175,7 +160,7 @@ Deno.serve(async (req) => {
     const { data: appt, error } = await supabase
       .from("appointments")
       .select(
-        "*, salons(id, name, address, phone, timezone, wa_provider, wa_cloud_templates_ready), masters(name), services(name)",
+        "*, salons(id, name, address, phone, timezone, wa_cloud_templates_ready), masters(name), services(name)",
       )
       .eq("id", appointment_id)
       .single();
@@ -229,11 +214,9 @@ Deno.serve(async (req) => {
     // approval depends on Meta business verification and takes days, so a salon can be fully live on
     // Cloud API for conversation long before it can send a single reminder.
     //
-    // The hybrid answer (docs/WA-CLOUD-MIGRATION.md, Р1): a migrated salon keeps sending these over
-    // Green-API until its templates exist. A salon never silently loses its reminders just because
-    // its inbound channel moved.
-    const provider = salon?.wa_provider === "cloud" ? "cloud" : "green_api";
-    const hasGreen = Boolean(salon?.greenapi_instance && salon?.greenapi_token);
+    // Раньше на этот случай был откат на Green-API — салон не терял напоминания, пока ждал
+    // модерации шаблонов. Транспорт удалён (он нарушает условия WhatsApp, за это банят номера),
+    // поэтому «нечем отправить» стало настоящим исходом и обязано быть громко названо.
     const hasCloud = Boolean(salon?.whatsapp_cloud_phone_number_id && salon?.whatsapp_cloud_token);
     const templatesReady = salon?.wa_cloud_templates_ready === true;
     const templates = (salon?.whatsapp_cloud_templates ?? {}) as Record<
@@ -241,7 +224,7 @@ Deno.serve(async (req) => {
       { name?: string; lang?: string } | undefined
     >;
 
-    if (!hasGreen && !hasCloud) {
+    if (!hasCloud) {
       console.warn("Salon has no WhatsApp credentials configured", appt.salon_id);
       // Reached only when the salon has whatsapp_enabled but no credentials — a
       // misconfiguration the owner needs to see, not a deliberate opt-out.
@@ -252,8 +235,6 @@ Deno.serve(async (req) => {
     console.log("send-whatsapp transport", {
       appointment_id,
       salon_id: appt.salon_id,
-      provider,
-      hasGreen,
       hasCloud,
       templatesReady,
       ownerPhoneConfigured: Boolean(salon.owner_notify_phone),
@@ -292,13 +273,10 @@ Deno.serve(async (req) => {
     /**
      * Send one message by whatever route is legal for it right now.
      *
-     * Order matters and encodes the migration policy:
-     *   1. Green-API salon → Green-API. Untouched, and the overwhelming majority of traffic.
-     *   2. Cloud salon inside the window → Cloud API free-form, so the client still gets the full
-     *      formatted message rather than a rigid template.
-     *   3. Cloud salon outside the window with an approved template → that template.
-     *   4. Anything left over → Green-API, if the salon still has it. This is the hybrid.
-     *   5. Nothing available → report WHY, loudly. Never return a silent success.
+     * Порядок:
+     *   1. Внутри окна → свободный текст, клиент получает подробное сообщение, а не жёсткий каркас.
+     *   2. Вне окна с одобренным шаблоном → шаблон.
+     *   3. Больше ничего → назвать ПРИЧИНУ, громко. Молчаливого успеха здесь быть не должно.
      */
     async function deliver(opts: {
       rawPhone: string;
@@ -309,36 +287,15 @@ Deno.serve(async (req) => {
     }): Promise<{ ok: boolean; messageId: string | null; detail: string | null; via: string }> {
       const { rawPhone, text, target, templateKind, templateParams } = opts;
 
-      const viaGreen = async () => {
-        const chatId = normalizeGreenApiChatId(rawPhone);
-        if (!chatId)
-          return {
-            ok: false,
-            messageId: null,
-            detail: "Номер телефона нераспознаваем",
-            via: "green_api",
-          };
-        const res = await sendGreenApi(chatId, text, target);
-        return {
-          ok: res.ok,
-          messageId: (res.result?.parsed as any)?.idMessage ?? null,
-          detail: res.ok ? null : `Green-API отказал (HTTP ${res.status})`,
-          via: "green_api",
-        };
-      };
-
       const toPhone = normalizePhone(rawPhone);
       if (!toPhone) {
         return { ok: false, messageId: null, detail: "Номер телефона нераспознаваем", via: "none" };
       }
       const tpl = templates[templateKind];
-      // The window costs a query, so it is only asked for when the answer can change the decision:
-      // a Green-API salon never needs it.
-      const inWindow =
-        provider === "cloud" && hasCloud ? await withinServiceWindow(rawPhone) : false;
+      // Окно стоит запроса, поэтому спрашиваем только когда ответ может на что-то повлиять:
+      // у неподключённого салона всё равно нет транспорта.
+      const inWindow = hasCloud ? await withinServiceWindow(rawPhone) : false;
       const inputs = {
-        provider: provider as "green_api" | "cloud",
-        hasGreen,
         hasCloud,
         templatesReady,
         hasTemplateForKind: Boolean(tpl?.name),
@@ -362,10 +319,9 @@ Deno.serve(async (req) => {
       if (decision === "cloud_text") {
         const res = await sendCloudApi({ ...cloudCreds, toPhone, text });
         if (res.ok) return { ok: true, messageId: res.messageId, detail: null, via: "cloud_text" };
-        // A rejected send is not the end of the road while Green-API is still connected — the
-        // client getting the message late over the old transport beats not getting it.
-        console.error("CloudAPI free-form send failed, falling back", { target, error: res.error });
-        if (hasGreen) return await viaGreen();
+        // Отката больше нет: Green-API удалён. Отказ Meta — это и есть конец пути, и владелец
+        // обязан увидеть причину, а не решить, что сообщение ушло.
+        console.error("CloudAPI free-form send failed", { target, error: res.error });
         return { ok: false, messageId: null, detail: res.error, via: "none" };
       }
 
@@ -378,12 +334,9 @@ Deno.serve(async (req) => {
         if (res.ok) {
           return { ok: true, messageId: res.messageId, detail: null, via: "cloud_template" };
         }
-        console.error("CloudAPI template send failed, falling back", { target, error: res.error });
-        if (hasGreen) return await viaGreen();
+        console.error("CloudAPI template send failed", { target, error: res.error });
         return { ok: false, messageId: null, detail: res.error, via: "none" };
       }
-
-      if (decision === "green_api") return await viaGreen();
 
       // Nothing could carry it. This case must never look like success: the owner needs to know
       // their client heard nothing, and exactly why.
@@ -397,7 +350,7 @@ Deno.serve(async (req) => {
       return { ok: false, messageId: null, detail: why, via: "none" };
     }
 
-    // Validated as digits rather than as a Green-API chat id: the same rule applies to both
+    // Проверяем как цифры: одно правило и для номера клиента, и для номера владельца
     // transports, and a cloud salon has no chat ids at all.
     if (!normalizePhone(appt.client_phone as string)) {
       console.error("send-whatsapp invalid client phone", {
@@ -462,8 +415,7 @@ Deno.serve(async (req) => {
         kind === "self_reschedule"
           ? `🔄 Клиент сам перенёс запись (через ссылку) в "${salon.name}"\n\n👤 ${appt.client_name}\n📞 ${appt.client_phone}\n💇 ${serviceName}\n💅 Мастер: ${masterName}\n🕐 Новое время: ${when}`
           : `❌ Клиент сам отменил запись (через ссылку) в "${salon.name}"\n\n👤 ${appt.client_name}\n📞 ${appt.client_phone}\n💇 ${serviceName}\n💅 Мастер: ${masterName}\n🕐 Было: ${when}`;
-      // deliver and sendGreenApi are hoisted function declarations in this scope — safe to call
-      // before their text.
+      // deliver — hoisted function declaration in this scope, безопасно звать до его текста.
       const res = await deliver({
         rawPhone: ownerPhone as string,
         text: ownerText,
@@ -501,64 +453,6 @@ Deno.serve(async (req) => {
       text = `Здравствуйте, ${clientFirstName}! 🎉\n\nВы успешно записаны на ${serviceName} в ${timeStr} — ${weekday}, ${dateStr}.\n\nЖдём вас в ${salon.name}!${salon.address ? `\n📍 ${salon.address}` : ""}${salon.phone ? `\n📞 ${salon.phone}` : ""}${manageLine}`;
     }
 
-    async function sendGreenApi(chatId: string, message: string, target: "client" | "owner") {
-      const url = `https://api.green-api.com/waInstance${salon.greenapi_instance}/sendMessage/${salon.greenapi_token}`;
-      const body = { chatId, message };
-      try {
-        console.log("GreenAPI request", {
-          appointment_id,
-          salon_id: appt.salon_id,
-          target,
-          chatId,
-          endpoint: `waInstance${String(salon.greenapi_instance).slice(0, 4)}***/sendMessage/***`,
-        });
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10_000);
-        let resp: Response;
-        try {
-          resp = await fetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-            signal: controller.signal,
-          });
-        } finally {
-          clearTimeout(timeoutId);
-        }
-        const result = await readGreenApiBody(resp);
-        if (!resp.ok) {
-          console.error("GreenAPI response error", {
-            appointment_id,
-            salon_id: appt.salon_id,
-            target,
-            status: resp.status,
-            statusText: resp.statusText,
-            responseText: result.raw,
-            responseJson: result.parsed,
-            requestBody: body,
-          });
-        } else {
-          console.log("GreenAPI response ok", {
-            appointment_id,
-            target,
-            status: resp.status,
-            response: result.parsed ?? result.raw,
-          });
-        }
-        return { ok: resp.ok, status: resp.status, result };
-      } catch (err: any) {
-        console.error("GreenAPI network/unexpected error", {
-          appointment_id,
-          salon_id: appt.salon_id,
-          target,
-          message: err?.message,
-          stack: err?.stack,
-          requestBody: body,
-        });
-        throw err;
-      }
-    }
-
     // Which template this message would need if it falls outside the 24-hour window. The parameter
     // order here IS the contract the salon's approved template must match, one entry per {{n}}.
     const clientTemplateKind: TemplateKind =
@@ -591,7 +485,7 @@ Deno.serve(async (req) => {
         templateParams: clientTemplateParams,
       });
     } catch (sendErr: any) {
-      // sendGreenApi rethrows network/timeout failures. The client heard nothing, and that is
+      // Сетевые сбои и таймауты пробрасываются наверх. Клиент ничего не услышал, и это ровно то,
       // exactly what the owner must see in the calendar.
       await markConfirmation("failed", `Сеть или таймаут: ${sendErr?.message ?? sendErr}`);
       throw sendErr;
@@ -605,8 +499,8 @@ Deno.serve(async (req) => {
     }
     // "sent" means the provider ACCEPTED the message, not that the client received it. Both
     // transports report the real outcome later on their status webhook — that is what upgrades this
-    // to delivered/failed. The id stored here is what those webhooks match on: Green-API's
-    // idMessage or Meta's wamid, in the same column.
+    // to delivered/failed. The id stored here is what those webhooks match on —
+    // Meta's wamid.
     await markConfirmation("sent", null, clientRes.messageId);
     console.log("send-whatsapp client delivered", { appointment_id, via: clientRes.via });
 
