@@ -266,8 +266,16 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
     try {
       const res = await makeTemplates({ data: { salonId } });
       const failed = res.steps.filter((s) => !s.ok);
+      // Считаем отдельно: «создано 6» и «всё уже было» — разные новости, и владелец, нажавший
+      // кнопку второй раз, должен видеть вторую, а не подозревать, что шаблоны переписались.
+      const created = res.steps.filter((s) => s.ok && !s.existed).length;
+      const existed = res.steps.filter((s) => s.ok && s.existed).length;
       if (failed.length === 0) {
-        toast.success("Пять шаблонов заведены и отправлены на модерацию Meta");
+        toast.success(
+          created === 0
+            ? `Все шаблоны уже заведены (${existed}) — создавать нечего`
+            : `Создано шаблонов: ${created}${existed ? `, уже было: ${existed}` : ""}. Отправлены на модерацию Meta`,
+        );
       } else {
         // Частичный успех — самый частый исход: часть шаблонов уже существует, часть отклонена.
         // Называем именно отказавшие, иначе владельцу нечего показать поддержке.

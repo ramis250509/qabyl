@@ -16,6 +16,8 @@ function graphBase(): string {
 export type OnboardingStep = {
   step: string;
   ok: boolean;
+  /** Шаг прошёл потому, что делать было нечего — объект уже существовал. */
+  existed?: boolean;
   /** Человекочитаемая причина. Показывается владельцу, поэтому без кодов и стектрейсов. */
   detail?: string;
 };
@@ -197,7 +199,12 @@ export async function createNotificationTemplates(
     });
 
     const { ok, error } = await graphJson(res);
-    const already = /already exists/i.test(error ?? "");
+    // Об уже существующем шаблоне Meta сообщает минимум двумя разными фразами, и вторая —
+    // «There is already Russian content for this template» — слов "already exists" не содержит.
+    // Проверка на одну только первую превращала штатный повторный прогон в четыре отказа подряд.
+    const already = /already exists|there is already .+ content for this template/i.test(
+      error ?? "",
+    );
     if (ok || already) {
       // Имя записываем в обоих случаях: салону нужно, чтобы отправка знала, чем слать, а
       // существовал шаблон до нас или создан сейчас — для этого безразлично.
@@ -205,6 +212,7 @@ export async function createNotificationTemplates(
       steps.push({
         step: `template:${tpl.name}`,
         ok: true,
+        existed: already,
         detail: already ? "уже существует" : undefined,
       });
     } else {
