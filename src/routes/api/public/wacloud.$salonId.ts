@@ -947,7 +947,6 @@ export function safeStringEquals(a: string, b: string): boolean {
   return diff === 0;
 }
 
-
 /**
  * Обработка полезной нагрузки Cloud API для одного салона.
  *
@@ -995,16 +994,15 @@ export async function processWaCloudPayload(opts: {
 
   if (!salon) return ack();
 
-  // The salon has not been switched over yet. Its Green-API route is still the authoritative
-  // one, and answering here as well would give the client two replies from two engines. Meta
-  // may legitimately be calling because the owner pasted the URL early while testing, so this
-  // is recorded rather than silently dropped.
-  if ((salon as any).wa_provider !== "cloud") {
-    await record(
-      "Webhook Cloud API получен, но салон ещё на Green-API (wa_provider = green_api). Сообщение не обработано.",
-    );
-    return ack();
-  }
+  // Здесь стояла отбраковка по salons.wa_provider: пока существовал Green-API, ответ сразу из
+  // двух движков присылал бы клиенту два сообщения. Транспорт удалён — второго движка больше
+  // нет, а колонку никто не мигрировал, и она осталась в 'green_api' у ВСЕХ салонов. То есть
+  // проверка перестала защищать и стала ронять каждое входящее сообщение в тишину: салон
+  // подключён, Meta доставляет, в переписке пусто.
+  //
+  // Салон здесь уже опознан по whatsapp_cloud_phone_number_id из salon_secrets — то есть у него
+  // заведены реквизиты Cloud API. Другого способа сюда попасть нет, и отдельное подтверждение
+  // «а точно ли он на Cloud» ничего не добавляет.
 
   let payload: any;
   try {
@@ -1079,9 +1077,7 @@ export async function processWaCloudPayload(opts: {
   const runtime = resolveAssistantRuntimeConfig(salon, assistant, secrets);
   if (!runtime.assistantEnabled) return ack();
   if (!creds.phoneNumberId || !creds.token) {
-    await record(
-      "Ассистент не может ответить: не заданы Phone Number ID или токен Cloud API",
-    );
+    await record("Ассистент не может ответить: не заданы Phone Number ID или токен Cloud API");
     return ack();
   }
 
