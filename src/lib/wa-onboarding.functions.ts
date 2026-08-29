@@ -196,3 +196,40 @@ export const createWaTemplates = createServerFn({ method: "POST" })
 
     return { ok: true, steps, templatesReady: allOk };
   });
+
+/**
+ * Подписывает наше приложение на события WABA уже подключённого салона.
+ *
+ * Один из шагов `finishWaOnboarding`, вынесенный наружу по той же причине, что и создание
+ * шаблонов: салон, подключённый вручную, этот шаг пропускает целиком. Симптом при этом самый
+ * неприятный из возможных — тишина. Сообщения клиентов уходят в Meta и до нас не доезжают,
+ * в логах ни строчки, а салон выглядит подключённым.
+ *
+ * Повторный вызов безопасен: Meta возвращает успех на уже оформленную подписку.
+ */
+export const subscribeWaWebhooks = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => z.object({ salonId: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    await assertSalonAccess(context.supabase, context.userId, data.salonId);
+
+    const { subscribeAppToWaba } = await import("@/lib/wa-onboarding.server");
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+    const { data: row, error } = await supabaseAdmin
+      .from("salon_secrets")
+      .select("whatsapp_cloud_waba_id, whatsapp_cloud_token")
+      .eq("salon_id", data.salonId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+
+    const wabaId = (row as any)?.whatsapp_cloud_waba_id ?? "";
+    const token = (row as any)?.whatsapp_cloud_token ?? "";
+    if (!wabaId || !token) {
+      throw new Error("Сначала сохраните ID аккаунта WhatsApp и токен — подписывать нечего.");
+    }
+
+    const step = await subscribeAppToWaba(wabaId, token);
+    if (!step.ok) throw new Error(step.detail ?? "Meta отказала в подписке");
+    return { ok: true };
+  });

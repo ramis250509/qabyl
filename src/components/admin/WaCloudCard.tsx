@@ -21,7 +21,11 @@ import {
   testWaCloudConnection,
   upsertWaCloudConfig,
 } from "@/lib/wa-cloud.functions";
-import { createWaTemplates, finishWaOnboarding } from "@/lib/wa-onboarding.functions";
+import {
+  createWaTemplates,
+  finishWaOnboarding,
+  subscribeWaWebhooks,
+} from "@/lib/wa-onboarding.functions";
 import { WaConnectButton } from "@/components/admin/WaConnectButton";
 
 type Diagnostics = Awaited<ReturnType<typeof getWaCloudDiagnostics>>;
@@ -109,6 +113,7 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
   const loadDiagnostics = useServerFn(getWaCloudDiagnostics);
   const onboard = useServerFn(finishWaOnboarding);
   const makeTemplates = useServerFn(createWaTemplates);
+  const subscribeWebhooks = useServerFn(subscribeWaWebhooks);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -296,6 +301,27 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
     }
   }
 
+  // Ручное сохранение = сохранить И подписать на вебхуки. Разделять их нельзя: салон без
+  // подписки выглядит подключённым и молча не получает сообщений, а владелец про существование
+  // такого шага не знает и искать его не станет. Кнопка подключения делает оба шага заодно —
+  // ручной путь не должен отличаться.
+  async function onSaveManual() {
+    await onSave();
+    try {
+      await subscribeWebhooks({ data: { salonId } });
+      toast.success("Реквизиты сохранены, приложение подписано на входящие сообщения");
+    } catch (e: any) {
+      // Реквизиты уже легли в базу, поэтому это предупреждение, а не ошибка: чинить надо
+      // подписку, а не повторять сохранение.
+      toast.warning(
+        `Реквизиты сохранены, но подписка не оформилась: ${e?.message ?? "Meta отказала"}`,
+        {
+          duration: 12000,
+        },
+      );
+    }
+  }
+
   function setTemplate(kind: string, patch: { name?: string; lang?: string }) {
     setTemplates((t) => ({ ...t, [kind]: { ...(t[kind] ?? {}), ...patch } }));
   }
@@ -425,9 +451,13 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
                 Qabyl оставьте пустым — подпись вебхука проверяется общим секретом платформы.
               </p>
             </div>
-            <Button onClick={onSave} disabled={saving}>
-              {saving ? "Сохранение…" : "Сохранить реквизиты"}
+            <Button onClick={onSaveManual} disabled={saving}>
+              {saving ? "Сохранение…" : "Сохранить и подписать на вебхуки"}
             </Button>
+            <p className="text-xs text-muted-foreground">
+              Сохранение заодно подписывает приложение на входящие сообщения этого аккаунта. Без
+              подписки салон выглядит подключённым, но сообщения клиентов до нас не доходят.
+            </p>
           </div>
         )}
       </Card>
