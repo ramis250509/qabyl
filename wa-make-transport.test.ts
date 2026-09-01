@@ -8,7 +8,7 @@
 // Run: bun test wa-make-transport.test.ts
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { makeTransport, cloudTransport } from "./src/lib/wa-transport.server";
+import { cloudTransport, makeBufferTransport, makeTransport } from "./src/lib/wa-transport.server";
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -147,6 +147,74 @@ describe("makeTransport — медиа", () => {
       media: new Map([["big", { bytes: new Uint8Array(2048), mime: "image/jpeg" }]]),
     });
     expect(await tx.fetchMedia("big", 1024)).toBeNull();
+  });
+});
+
+describe("makeBufferTransport — экономия кредитов", () => {
+  test("ничего не отправляет наружу, а копит для ответа тем же запросом", async () => {
+    const calls = captureFetch();
+    const tx = makeBufferTransport();
+
+    await tx.sendText("996700000001", "Привет!");
+
+    // Ни одного исходящего запроса: за него пришлось бы платить вторым сценарием Make.
+    expect(calls).toHaveLength(0);
+    expect(tx.outbox).toEqual([{ type: "text", to: "996700000001", text: "Привет!" }]);
+  });
+
+  test("две подряд реплики одному клиенту склеиваются в одну отправку", async () => {
+    const tx = makeBufferTransport();
+
+    await tx.sendText("996700000001", "Свободно завтра в 14:00.");
+    await tx.sendText("996700000001", "Записать вас?");
+
+    expect(tx.outbox).toHaveLength(1);
+    expect(tx.outbox[0].type).toBe("text");
+    if (tx.outbox[0].type === "text") {
+      expect(tx.outbox[0].text).toBe("Свободно завтра в 14:00.\n\nЗаписать вас?");
+    }
+  });
+
+  test("картинка прерывает склейку — у неё своё тело", async () => {
+    const tx = makeBufferTransport();
+
+    await tx.sendText("996700000001", "Держите QR для оплаты.");
+    await tx.sendImage("996700000001", "https://cdn/qr.png", "500 сом");
+    await tx.sendText("996700000001", "Ждём подтверждение.");
+
+    expect(tx.outbox.map((m) => m.type)).toEqual(["text", "image", "text"]);
+  });
+
+  test("разным получателям не склеивается — иначе чужая переписка уйдёт не туда", async () => {
+    const tx = makeBufferTransport();
+
+    await tx.sendText("996700000001", "Первому");
+    await tx.sendText("996700000002", "Второму");
+
+    expect(tx.outbox).toHaveLength(2);
+    expect(tx.outbox[1].to).toBe("996700000002");
+  });
+
+  test("слишком длинная склейка разрывается по лимиту WhatsApp", async () => {
+    const tx = makeBufferTransport();
+
+    await tx.sendText("996700000001", "а".repeat(3000));
+    await tx.sendText("996700000001", "б".repeat(3000));
+
+    expect(tx.outbox).toHaveLength(2);
+    for (const m of tx.outbox) {
+      if (m.type === "text") expect(m.text.length).toBeLessThanOrEqual(3900);
+    }
+  });
+
+  test("буфер готов всегда — реквизиты для записи в массив не нужны", () => {
+    expect(makeBufferTransport().ready).toBe(true);
+  });
+
+  test("медиа берётся из приложенного Make", async () => {
+    const bytes = new Uint8Array([9, 9]);
+    const tx = makeBufferTransport(new Map([["i", { bytes, mime: "image/png" }]]));
+    expect((await tx.fetchMedia("i", 100))?.mime).toBe("image/png");
   });
 });
 

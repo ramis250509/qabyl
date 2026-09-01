@@ -15,6 +15,7 @@
 // Когда придёт Advanced Access, Make-транспорт удаляется одним файлом, и маршрут этого не
 // заметит.
 import {
+  WA_TEXT_LIMIT,
   splitForWhatsApp,
   toWaCloudRecipient,
   waCloudFetchMedia,
@@ -80,14 +81,96 @@ export type MakeTransportConfig = {
   media?: Map<string, WaMedia>;
 };
 
+/** Одно исходящее сообщение в том виде, в каком его заберёт сценарий Make. */
+export type MakeOutboundMessage =
+  | { type: "text"; to: string; text: string }
+  | { type: "image"; to: string; url: string; caption?: string };
+
+export type MakeBufferTransport = WaTransport & {
+  /** Что накопилось за этот запрос — уходит телом ответа тому же сценарию Make. */
+  readonly outbox: MakeOutboundMessage[];
+};
+
 /**
- * Транспорт поверх Make.
+ * Транспорт, который НЕ отправляет, а копит — и отдаёт всё ответом на тот же HTTP-запрос.
  *
- * Отправка — это POST в custom webhook сценария, который на той стороне вызывает модуль
- * WhatsApp Business Cloud. Ответ Make приходит раньше, чем сообщение реально уходит, поэтому
- * `messageId` мы не получаем. Последствие honest: у салонов на мосту не работает сверка
- * статусов доставки — она сшивается по `confirmation_message_id`, которого здесь нет. Ради
- * временной схемы это дешевле, чем второй обмен ради одного идентификатора.
+ * Это главная экономия моста. Отправка через отдельный сценарий Make стоит два кредита на
+ * сообщение: срабатывание custom webhook плюс сам модуль отправки. Если вернуть ответы телом
+ * того запроса, которым Make принёс входящее, второй сценарий не нужен вовсе — остаётся один
+ * модуль отправки. На диалоге это примерно треть счёта.
+ *
+ * Побочно склеиваем подряд идущие текстовые сообщения одному получателю, пока влезаем в лимит
+ * WhatsApp: два кредита за две реплики, которые клиент всё равно читает подряд, — плохая сделка.
+ * Картинка склейку прерывает: у неё своё тело и своя подпись.
+ */
+export function makeBufferTransport(media?: Map<string, WaMedia>): MakeBufferTransport {
+  const outbox: MakeOutboundMessage[] = [];
+
+  return {
+    kind: "make",
+    // Буфер готов всегда: чтобы положить сообщение в массив, реквизиты не нужны. Проверка
+    // реквизитов живёт на исходящем транспорте, где она действительно что-то значит.
+    ready: true,
+    missing: "",
+    outbox,
+
+    async sendText(toPhone, text) {
+      const to = toWaCloudRecipient(toPhone);
+      if (!to) return { ok: false, error: "empty recipient" };
+      const chunks = splitForWhatsApp(text);
+      if (chunks.length === 0) return { ok: false, error: "empty text" };
+
+      for (const chunk of chunks) {
+        const last = outbox[outbox.length - 1];
+        if (
+          last &&
+          last.type === "text" &&
+          last.to === to &&
+          last.text.length + chunk.length + 2 <= WA_TEXT_LIMIT
+        ) {
+          last.text = `${last.text}\n\n${chunk}`;
+        } else {
+          outbox.push({ type: "text", to, text: chunk });
+        }
+      }
+      return { ok: true };
+    },
+
+    async sendImage(toPhone, imageUrl, caption) {
+      const to = toWaCloudRecipient(toPhone);
+      if (!to) return { ok: false, error: "empty recipient" };
+      outbox.push({
+        type: "image",
+        to,
+        url: imageUrl,
+        ...(caption?.trim() ? { caption: caption.trim() } : {}),
+      });
+      return { ok: true };
+    },
+
+    async markReadAndTyping() {
+      /* недоступно через Make */
+    },
+
+    async fetchMedia(ref, maxBytes) {
+      const hit = media?.get(ref);
+      if (!hit) return null;
+      if (hit.bytes.byteLength > maxBytes) return null;
+      return hit;
+    },
+  };
+}
+
+/**
+ * Транспорт поверх Make для отправки ВНЕ входящего запроса.
+ *
+ * Нужен там, где отвечать некуда: администратор пишет из панели, уходит напоминание за два часа,
+ * срабатывает догонялка. Здесь без второго сценария Make не обойтись, и эти два кредита мы
+ * платим — но таких сообщений единицы против потока входящих.
+ *
+ * `messageId` не возвращается: Make отвечает раньше, чем Meta сообщает результат. Последствие
+ * честное — у салонов на мосту не работает сверка статусов доставки, она сшивается по
+ * `confirmation_message_id`, которого здесь нет.
  */
 export function makeTransport(cfg: MakeTransportConfig): WaTransport {
   const missing = [cfg.outboundUrl ? null : "адрес вебхука Make", cfg.token ? null : "токен моста"]

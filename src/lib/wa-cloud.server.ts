@@ -47,7 +47,7 @@ function waGraphBase(): string {
 // WhatsApp rejects a text body over 4096 characters. The assistant is prompted to answer short,
 // but a price list can still run over, and a hard rejection means the client gets NOTHING — worse
 // than two bubbles. Chunked below the limit to leave headroom.
-const WA_TEXT_LIMIT = 3900;
+export const WA_TEXT_LIMIT = 3900;
 
 export type WaCloudCreds = {
   /** Phone number id from the Meta dashboard — NOT the phone number itself. Sends go to this id. */

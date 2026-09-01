@@ -18,7 +18,7 @@
 // колонки wa_make_* очищаются, и файл удаляется целиком. Ничего в облачном пути трогать не надо.
 import { createFileRoute } from "@tanstack/react-router";
 import { processWaCloudPayload, safeStringEquals } from "@/routes/api/public/wacloud.$salonId";
-import { makeTransport, type WaMedia } from "@/lib/wa-transport.server";
+import { makeBufferTransport, type WaMedia } from "@/lib/wa-transport.server";
 
 /** Больше — и мы держим в памяти воркера чужую картинку без пользы. */
 const MAX_INLINE_MEDIA_BYTES = 16 * 1024 * 1024;
@@ -215,18 +215,28 @@ export const Route = createFileRoute("/api/public/wamake/$salonId")({
           return ack();
         }
 
-        return await processWaCloudPayload({
+        // Копим ответы вместо отправки и отдаём их телом этого же запроса. Отдельный сценарий
+        // Make на отправку стоил бы два кредита за сообщение — срабатывание вебхука плюс модуль
+        // отправки; здесь остаётся один модуль. На потоке входящих это около трети счёта.
+        const tx = makeBufferTransport(media);
+
+        const res = await processWaCloudPayload({
           salonId,
           rawBody: JSON.stringify(payload),
           secrets,
           salon,
           assistant,
           rid,
-          transport: makeTransport({
-            outboundUrl: s.wa_make_outbound_url ?? "",
-            token: s.wa_make_token ?? "",
-            media,
-          }),
+          transport: tx,
+        });
+
+        // Не-200 пропускаем как есть: для Make это сигнал повторить, и подменять его списком
+        // сообщений нельзя.
+        if (res.status !== 200) return res;
+
+        return new Response(JSON.stringify({ messages: tx.outbox }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
         });
       },
     },
