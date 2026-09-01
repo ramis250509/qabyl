@@ -600,9 +600,44 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
 
         {showMake && (
           <div className="space-y-4 border-t pt-4">
+            {/* Карточка объясняла, что вставить, но не с чего начать. Владелец салона Make в
+                глаза не видел, и без этого блока экран читается как инструкция к тому, чего у
+                него ещё нет. */}
+            <div className="rounded-md border p-3 space-y-1.5">
+              <div className="text-xs font-medium">Если Make ещё не заведён — сначала это</div>
+              <ol className="text-xs text-muted-foreground space-y-1 list-decimal pl-4">
+                <li>
+                  Зарегистрируйтесь на{" "}
+                  <a
+                    className="underline inline-flex items-center gap-1"
+                    href="https://www.make.com/en/register"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    make.com
+                    <ExternalLink className="h-3 w-3" />
+                  </a>{" "}
+                  — карта не нужна, бесплатного тарифа хватит, чтобы всё собрать и проверить.
+                </li>
+                <li>
+                  Создайте сценарий: <b>Create a new scenario</b> → в поиске модулей наберите{" "}
+                  <b>WhatsApp Business Cloud</b> → возьмите триггер <b>Watch Events</b>.
+                </li>
+                <li>
+                  Он попросит подключение: <b>Create a webhook</b> → <b>Create a connection</b>. В
+                  поле типа выберите <b>WhatsApp Business Cloud</b> (не legacy).
+                </li>
+                <li>
+                  В поле режима — <b>Coexistence</b>, а не Regular. Только он сохраняет WhatsApp
+                  Business на телефоне владелицы. Дальше: имя подключения → бизнес-портфолио салона
+                  → выбрать существующий аккаунт WhatsApp → Next, Confirm, Finish.
+                </li>
+              </ol>
+            </div>
+
             <div className="rounded-md border border-emerald-200 bg-emerald-50/60 p-3 space-y-1.5">
               <div className="text-xs font-medium text-emerald-900">
-                Собирайте сценарий именно так — иначе счёт вырастет втрое
+                Дальше собирайте сценарий именно так — иначе счёт вырастет втрое
               </div>
               <ol className="text-xs text-emerald-900/90 space-y-1 list-decimal pl-4">
                 <li>
@@ -652,8 +687,17 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
               </p>
             </div>
 
-            <Button onClick={onSaveMake} disabled={savingMake}>
-              {savingMake ? "Сохранение…" : makeOutboundUrl ? "Включить мост" : "Выключить мост"}
+            {/* Пустое поле у невключённого моста — это «ещё ничего не настроено», а не «выключить».
+                Подпись «Выключить мост» в этом состоянии читалась как «мост работает», хотя он
+                никогда и не включался. */}
+            <Button onClick={onSaveMake} disabled={savingMake || (!makeOutboundUrl && !makeActive)}>
+              {savingMake
+                ? "Сохранение…"
+                : makeOutboundUrl
+                  ? makeActive
+                    ? "Сохранить адрес"
+                    : "Включить мост"
+                  : "Выключить мост"}
             </Button>
 
             <p className="text-xs text-amber-700">
