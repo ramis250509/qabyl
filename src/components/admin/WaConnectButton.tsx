@@ -114,7 +114,16 @@ export function WaConnectButton({
           // бесполезен.
           response_type: "code",
           override_default_response_type: true,
-          extras: { setup: {}, featureType: "", sessionInfoVersion: "3" },
+          // featureType решает судьбу номера салона. Пустая строка — обычный флоу: номер
+          // уезжает в Cloud API, а аккаунт в приложении WhatsApp Business удаляется, и владелец
+          // теряет возможность отвечать с телефона. `whatsapp_business_app_onboarding` открывает
+          // coexistence: приложение и API живут на одном номере. Значение `coexistence` Meta
+          // больше не принимает.
+          extras: {
+            setup: {},
+            featureType: "whatsapp_business_app_onboarding",
+            sessionInfoVersion: "3",
+          },
         });
       });
 
