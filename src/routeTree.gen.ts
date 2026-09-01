@@ -31,6 +31,7 @@ import { Route as PreviewSalonSalonIdRouteImport } from './routes/preview.salon.
 import { Route as ApiPublicWacloudRouteImport } from './routes/api/public/wacloud'
 import { Route as ApiInternalTelegramRouteImport } from './routes/api/internal/telegram'
 import { Route as AdminSalonsSalonIdRouteImport } from './routes/admin/salons/$salonId'
+import { Route as ApiPublicWamakeSalonIdRouteImport } from './routes/api/public/wamake.$salonId'
 import { Route as ApiPublicWacloudSalonIdRouteImport } from './routes/api/public/wacloud.$salonId'
 import { Route as ApiPublicIgSalonIdRouteImport } from './routes/api/public/ig.$salonId'
 import { Route as ApiInternalCronJobRouteImport } from './routes/api/internal/cron.$job'
@@ -145,6 +146,11 @@ const AdminSalonsSalonIdRoute = AdminSalonsSalonIdRouteImport.update({
   path: '/salons/$salonId',
   getParentRoute: () => AdminRoute,
 } as any)
+const ApiPublicWamakeSalonIdRoute = ApiPublicWamakeSalonIdRouteImport.update({
+  id: '/api/public/wamake/$salonId',
+  path: '/api/public/wamake/$salonId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicWacloudSalonIdRoute = ApiPublicWacloudSalonIdRouteImport.update({
   id: '/$salonId',
   path: '/$salonId',
@@ -187,6 +193,7 @@ export interface FileRoutesByFullPath {
   '/api/internal/cron/$job': typeof ApiInternalCronJobRoute
   '/api/public/ig/$salonId': typeof ApiPublicIgSalonIdRoute
   '/api/public/wacloud/$salonId': typeof ApiPublicWacloudSalonIdRoute
+  '/api/public/wamake/$salonId': typeof ApiPublicWamakeSalonIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -213,6 +220,7 @@ export interface FileRoutesByTo {
   '/api/internal/cron/$job': typeof ApiInternalCronJobRoute
   '/api/public/ig/$salonId': typeof ApiPublicIgSalonIdRoute
   '/api/public/wacloud/$salonId': typeof ApiPublicWacloudSalonIdRoute
+  '/api/public/wamake/$salonId': typeof ApiPublicWamakeSalonIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -241,6 +249,7 @@ export interface FileRoutesById {
   '/api/internal/cron/$job': typeof ApiInternalCronJobRoute
   '/api/public/ig/$salonId': typeof ApiPublicIgSalonIdRoute
   '/api/public/wacloud/$salonId': typeof ApiPublicWacloudSalonIdRoute
+  '/api/public/wamake/$salonId': typeof ApiPublicWamakeSalonIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -270,6 +279,7 @@ export interface FileRouteTypes {
     | '/api/internal/cron/$job'
     | '/api/public/ig/$salonId'
     | '/api/public/wacloud/$salonId'
+    | '/api/public/wamake/$salonId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -296,6 +306,7 @@ export interface FileRouteTypes {
     | '/api/internal/cron/$job'
     | '/api/public/ig/$salonId'
     | '/api/public/wacloud/$salonId'
+    | '/api/public/wamake/$salonId'
   id:
     | '__root__'
     | '/'
@@ -323,6 +334,7 @@ export interface FileRouteTypes {
     | '/api/internal/cron/$job'
     | '/api/public/ig/$salonId'
     | '/api/public/wacloud/$salonId'
+    | '/api/public/wamake/$salonId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -341,6 +353,7 @@ export interface RootRouteChildren {
   PreviewSalonSalonIdRoute: typeof PreviewSalonSalonIdRoute
   ApiInternalCronJobRoute: typeof ApiInternalCronJobRoute
   ApiPublicIgSalonIdRoute: typeof ApiPublicIgSalonIdRoute
+  ApiPublicWamakeSalonIdRoute: typeof ApiPublicWamakeSalonIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -499,6 +512,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminSalonsSalonIdRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/api/public/wamake/$salonId': {
+      id: '/api/public/wamake/$salonId'
+      path: '/api/public/wamake/$salonId'
+      fullPath: '/api/public/wamake/$salonId'
+      preLoaderRoute: typeof ApiPublicWamakeSalonIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/wacloud/$salonId': {
       id: '/api/public/wacloud/$salonId'
       path: '/$salonId'
@@ -576,6 +596,7 @@ const rootRouteChildren: RootRouteChildren = {
   PreviewSalonSalonIdRoute: PreviewSalonSalonIdRoute,
   ApiInternalCronJobRoute: ApiInternalCronJobRoute,
   ApiPublicIgSalonIdRoute: ApiPublicIgSalonIdRoute,
+  ApiPublicWamakeSalonIdRoute: ApiPublicWamakeSalonIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -28,14 +28,10 @@ import {
   mapWaCloudDeliveryStatus,
   parseWaCloudEchoes,
   parseWaCloudWebhook,
-  waCloudFetchMedia,
-  waCloudMarkReadAndTyping,
-  waCloudSendImage,
-  waCloudSendMessage,
   waCloudVerifySignature,
-  type WaCloudCreds,
   type WaCloudInboundEvent,
 } from "@/lib/wa-cloud.server";
+import { cloudTransport, type WaTransport } from "@/lib/wa-transport.server";
 import {
   acquireConversationLock,
   LOCK_HEARTBEAT_MS,
@@ -283,12 +279,12 @@ async function ingestEvent(opts: {
   db: any;
   salonId: string;
   ev: WaCloudInboundEvent;
-  creds: WaCloudCreds;
+  tx: WaTransport;
   salon: any;
   assistant: any;
   errLog: (m: string, ...r: unknown[]) => void;
 }): Promise<string | null> {
-  const { db, salonId, ev, creds, errLog } = opts;
+  const { db, salonId, ev, tx, errLog } = opts;
   const phone = normalizeChatIdToPhone(ev.fromPhone);
   const nowIso = new Date().toISOString();
 
@@ -386,13 +382,13 @@ async function ingestEvent(opts: {
 
   // Blue ticks + «печатает…». Fired here, before the slow part of the turn, because that latency is
   // exactly what this fills. Not awaited — a cosmetic call must never delay the reply it announces.
-  if (ev.wamid) void waCloudMarkReadAndTyping(creds, ev.wamid);
+  if (ev.wamid) void tx.markReadAndTyping(ev.wamid);
 
   // ---- Media. The webhook carries an id, so the bytes come from Graph and are copied straight into
   // our own private bucket.
   let mediaPath: string | null = null;
   if (ev.imageMediaId) {
-    const media = await waCloudFetchMedia(creds, ev.imageMediaId, MAX_MEDIA_BYTES);
+    const media = await tx.fetchMedia(ev.imageMediaId, MAX_MEDIA_BYTES);
     if (media && !looksLikeHtml(media.bytes, media.mime)) {
       const ext = (media.mime.split("/")[1] || "jpg").replace(/[^a-z0-9]/gi, "") || "jpg";
       const path = `${salonId}/${convId}/${Date.now()}.${ext}`;
@@ -419,8 +415,7 @@ async function ingestEvent(opts: {
         processed_at: new Date().toISOString(),
         meta: { image_download_failed: true },
       });
-      await waCloudSendMessage(
-        creds,
+      await tx.sendText(
         phone,
         "Не получилось загрузить изображение 🙏 Пришлите, пожалуйста, ещё раз — обычным фото из галереи.",
       );
@@ -432,7 +427,7 @@ async function ingestEvent(opts: {
   // behaves like any other message from here on (history, agent, admin panel).
   let textBody = ev.text;
   if (!textBody && ev.audioMediaId) {
-    const audio = await waCloudFetchMedia(creds, ev.audioMediaId, MAX_AUDIO_BYTES);
+    const audio = await tx.fetchMedia(ev.audioMediaId, MAX_AUDIO_BYTES);
     // WhatsApp voice notes are OGG/Opus. Gemini rejects a mime type it does not recognise, and the
     // transcription then fails for a reason that has nothing to do with the recording.
     const audioMime =
@@ -463,8 +458,7 @@ async function ingestEvent(opts: {
         processed_at: new Date().toISOString(),
         meta: { voice: true, transcription_failed: true },
       });
-      await waCloudSendMessage(
-        creds,
+      await tx.sendText(
         phone,
         "Извините, не получилось разобрать голосовое сообщение 🙏 Напишите, пожалуйста, текстом.",
       );
@@ -516,7 +510,7 @@ async function runAgentTurn(opts: {
   db: any;
   salonId: string;
   convId: string;
-  creds: WaCloudCreds;
+  tx: WaTransport;
   salon: any;
   assistant: any;
   assistantConfig: any;
@@ -530,7 +524,7 @@ async function runAgentTurn(opts: {
     db,
     salonId,
     convId,
-    creds,
+    tx,
     salon,
     assistant,
     assistantConfig,
@@ -714,7 +708,7 @@ async function runAgentTurn(opts: {
           context: { convId, clientPhone },
         });
         const reply = "Извините, не получилось обработать запрос. Попробуйте, пожалуйста, ещё раз.";
-        const sent = await waCloudSendMessage(creds, clientPhone, reply);
+        const sent = await tx.sendText(clientPhone, reply);
         await db.from("wa_messages").insert({
           conversation_id: convId,
           salon_id: salonId,
@@ -763,7 +757,7 @@ async function runAgentTurn(opts: {
       let sentMessageId: string | undefined;
       const tAgentDone = ms();
       if (!isDuplicateReply) {
-        const res = await waCloudSendMessage(creds, clientPhone, sentText);
+        const res = await tx.sendText(clientPhone, sentText);
         if (!res.ok) {
           // THE failure that matters: the assistant did its work and Meta refused to deliver it.
           // Meta's own code is carried through verbatim because the fix differs completely per code
@@ -797,8 +791,7 @@ async function runAgentTurn(opts: {
       // image lands. Unlike Instagram, WhatsApp carries the caption on the image itself, so this is
       // one bubble rather than two. Best-effort — the text already carries the requisites.
       if (result.sendMedia?.url) {
-        const qrRes = await waCloudSendImage(
-          creds,
+        const qrRes = await tx.sendImage(
           clientPhone,
           result.sendMedia.url,
           result.sendMedia.caption,
@@ -823,7 +816,7 @@ async function runAgentTurn(opts: {
         const recentlyAlerted =
           lastEscalatedAt && Date.now() - new Date(lastEscalatedAt).getTime() < 4 * 60 * 60 * 1000;
         if (!recentlyAlerted) {
-          await notifyOwner({ db, salonId, secrets, creds, text: result.notifyAdminText });
+          await notifyOwner({ db, salonId, secrets, tx, text: result.notifyAdminText });
           (result.nextStateData as any) = {
             ...(result.nextStateData ?? {}),
             last_escalated_at: new Date().toISOString(),
@@ -888,10 +881,10 @@ async function notifyOwner(opts: {
   db: any;
   salonId: string;
   secrets: any;
-  creds: WaCloudCreds;
+  tx: WaTransport;
   text: string;
 }): Promise<void> {
-  const { db, salonId, secrets, creds, text } = opts;
+  const { db, salonId, secrets, tx, text } = opts;
   const persistFallback = async (why: string) => {
     try {
       await db.from("notifications").insert({
@@ -913,7 +906,7 @@ async function notifyOwner(opts: {
     return;
   }
 
-  const res = await waCloudSendMessage(creds, ownerPhone, text);
+  const res = await tx.sendText(ownerPhone, text);
   if (res.ok) return;
 
   // While the salon still has a working Green-API instance (the hybrid period — see
@@ -970,6 +963,11 @@ export async function processWaCloudPayload(opts: {
   assistant: any;
   /** Короткий идентификатор запроса — сшивает строки логов одного вебхука. */
   rid: string;
+  /**
+   * Чем отвечать клиенту. По умолчанию — Cloud API на реквизитах салона; маршрут моста
+   * подставляет сюда Make. Пайплайн ниже про это не знает и знать не должен.
+   */
+  transport?: WaTransport;
 }): Promise<Response> {
   const { salonId, rawBody, secrets, salon, assistant, rid } = opts;
   const log = (msg: string, ...more: unknown[]) => console.log(`[wacloud ${rid}] ${msg}`, ...more);
@@ -1012,10 +1010,12 @@ export async function processWaCloudPayload(opts: {
   }
   if (payload?.object && payload.object !== "whatsapp_business_account") return ack();
 
-  const creds: WaCloudCreds = {
-    phoneNumberId: s.whatsapp_cloud_phone_number_id ?? "",
-    token: s.whatsapp_cloud_token ?? "",
-  };
+  const tx =
+    opts.transport ??
+    cloudTransport({
+      phoneNumberId: s.whatsapp_cloud_phone_number_id ?? "",
+      token: s.whatsapp_cloud_token ?? "",
+    });
 
   const { events, statuses } = parseWaCloudWebhook(payload);
   // Echoes ride the SAME URL under a different field, so both parsers run over every payload
@@ -1066,7 +1066,7 @@ export async function processWaCloudPayload(opts: {
       db: supabaseAdmin,
       salonId,
       ev,
-      creds,
+      tx,
       salon,
       assistant,
       errLog,
@@ -1076,8 +1076,8 @@ export async function processWaCloudPayload(opts: {
 
   const runtime = resolveAssistantRuntimeConfig(salon, assistant, secrets);
   if (!runtime.assistantEnabled) return ack();
-  if (!creds.phoneNumberId || !creds.token) {
-    await record("Ассистент не может ответить: не заданы Phone Number ID или токен Cloud API");
+  if (!tx.ready) {
+    await record(`Ассистент не может ответить: не заполнено — ${tx.missing}`);
     return ack();
   }
 
@@ -1086,7 +1086,7 @@ export async function processWaCloudPayload(opts: {
       db: supabaseAdmin,
       salonId,
       convId,
-      creds,
+      tx,
       salon,
       assistant,
       assistantConfig: runtime.assistantConfig,

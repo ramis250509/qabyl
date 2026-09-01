@@ -13,13 +13,21 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { AlertCircle, RefreshCw, ShieldCheck } from "lucide-react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  Copy,
+  ExternalLink,
+  RefreshCw,
+  ShieldCheck,
+} from "lucide-react";
 import {
   getWaCloudConfig,
   getWaCloudDiagnostics,
   setWaCloudTemplatesReady,
   testWaCloudConnection,
   upsertWaCloudConfig,
+  upsertWaMakeConfig,
 } from "@/lib/wa-cloud.functions";
 import {
   createWaTemplates,
@@ -30,6 +38,41 @@ import { WaConnectButton } from "@/components/admin/WaConnectButton";
 
 type Diagnostics = Awaited<ReturnType<typeof getWaCloudDiagnostics>>;
 type TemplateMap = Record<string, { name?: string; lang?: string } | undefined>;
+
+/** Значение, которое владелец должен перенести в чужой интерфейс, — только читать и копировать. */
+function CopyRow({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast.error("Не удалось скопировать — выделите и скопируйте вручную");
+    }
+  }
+  return (
+    <div>
+      <Label className="text-sm">{label}</Label>
+      <div className="flex gap-2 mt-1">
+        <Input
+          readOnly
+          value={value}
+          className="font-mono text-xs"
+          onFocus={(e) => e.currentTarget.select()}
+        />
+        <Button type="button" variant="outline" size="icon" onClick={copy} title="Скопировать">
+          {copied ? (
+            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+          ) : (
+            <Copy className="h-4 w-4" />
+          )}
+        </Button>
+      </div>
+      {hint && <p className="text-xs text-muted-foreground mt-1">{hint}</p>}
+    </div>
+  );
+}
 
 const KIND_LABELS: Record<string, string> = {
   confirmation: "Подтверждение записи",
@@ -114,6 +157,7 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
   const onboard = useServerFn(finishWaOnboarding);
   const makeTemplates = useServerFn(createWaTemplates);
   const subscribeWebhooks = useServerFn(subscribeWaWebhooks);
+  const saveMake = useServerFn(upsertWaMakeConfig);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -138,6 +182,14 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
   const [kinds, setKinds] = useState<string[]>([]);
   const [diag, setDiag] = useState<Diagnostics | null>(null);
 
+  // Мост Make. Временный транспорт на время ожидания Advanced Access — см. wa-transport.server.ts.
+  const [makeToken, setMakeToken] = useState("");
+  const [makeInboundUrl, setMakeInboundUrl] = useState("");
+  const [makeOutboundUrl, setMakeOutboundUrl] = useState("");
+  const [makeActive, setMakeActive] = useState(false);
+  const [savingMake, setSavingMake] = useState(false);
+  const [showMake, setShowMake] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -151,6 +203,12 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
         setTemplates(cfg.templates ?? {});
         setTemplatesReadyState(cfg.templates_ready);
         setKinds(cfg.template_kinds ?? []);
+        setMakeToken(cfg.make_token);
+        setMakeInboundUrl(cfg.make_inbound_url);
+        setMakeOutboundUrl(cfg.make_outbound_url);
+        setMakeActive(cfg.make_active);
+        // Раскрываем сразу, если мост уже включён: иначе владелец не найдёт, где его выключить.
+        setShowMake(cfg.make_active);
       } catch (e: any) {
         if (!cancelled) toast.error(e?.message ?? "Не удалось загрузить настройки Cloud API");
       } finally {
@@ -236,6 +294,7 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
       setWabaId(cfg.waba_id);
       setTemplates(cfg.templates ?? {});
       setTemplatesReadyState(cfg.templates_ready);
+      setMakeActive(cfg.make_active);
     } catch (e: any) {
       toast.error(e?.message ?? "Не удалось завершить подключение");
     } finally {
@@ -322,6 +381,21 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
     }
   }
 
+  async function onSaveMake() {
+    setSavingMake(true);
+    try {
+      const res = await saveMake({ data: { salonId, outbound_url: makeOutboundUrl || null } });
+      setMakeActive(res.active);
+      toast.success(
+        res.active ? "Мост Make включён — входящие пойдут через него" : "Мост Make выключен",
+      );
+    } catch (e: any) {
+      toast.error(e?.message ?? "Не удалось сохранить настройки моста");
+    } finally {
+      setSavingMake(false);
+    }
+  }
+
   function setTemplate(kind: string, patch: { name?: string; lang?: string }) {
     setTemplates((t) => ({ ...t, [kind]: { ...(t[kind] ?? {}), ...patch } }));
   }
@@ -369,6 +443,12 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
             всё остальное — токен, подписка на вебхуки, пять шаблонов уведомлений — настраивается
             само. Приложение WhatsApp Business на телефоне при этом остаётся рабочим.
           </p>
+          {/* Кнопка показывает разрешения только после advanced access. До одобрения она открывает
+              окно, в котором нечего подтверждать, — честнее сказать это заранее. */}
+          <p className="text-xs text-amber-700 mt-1">
+            Кнопка заработает после того, как Meta одобрит платформу. Пока проверка идёт,
+            подключайте номер через «Подключить вручную» ниже.
+          </p>
         </div>
 
         {connected ? (
@@ -402,10 +482,38 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
 
         {showManual && (
           <div className="space-y-3 border-t pt-4">
+            {/* Пока платформа не получила advanced access, кнопка выше не работает для чужих
+                номеров — этот блок и есть рабочий путь, а не запасной. Ссылки даём прямые:
+                владелец салона не знает, где в кабинете Meta лежит API Setup. */}
             <p className="text-xs text-muted-foreground">
-              Запасной путь для случаев, когда кнопка выше не подходит: номер заведён через
-              отдельное приложение Meta или окно подключения недоступно. Значения берутся в панели
-              приложения Meta, раздел WhatsApp → API Setup.
+              Путь для номера, заведённого через собственное приложение Meta салона. Создайте
+              приложение на{" "}
+              <a
+                className="underline inline-flex items-center gap-1"
+                href="https://developers.facebook.com/apps/create/"
+                target="_blank"
+                rel="noreferrer"
+              >
+                developers.facebook.com/apps/create
+                <ExternalLink className="h-3 w-3" />
+              </a>{" "}
+              с продуктом <b>WhatsApp</b>, затем откройте раздел <b>WhatsApp → API Setup</b>: первые
+              два значения лежат прямо там, токен генерируется кнопкой «Generate access token».
+            </p>
+            <p className="text-xs text-amber-700">
+              Временный токен из API Setup живёт 24 часа. Для постоянной работы заведите системного
+              пользователя:{" "}
+              <a
+                className="underline inline-flex items-center gap-1"
+                href="https://business.facebook.com/settings/system-users"
+                target="_blank"
+                rel="noreferrer"
+              >
+                business.facebook.com → Системные пользователи
+                <ExternalLink className="h-3 w-3" />
+              </a>{" "}
+              → выдайте ему доступ к приложению и аккаунту WhatsApp → «Создать токен» с правами{" "}
+              <code>whatsapp_business_messaging</code> и <code>whatsapp_business_management</code>.
             </p>
             <div>
               <Label className="text-sm">ID номера (Phone Number ID)</Label>
@@ -457,6 +565,81 @@ export function WaCloudCard({ salonId }: { salonId: string }) {
             <p className="text-xs text-muted-foreground">
               Сохранение заодно подписывает приложение на входящие сообщения этого аккаунта. Без
               подписки салон выглядит подключённым, но сообщения клиентов до нас не доходят.
+            </p>
+          </div>
+        )}
+      </Card>
+
+      {/* ---- Мост Make. Временная схема на время ожидания Advanced Access: наше приложение со
+           Standard Access не имеет права трогать чужую WABA, а у Make своё одобренное. Свёрнут по
+           умолчанию — обычному салону это видеть незачем. */}
+      <Card className="p-6 space-y-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h3 className="font-semibold">
+              Временное подключение через Make
+              {makeActive && (
+                <span className="ml-2 text-xs font-normal text-emerald-700">включено</span>
+              )}
+            </h3>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              Обходной путь, пока Meta проверяет наше приложение. Сообщения идут через сервис Make,
+              а WhatsApp Business на телефоне владельца продолжает работать. После одобрения салон
+              переподключается кнопкой выше, а мост выключается очисткой одного поля.
+            </p>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowMake((v) => !v)}
+            className="text-muted-foreground shrink-0"
+          >
+            {showMake ? "Скрыть" : "Настроить"}
+          </Button>
+        </div>
+
+        {showMake && (
+          <div className="space-y-4 border-t pt-4">
+            <p className="text-xs text-muted-foreground">
+              В сценарии Make нужны две вещи. Первая — модуль <b>HTTP → Make a request</b> после
+              «Watch Events»: адрес и заголовок ниже, тело — данные входящего сообщения. Вторая —
+              отдельный сценарий с <b>Custom webhook</b>, который отправляет сообщение в WhatsApp;
+              его адрес вставьте в последнее поле.
+            </p>
+
+            <CopyRow
+              label="Адрес для входящих (вставить в HTTP-модуль Make)"
+              value={makeInboundUrl}
+            />
+            <CopyRow
+              label="Заголовок X-Qabyl-Token"
+              value={makeToken}
+              hint="Отправляйте его и во входящем запросе к нам, и проверяйте во входящем запросе к Make: адрес вебхука Make секретом не является."
+            />
+
+            <div>
+              <Label className="text-sm">Адрес вебхука Make для исходящих</Label>
+              <Input
+                value={makeOutboundUrl}
+                onChange={(e) => setMakeOutboundUrl(e.target.value)}
+                placeholder="https://hook.eu2.make.com/…"
+                className="font-mono text-xs mt-1"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Сюда мы шлём ответы ассистента, ответы администратора из панели и напоминания.
+                Очистите поле и сохраните, чтобы выключить мост.
+              </p>
+            </div>
+
+            <Button onClick={onSaveMake} disabled={savingMake}>
+              {savingMake ? "Сохранение…" : makeOutboundUrl ? "Включить мост" : "Выключить мост"}
+            </Button>
+
+            <p className="text-xs text-amber-700">
+              Что мост не умеет: отметки «прочитано» и «печатает…», а также сверку статусов доставки
+              — Make отвечает раньше, чем Meta сообщает результат. Фото и голосовые работают только
+              если в сценарии стоит модуль скачивания медиа: токен салона остаётся внутри Make, сами
+              файл мы забрать не можем.
             </p>
           </div>
         )}

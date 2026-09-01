@@ -98,7 +98,34 @@ export const getWaCloudConfig = createServerFn({ method: "POST" })
       verifyToken = (fresh as any)?.whatsapp_cloud_verify_token ?? null;
     }
 
+    // Токен моста Make — по той же схеме и по той же причине, что и verify_token выше: он нужен
+    // владельцу для вставки в сценарий, а поле с кнопкой «сгенерировать» — лишний шаг, который
+    // забывают. Сам по себе токен мост не включает: маршрут отправки требует ещё и адрес
+    // вебхука, поэтому у салона, который Make не касался, он просто лежит неиспользованным.
+    let makeToken = s.wa_make_token ?? null;
+    if (!makeToken) {
+      await supabaseAdmin
+        .from("salon_secrets")
+        .upsert({ salon_id: data.salonId } as any, { onConflict: "salon_id" });
+      await supabaseAdmin
+        .from("salon_secrets")
+        .update({ wa_make_token: genToken() } as any)
+        .eq("salon_id", data.salonId)
+        .is("wa_make_token", null);
+      const { data: fresh } = await supabaseAdmin
+        .from("salon_secrets")
+        .select("wa_make_token")
+        .eq("salon_id", data.salonId)
+        .maybeSingle();
+      makeToken = (fresh as any)?.wa_make_token ?? null;
+    }
+
     return {
+      make_token: (makeToken ?? "") as string,
+      make_outbound_url: (s.wa_make_outbound_url ?? "") as string,
+      make_inbound_url: `${publicBaseUrl()}/api/public/wamake/${data.salonId}`,
+      // Мостом салон считается только при обоих реквизитах: половина — это молчащий ассистент.
+      make_active: Boolean(s.wa_make_token && s.wa_make_outbound_url),
       phone_number_id: s.whatsapp_cloud_phone_number_id ?? "",
       token: s.whatsapp_cloud_token ?? "",
       app_secret: s.whatsapp_cloud_app_secret ?? "",
@@ -115,6 +142,45 @@ export const getWaCloudConfig = createServerFn({ method: "POST" })
       has_green_api: Boolean(s.greenapi_instance && s.greenapi_token),
       template_kinds: TEMPLATE_KINDS as unknown as string[],
     };
+  });
+
+/**
+ * Включить или выключить мост Make для салона.
+ *
+ * Единственное, что владелец сюда вводит, — адрес custom webhook своего сценария Make. Токен
+ * генерируется нами и только показывается. Пустая строка выключает мост: салон возвращается на
+ * прямой Cloud API, если у него заполнены облачные реквизиты, и становится неподключённым, если
+ * нет. Это и есть выключатель, которым мост гасится после выдачи Advanced Access.
+ */
+export const upsertWaMakeConfig = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) =>
+    z
+      .object({
+        salonId: z.string().uuid(),
+        outbound_url: z.string().max(500).nullable(),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    await assertSalonAccess(context.supabase, context.userId, data.salonId);
+
+    const url = data.outbound_url?.trim() || null;
+    // Мост шлёт наружу сообщения клиентов салона. Адрес, который случайно ввели с опечаткой в
+    // схеме, отправил бы их куда угодно — поэтому только https, и проверяем здесь, а не в
+    // транспорте: там уже поздно, там уже есть что отправлять.
+    if (url && !/^https:\/\/[^\s]+$/i.test(url)) {
+      throw new Error("Адрес вебхука Make должен начинаться с https://");
+    }
+
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { error } = await supabaseAdmin
+      .from("salon_secrets")
+      .upsert({ salon_id: data.salonId, wa_make_outbound_url: url } as any, {
+        onConflict: "salon_id",
+      });
+    if (error) throw new Error(error.message);
+    return { ok: true, active: Boolean(url) };
   });
 
 export const upsertWaCloudConfig = createServerFn({ method: "POST" })
