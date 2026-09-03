@@ -339,6 +339,7 @@ export type Database = {
           confirmation_message_id: string | null
           confirmation_status: string
           created_at: string
+          deleted_at: string | null
           ends_at: string
           hold_expires_at: string | null
           id: string
@@ -365,6 +366,7 @@ export type Database = {
           confirmation_message_id?: string | null
           confirmation_status?: string
           created_at?: string
+          deleted_at?: string | null
           ends_at: string
           hold_expires_at?: string | null
           id?: string
@@ -391,6 +393,7 @@ export type Database = {
           confirmation_message_id?: string | null
           confirmation_status?: string
           created_at?: string
+          deleted_at?: string | null
           ends_at?: string
           hold_expires_at?: string | null
           id?: string
@@ -1866,6 +1869,17 @@ export type Database = {
           greenapi_instance: string | null
           greenapi_token: string | null
           greenapi_webhook_token: string | null
+          gupshup_api_key: string | null
+          gupshup_app_id: string | null
+          gupshup_app_name: string | null
+          gupshup_connected_at: string | null
+          gupshup_enabled: boolean
+          gupshup_last_error: string | null
+          gupshup_last_error_at: string | null
+          gupshup_last_event_at: string | null
+          gupshup_source_number: string | null
+          gupshup_waba_id: string | null
+          gupshup_webhook_token: string | null
           instagram_app_secret: string | null
           instagram_token: string | null
           instagram_user_id: string | null
@@ -1873,6 +1887,8 @@ export type Database = {
           owner_notify_phone: string | null
           salon_id: string
           updated_at: string
+          wa_make_outbound_url: string | null
+          wa_make_token: string | null
           whatsapp_cloud_app_secret: string | null
           whatsapp_cloud_phone_number_id: string | null
           whatsapp_cloud_templates: Json | null
@@ -1884,6 +1900,17 @@ export type Database = {
           greenapi_instance?: string | null
           greenapi_token?: string | null
           greenapi_webhook_token?: string | null
+          gupshup_api_key?: string | null
+          gupshup_app_id?: string | null
+          gupshup_app_name?: string | null
+          gupshup_connected_at?: string | null
+          gupshup_enabled?: boolean
+          gupshup_last_error?: string | null
+          gupshup_last_error_at?: string | null
+          gupshup_last_event_at?: string | null
+          gupshup_source_number?: string | null
+          gupshup_waba_id?: string | null
+          gupshup_webhook_token?: string | null
           instagram_app_secret?: string | null
           instagram_token?: string | null
           instagram_user_id?: string | null
@@ -1891,6 +1918,8 @@ export type Database = {
           owner_notify_phone?: string | null
           salon_id: string
           updated_at?: string
+          wa_make_outbound_url?: string | null
+          wa_make_token?: string | null
           whatsapp_cloud_app_secret?: string | null
           whatsapp_cloud_phone_number_id?: string | null
           whatsapp_cloud_templates?: Json | null
@@ -1902,6 +1931,17 @@ export type Database = {
           greenapi_instance?: string | null
           greenapi_token?: string | null
           greenapi_webhook_token?: string | null
+          gupshup_api_key?: string | null
+          gupshup_app_id?: string | null
+          gupshup_app_name?: string | null
+          gupshup_connected_at?: string | null
+          gupshup_enabled?: boolean
+          gupshup_last_error?: string | null
+          gupshup_last_error_at?: string | null
+          gupshup_last_event_at?: string | null
+          gupshup_source_number?: string | null
+          gupshup_waba_id?: string | null
+          gupshup_webhook_token?: string | null
           instagram_app_secret?: string | null
           instagram_token?: string | null
           instagram_user_id?: string | null
@@ -1909,6 +1949,8 @@ export type Database = {
           owner_notify_phone?: string | null
           salon_id?: string
           updated_at?: string
+          wa_make_outbound_url?: string | null
+          wa_make_token?: string | null
           whatsapp_cloud_app_secret?: string | null
           whatsapp_cloud_phone_number_id?: string | null
           whatsapp_cloud_templates?: Json | null
@@ -2323,6 +2365,8 @@ export type Database = {
           media_path: string | null
           meta: Json | null
           processed_at: string | null
+          provider: string | null
+          provider_message_id: string | null
           salon_id: string
           text_body: string | null
         }
@@ -2336,6 +2380,8 @@ export type Database = {
           media_path?: string | null
           meta?: Json | null
           processed_at?: string | null
+          provider?: string | null
+          provider_message_id?: string | null
           salon_id: string
           text_body?: string | null
         }
@@ -2349,6 +2395,8 @@ export type Database = {
           media_path?: string | null
           meta?: Json | null
           processed_at?: string | null
+          provider?: string | null
+          provider_message_id?: string | null
           salon_id?: string
           text_body?: string | null
         }
@@ -2369,6 +2417,60 @@ export type Database = {
           },
           {
             foreignKeyName: "wa_messages_salon_id_fkey"
+            columns: ["salon_id"]
+            isOneToOne: false
+            referencedRelation: "salons_public"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      wa_webhook_events: {
+        Row: {
+          attempts: number
+          event_type: string | null
+          external_id: string | null
+          id: string
+          last_error: string | null
+          processed_at: string | null
+          provider: string
+          raw: Json
+          received_at: string
+          salon_id: string | null
+        }
+        Insert: {
+          attempts?: number
+          event_type?: string | null
+          external_id?: string | null
+          id?: string
+          last_error?: string | null
+          processed_at?: string | null
+          provider: string
+          raw: Json
+          received_at?: string
+          salon_id?: string | null
+        }
+        Update: {
+          attempts?: number
+          event_type?: string | null
+          external_id?: string | null
+          id?: string
+          last_error?: string | null
+          processed_at?: string | null
+          provider?: string
+          raw?: Json
+          received_at?: string
+          salon_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "wa_webhook_events_salon_id_fkey"
+            columns: ["salon_id"]
+            isOneToOne: false
+            referencedRelation: "salons"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "wa_webhook_events_salon_id_fkey"
             columns: ["salon_id"]
             isOneToOne: false
             referencedRelation: "salons_public"
@@ -2610,6 +2712,7 @@ export type Database = {
         }
         Returns: string
       }
+      salon_local_tz: { Args: { _salon_id: string }; Returns: string }
       user_manager_salon_id: { Args: { _user_id: string }; Returns: string }
       user_master_ids: { Args: { _user_id: string }; Returns: string[] }
       wa_check_rate_limit: { Args: { _salon_id: string }; Returns: boolean }
@@ -2651,12 +2754,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -2680,11 +2783,11 @@ export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -2705,11 +2808,11 @@ export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -2730,11 +2833,11 @@ export type Enums<
   DefaultSchemaEnumNameOrOptions extends
     | keyof DefaultSchema["Enums"]
     | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -2747,11 +2850,11 @@ export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+    : never) = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }

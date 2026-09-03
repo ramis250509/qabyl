@@ -21,6 +21,11 @@ export type ErrorSource =
   // owner asks when replies stop is WHICH transport broke. They also fail differently — a revoked
   // Meta system-user token and the 24-hour-window rejection have no Green-API equivalent.
   | "wacloud-webhook"
+  // Транспорт через BSP Gupshup. Отделён от wacloud-webhook по той же причине, по которой тот
+  // отделён от wa-webhook: когда ответы прекращаются, первый вопрос владельца — КАКОЙ канал
+  // сломался. И отказы у них разные: у Gupshup нет ни подписи Meta, ни её кодов ошибок, зато
+  // есть свои — исчерпанный кошелёк и потерянная подписка на события.
+  | "wagupshup-webhook"
   | "server-fn"
   | "edge-fn"
   | "client"

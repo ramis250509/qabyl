@@ -37,7 +37,7 @@ import {
  * Читается лениво, а не на уровне модуля: файл попадает в Cloudflare Worker, где модульный код
  * выполняется на сборке, когда process.env ещё пуст. Ровно та же ловушка описана в waGraphBase().
  */
-function gupshupBase(): string {
+export function gupshupBase(): string {
   return (process.env.GUPSHUP_API_BASE || "https://api.gupshup.io/wa").replace(/\/$/, "");
 }
 

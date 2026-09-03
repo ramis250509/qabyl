@@ -99,6 +99,7 @@ import { SalonDayOverridesCard } from "@/components/admin/SalonDayOverridesCard"
 import { AiAssistantTab } from "@/components/admin/AiAssistantTab";
 import { InstagramTab } from "@/components/admin/InstagramTab";
 import { WaCloudCard } from "@/components/admin/WaCloudCard";
+import { GupshupCard } from "@/components/admin/GupshupCard";
 import { PrepaymentTab } from "@/components/admin/PrepaymentTab";
 import { ScheduleImportTab } from "@/components/admin/ScheduleImportTab";
 import { ServiceExportDialog } from "@/components/admin/ServiceExportDialog";
@@ -3546,6 +3547,12 @@ function IntegrationsTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => 
       {/* Подключение к официальному WhatsApp Cloud API. Транспорт теперь один: Green-API удалён,
           выбирать больше не из чего. */}
       <WaCloudCard salonId={salon.id} />
+
+      {/* Подключение через Gupshup — путь на время ожидания Advanced Access. Стоит ПОСЛЕ облачной
+          карточки намеренно: прямой Cloud API остаётся основным для тех, у кого он уже работает, а
+          BSP нужен там, где своё приложение подключить пока нельзя. Карточка ничего не делает,
+          пока у салона не заполнены реквизиты Gupshup. */}
+      <GupshupCard salonId={salon.id} />
     </div>
   );
 }
@@ -3875,14 +3882,12 @@ function FaqTab({ salonId }: { salonId: string }) {
   async function add() {
     if (!q.trim() || !a.trim()) return toast.error("Заполните вопрос и ответ");
     const max = items.reduce((m, i) => Math.max(m, i.sort_order), -1);
-    const { error } = await supabase
-      .from("salon_faqs")
-      .insert({
-        salon_id: salonId,
-        question: q.trim(),
-        answer: a.trim(),
-        sort_order: max + 1,
-      } as any);
+    const { error } = await supabase.from("salon_faqs").insert({
+      salon_id: salonId,
+      question: q.trim(),
+      answer: a.trim(),
+      sort_order: max + 1,
+    } as any);
     if (error) return toast.error(error.message);
     setQ("");
     setA("");
