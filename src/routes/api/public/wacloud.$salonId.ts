@@ -282,9 +282,17 @@ async function ingestEvent(opts: {
   tx: WaTransport;
   salon: any;
   assistant: any;
+  /**
+   * Каким транспортом пришёл диалог. По умолчанию облачный — так было, когда транспорт был один,
+   * и так остаётся для моста Make: он говорит с тем же Cloud API, только чужими руками.
+   * У Gupshup канал свой: WABA принадлежит салону, но разговаривает с Meta посредник, и в панели
+   * администратора это должно быть видно как отдельный канал, а не как облако.
+   */
+  channel?: string;
   errLog: (m: string, ...r: unknown[]) => void;
 }): Promise<string | null> {
   const { db, salonId, ev, tx, errLog } = opts;
+  const channel = opts.channel ?? "whatsapp_cloud";
   const phone = normalizeChatIdToPhone(ev.fromPhone);
   const nowIso = new Date().toISOString();
 
@@ -354,7 +362,7 @@ async function ingestEvent(opts: {
       {
         salon_id: salonId,
         client_phone: phone,
-        channel: "whatsapp_cloud",
+        channel,
         client_name: clientName,
         last_message_at: nowIso,
         last_message_preview: (ev.text ?? "[фото]").slice(0, 200),
@@ -968,6 +976,15 @@ export async function processWaCloudPayload(opts: {
    * подставляет сюда Make. Пайплайн ниже про это не знает и знать не должен.
    */
   transport?: WaTransport;
+  /**
+   * Значение wa_conversations.channel для новых диалогов этого маршрута.
+   *
+   * Мост Make его не задаёт намеренно: он разговаривает с тем же Cloud API салона, просто чужими
+   * руками, и заводить ему отдельный канал значило бы разделить историю одного и того же номера
+   * надвое при снятии моста. У Gupshup случай другой — там и провайдер другой, и реквизиты
+   * другие, поэтому канал свой.
+   */
+  channel?: string;
 }): Promise<Response> {
   const { salonId, rawBody, secrets, salon, assistant, rid } = opts;
   const log = (msg: string, ...more: unknown[]) => console.log(`[wacloud ${rid}] ${msg}`, ...more);
@@ -1069,6 +1086,7 @@ export async function processWaCloudPayload(opts: {
       tx,
       salon,
       assistant,
+      channel: opts.channel,
       errLog,
     });
     if (convId) toRun.add(convId);
