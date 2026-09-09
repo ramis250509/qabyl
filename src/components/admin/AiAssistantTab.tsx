@@ -29,7 +29,6 @@ import {
   Leaf,
   Flame,
 } from "lucide-react";
-import { getWaWebhookConfig, regenerateWaWebhookToken } from "@/lib/wa-config.functions";
 import { getWaCloudConfig } from "@/lib/wa-cloud.functions";
 import {
   INDUSTRIES_META,
@@ -178,8 +177,6 @@ export function AiAssistantTab({
   // ничего нет: клиент пишет салону и не получает ответа, а владелец уверен, что всё работает.
   const [waConnected, setWaConnected] = useState(true);
   const loadWaCloudConfig = useServerFn(getWaCloudConfig);
-  const [webhookUrl, setWebhookUrl] = useState<string | null>(null);
-  const [webhookBusy, setWebhookBusy] = useState(false);
   // Knowledge book: show only the essential questions first; the rest expand on demand.
   const [showAllKnowledge, setShowAllKnowledge] = useState(false);
   const [data, setData] = useState<Assistant>({
@@ -245,7 +242,7 @@ export function AiAssistantTab({
       // бы ассистента у всех салонов разом.
       try {
         const wa = await loadWaCloudConfig({ data: { salonId } });
-        if (!cancelled) setWaConnected(Boolean(wa.phone_number_id && wa.token));
+        if (!cancelled) setWaConnected(wa.status.connected);
       } catch {
         // Не смогли выяснить — считаем подключённым. Ошибочно разрешить включение мягче, чем
         // ошибочно запретить: во втором случае владелец упирается в стену без объяснений.
@@ -295,35 +292,11 @@ export function AiAssistantTab({
         });
       }
       setLoading(false);
-      // Load webhook config in background (super-admin only)
-      if (isSuperAdmin) {
-        try {
-          const res = await getWaWebhookConfig({ data: { salonId } });
-          if (!cancelled) {
-            setWebhookUrl(res.webhook_url);
-          }
-        } catch (e) {
-          console.warn("webhook config load failed", e);
-        }
-      }
     })();
     return () => {
       cancelled = true;
     };
   }, [salonId, isSuperAdmin]);
-
-  async function refreshWebhook() {
-    setWebhookBusy(true);
-    try {
-      const res = await regenerateWaWebhookToken({ data: { salonId } });
-      setWebhookUrl(res.webhook_url);
-      toast.success("Новый Webhook URL сгенерирован");
-    } catch (e: any) {
-      toast.error("Не удалось сгенерировать: " + (e?.message ?? e));
-    } finally {
-      setWebhookBusy(false);
-    }
-  }
 
   async function copyText(value: string | null) {
     if (!value) return;
@@ -453,88 +426,37 @@ export function AiAssistantTab({
             <div className="mt-3 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm flex items-start gap-2">
               <MessageCircle className="h-4 w-4 mt-0.5 text-primary shrink-0" />
               <div>
-                Учётные данные GreenAPI (<b>Instance ID</b>, <b>API Token</b>, телефон владельца)
-                задаются во вкладке{" "}
-                <button
-                  type="button"
-                  onClick={() => onOpenWhatsAppTab?.()}
-                  className="font-semibold text-primary underline underline-offset-2 hover:opacity-80"
-                >
-                  WhatsApp
-                </button>
-                .
+                {waConnected ? (
+                  <>
+                    WhatsApp подключён — ассистент отвечает клиентам, которые пишут салону.
+                  </>
+                ) : (
+                  <>
+                    Чтобы ассистент заговорил с клиентами, подключите WhatsApp во вкладке{" "}
+                    <button
+                      type="button"
+                      onClick={() => onOpenWhatsAppTab?.()}
+                      className="font-semibold text-primary underline underline-offset-2 hover:opacity-80"
+                    >
+                      WhatsApp
+                    </button>
+                    . Это занимает около минуты.
+                  </>
+                )}
               </div>
             </div>
-            {isSuperAdmin ? (
-              <div className="mt-4 flex items-center gap-3">
-                <Switch
-                  checked={premiumEnabled}
-                  onCheckedChange={togglePremium}
-                  disabled={saving}
-                />
-                <Label className="text-sm">Премиум-доступ для салона</Label>
-              </div>
-            ) : !premiumEnabled ? (
-              <div className="mt-3 text-sm text-muted-foreground flex items-center gap-1.5">
-                <Lock className="h-3.5 w-3.5" />
-                Чтобы подключить — свяжитесь с поддержкой Qabyl.
-              </div>
-            ) : null}
+            {/* Включает владелец салона, а не платформа. Ассистент — это то, ради чего салон
+                пришёл; держать выключатель у поддержки значит требовать письма ради галочки и
+                делать самостоятельное подключение невозможным. */}
+            <div className="mt-4 flex items-center gap-3">
+              <Switch checked={premiumEnabled} onCheckedChange={togglePremium} disabled={saving} />
+              <Label className="text-sm">
+                {premiumEnabled ? "Ассистент включён" : "Включить ассистента"}
+              </Label>
+            </div>
           </div>
         </div>
       </Card>
-
-      {isSuperAdmin && (
-        <Card
-          className={`p-5 space-y-3 ${!premiumEnabled ? "opacity-60 pointer-events-none select-none" : ""}`}
-        >
-          <div className="flex items-start gap-3">
-            <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-              <Webhook className="h-5 w-5 text-primary" />
-            </div>
-            <div className="flex-1">
-              <h3 className="font-semibold">
-                Webhook для Green-API{" "}
-                <Badge variant="outline" className="ml-2">
-                  Только супер-админ
-                </Badge>
-              </h3>
-              <p className="text-sm text-muted-foreground mt-1">
-                Скопируйте этот URL и вставьте в настройках Green-API в поле «webhookUrl». Также
-                включите событие <code>incomingMessageReceived</code>. Токен зашит в URL — никому не
-                передавайте его.
-              </p>
-            </div>
-          </div>
-          {webhookUrl ? (
-            <div className="flex gap-2">
-              <Input value={webhookUrl} readOnly className="font-mono text-xs" />
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                onClick={() => copyText(webhookUrl)}
-              >
-                <Copy className="h-4 w-4" />
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                onClick={refreshWebhook}
-                disabled={webhookBusy}
-                title="Сгенерировать новый"
-              >
-                <RefreshCw className={`h-4 w-4 ${webhookBusy ? "animate-spin" : ""}`} />
-              </Button>
-            </div>
-          ) : (
-            <Button type="button" onClick={refreshWebhook} disabled={webhookBusy}>
-              {webhookBusy ? "Генерация..." : "Сгенерировать Webhook URL"}
-            </Button>
-          )}
-        </Card>
-      )}
 
       <Card
         className={`p-5 space-y-5 ${!premiumEnabled ? "opacity-60 pointer-events-none select-none" : ""}`}
@@ -599,8 +521,8 @@ export function AiAssistantTab({
             onChange={(e) => setData({ ...data, whatsapp_phone: e.target.value })}
           />
           <p className="text-xs text-muted-foreground">
-            Номер, к которому подключён Green-API Instance этого салона. Учётные данные Green-API
-            задаются на вкладке «WhatsApp».
+            Показывается клиентам на странице записи и в текстах ассистента. Само подключение
+            канала делается на вкладке «WhatsApp» — здесь только номер для показа.
           </p>
         </div>
 

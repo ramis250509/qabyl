@@ -98,7 +98,7 @@ import { MasterDayOverrides } from "@/components/admin/MasterDayOverrides";
 import { SalonDayOverridesCard } from "@/components/admin/SalonDayOverridesCard";
 import { AiAssistantTab } from "@/components/admin/AiAssistantTab";
 import { InstagramTab } from "@/components/admin/InstagramTab";
-import { WaCloudCard } from "@/components/admin/WaCloudCard";
+import { WhatsAppCard } from "@/components/admin/WhatsAppCard";
 import { GupshupCard } from "@/components/admin/GupshupCard";
 import { PrepaymentTab } from "@/components/admin/PrepaymentTab";
 import { ScheduleImportTab } from "@/components/admin/ScheduleImportTab";
@@ -3442,7 +3442,6 @@ function IntegrationsTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => 
   }, [salon.id]);
 
   async function toggleWa(v: boolean) {
-    if (!isSuperAdmin) return;
     setWaBusy(true);
     const prev = waEnabled;
     setWaEnabled(v);
@@ -3483,22 +3482,14 @@ function IntegrationsTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => 
       <Card className="p-6 space-y-3">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <h2 className="font-semibold">WhatsApp-уведомления</h2>
+            <h2 className="font-semibold">Писать клиентам в WhatsApp</h2>
             <p className="text-sm text-muted-foreground mt-0.5">
-              Если выключено — клиенты не увидят упоминаний WhatsApp при бронировании, подтверждения
-              и напоминания не отправляются.
+              Подтверждения записи, напоминания за два часа, сообщения о переносе и отмене. Если
+              выключить, Qabyl перестанет писать клиентам, а на странице записи исчезнут упоминания
+              WhatsApp. Ассистент, отвечающий на входящие, при этом продолжит работать.
             </p>
-            {!isSuperAdmin && (
-              <p className="text-xs text-amber-700 mt-2">
-                Доступно только владельцу платформы. Свяжитесь с поддержкой, чтобы включить.
-              </p>
-            )}
           </div>
-          <Switch
-            checked={waEnabled}
-            onCheckedChange={toggleWa}
-            disabled={!isSuperAdmin || waBusy}
-          />
+          <Switch checked={waEnabled} onCheckedChange={toggleWa} disabled={waBusy} />
         </div>
       </Card>
 
@@ -3546,13 +3537,13 @@ function IntegrationsTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => 
 
       {/* Подключение к официальному WhatsApp Cloud API. Транспорт теперь один: Green-API удалён,
           выбирать больше не из чего. */}
-      <WaCloudCard salonId={salon.id} />
+      <WhatsAppCard salonId={salon.id} />
 
-      {/* Подключение через Gupshup — путь на время ожидания Advanced Access. Стоит ПОСЛЕ облачной
-          карточки намеренно: прямой Cloud API остаётся основным для тех, у кого он уже работает, а
-          BSP нужен там, где своё приложение подключить пока нельзя. Карточка ничего не делает,
-          пока у салона не заполнены реквизиты Gupshup. */}
-      <GupshupCard salonId={salon.id} />
+      {/* Подключение через BSP. Запасной путь для салона, которому Embedded Signup недоступен —
+          например, потому что его WABA принадлежит нашему же бизнес-портфолио. Владельцу салона не
+          показывается: выбор между прямым подключением и BSP делает платформа, а не он, и лишний
+          экран с чужими терминами тут только мешает. */}
+      {isSuperAdmin && <GupshupCard salonId={salon.id} />}
     </div>
   );
 }

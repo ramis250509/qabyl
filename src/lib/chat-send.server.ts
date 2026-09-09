@@ -54,22 +54,6 @@ export async function sendChatText(
   }
 
   if (channel === "whatsapp_cloud") {
-    // Мост Make идёт первым: у салона на мосту облачные реквизиты пустые, и без этой ветки
-    // ответ администратора из панели молча упирался бы в «WhatsApp не подключён», хотя клиенту
-    // ассистент отвечает. Признак моста — обе колонки заполнены; половина реквизитов мостом не
-    // считается (см. миграцию 20260901090000).
-    if (s.wa_make_outbound_url && s.wa_make_token) {
-      const { makeTransport } = await import("@/lib/wa-transport.server");
-      const tx = makeTransport({
-        outboundUrl: s.wa_make_outbound_url,
-        token: s.wa_make_token,
-      });
-      const res = await tx.sendText(conv.external_id || conv.client_phone || "", text);
-      return res.ok
-        ? { ok: true, messageId: res.messageId ?? null }
-        : { ok: false, error: res.error };
-    }
-
     const { waCloudSendMessage } = await import("@/lib/wa-cloud.server");
     const res = await waCloudSendMessage(
       {

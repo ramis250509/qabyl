@@ -1,8 +1,8 @@
-// Серверная функция за кнопкой «Подключить WhatsApp» в админке салона.
+// Серверные функции за кнопкой «Подключить WhatsApp» в панели салона.
 //
-// Тонкая по замыслу: права и запись в базу здесь, весь разговор с Graph API — в
-// wa-onboarding.server.ts. Так шаги подключения можно менять и проверять отдельно от того, кому
-// и что мы разрешаем.
+// Тонкие по замыслу: права и запись в базу здесь, весь разговор с Graph API — в
+// wa-onboarding.server.ts, состояние канала — в wa-connection.server.ts. Так подключение можно
+// менять и проверять отдельно от того, кому и что мы разрешаем.
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
@@ -24,17 +24,52 @@ function genPin(): string {
 }
 
 /**
+ * Не отдан ли этот номер или аккаунт другому салону.
+ *
+ * Проверяется ДО обмена кода, потому что после обмена мы уже потратили одноразовый код и время
+ * владельца. В базе стоит уникальный индекс на номер — он последнее слово, а эта проверка нужна
+ * для того, чтобы вместо «duplicate key value violates unique constraint» владелец услышал
+ * причину и понял, что делать.
+ */
+async function assertNotTakenByAnotherSalon(
+  supabaseAdmin: any,
+  salonId: string,
+  phoneNumberId: string,
+) {
+  const { data: taken } = await supabaseAdmin
+    .from("salon_secrets")
+    .select("salon_id")
+    .eq("whatsapp_cloud_phone_number_id", phoneNumberId)
+    .neq("salon_id", salonId)
+    .limit(1);
+  if (taken && taken.length > 0) {
+    throw new Error(
+      "Этот номер WhatsApp уже подключён к другому салону. Отключите его там или подключите сюда другой номер.",
+    );
+  }
+}
+
+/**
  * Завершает подключение салона после того, как владелец прошёл окно Embedded Signup.
  *
  * Браузер приносит три вещи: одноразовый код, WABA ID и Phone Number ID. Дальше всё делается на
  * сервере, потому что в обмене кода участвует app secret.
  *
- * Порядок шагов не случаен. Токен нужен всем остальным, поэтому он первый и единственный, чья
- * неудача обрывает подключение. Подписка на вебхуки идёт раньше сохранения: салон, попавший в
- * базу без подписки, выглядит подключённым и молчит — худшее из состояний. Регистрация номера и
- * шаблоны, наоборот, не критичны в момент нажатия: номер из coexistence уже зарегистрирован, а
- * шаблоны нужны только для сообщений вне 24-часового окна. Их неудачи возвращаются владельцу
- * списком, но подключение не отменяют.
+ * ПОРЯДОК ШАГОВ НЕ СЛУЧАЕН.
+ *   • Занятость номера — первой: она отменяет подключение целиком, и узнать об этом до того, как
+ *     сгорел одноразовый код, дешевле.
+ *   • Токен — второй и единственный, чья неудача обрывает всё: без него остальные шаги не имеют
+ *     смысла.
+ *   • Подписка на вебхуки — РАНЬШЕ сохранения. Салон, попавший в базу без подписки, выглядит
+ *     подключённым и молчит; это худшее из состояний, потому что оно не выглядит поломкой.
+ *   • Регистрация номера и шаблоны — не критичны в момент нажатия: номер из coexistence уже
+ *     зарегистрирован, а шаблоны нужны только вне 24-часового окна. Их неудачи возвращаются
+ *     владельцу списком, но подключение не отменяют.
+ *
+ * ЧЕГО ЗДЕСЬ БОЛЬШЕ НЕ ПРОИСХОДИТ. Раньше в строку салона записывался META_APP_SECRET — секрет
+ * ПЛАТФОРМЫ, одинаковый для всех. Он там не нужен: общий вебхук берёт его из окружения, а
+ * пер-салонный секрет имеет смысл только у салона со своим приложением Meta. Копия секрета в
+ * каждой строке означала лишь, что он утекал в браузер вместе с остальной конфигурацией.
  */
 export const finishWaOnboarding = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -57,44 +92,39 @@ export const finishWaOnboarding = createServerFn({ method: "POST" })
       registerPhoneNumber,
       createNotificationTemplates,
     } = await import("@/lib/wa-onboarding.server");
+    const { refreshWaConnection, logOnboardingEvent, computeWaStatus } =
+      await import("@/lib/wa-connection.server");
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
+    // Одна попытка — один идентификатор на все её шаги. Без него события двух попыток подряд
+    // склеиваются в кашу, а именно две попытки подряд и бывают, когда что-то не работает.
+    const attemptId = crypto.randomUUID();
     const steps: { step: string; ok: boolean; detail?: string }[] = [];
 
-    // Один номер у двух салонов ломает общий вебхук: он ищет салон ИМЕННО по phone_number_id и с
-    // двумя совпадениями не знает, кому адресовано сообщение. Ловим здесь, где ещё можно назвать
-    // причину владельцу, а не в вебхуке, где остаётся только развести руками.
-    const { data: taken } = await supabaseAdmin
-      .from("salon_secrets")
-      .select("salon_id")
-      .eq("whatsapp_cloud_phone_number_id", data.phoneNumberId)
-      .neq("salon_id", data.salonId)
-      .limit(1);
-    if (taken && taken.length > 0) {
-      throw new Error(
-        "Этот номер WhatsApp уже подключён к другому салону. Отключите его там или подключите сюда другой номер.",
-      );
-    }
+    const record = async (s: { step: string; ok: boolean; detail?: string }, details?: unknown) => {
+      steps.push(s);
+      await logOnboardingEvent(data.salonId, attemptId, { ...s, details });
+    };
+
+    await record({ step: "start", ok: true });
+
+    await assertNotTakenByAnotherSalon(supabaseAdmin, data.salonId, data.phoneNumberId);
 
     const exchanged = await exchangeCodeForToken(data.code);
     if (!exchanged.ok) {
-      throw new Error(`Не удалось получить токен от Meta: ${exchanged.error}`);
+      await record({ step: "token", ok: false, detail: exchanged.error });
+      throw new Error(`Не удалось завершить подключение: ${exchanged.error}`);
     }
-    steps.push({ step: "token", ok: true });
+    await record({ step: "token", ok: true });
 
-    steps.push(await subscribeAppToWaba(data.wabaId, exchanged.token));
-    steps.push(await registerPhoneNumber(data.phoneNumberId, exchanged.token, genPin()));
+    await record(await subscribeAppToWaba(data.wabaId, exchanged.token));
+    await record(await registerPhoneNumber(data.phoneNumberId, exchanged.token, genPin()));
 
     const { steps: tplSteps, templates } = await createNotificationTemplates(
       data.wabaId,
       exchanged.token,
     );
-    steps.push(...tplSteps);
-
-    // Секрет платформы, а не салона: подписывает наше приложение, одно на всех. Пишем его в
-    // строку салона, чтобы работали ОБА вебхука — и общий, и пер-салонный, — а валидация
-    // переключателя провайдера видела заполненное поле.
-    const appSecret = process.env.META_APP_SECRET ?? null;
+    for (const s of tplSteps) await record(s);
 
     const { error: saveErr } = await supabaseAdmin.from("salon_secrets").upsert(
       {
@@ -102,44 +132,57 @@ export const finishWaOnboarding = createServerFn({ method: "POST" })
         whatsapp_cloud_waba_id: data.wabaId,
         whatsapp_cloud_phone_number_id: data.phoneNumberId,
         whatsapp_cloud_token: exchanged.token,
-        whatsapp_cloud_app_secret: appSecret,
         whatsapp_cloud_templates: templates,
+        // Через приложение Qabyl: вебхук общий, подпись — секретом платформы из окружения.
+        wa_connection_kind: "platform",
+        wa_connected_at: new Date().toISOString(),
+        wa_token_status: "valid",
+        // Переподключение чинит прежнюю поломку — старая причина не должна пережить его на экране.
+        wa_last_error: null,
+        wa_last_error_at: null,
+        // Секрет платформы сюда БОЛЬШЕ НЕ ПИШЕМ (см. шапку). Затираем и старое значение: салоны,
+        // подключённые до этой правки, носят в строке копию общего секрета.
+        whatsapp_cloud_app_secret: null,
       } as any,
       { onConflict: "salon_id" },
     );
-    if (saveErr) throw new Error(`Подключение прошло, но не сохранилось: ${saveErr.message}`);
+    if (saveErr) {
+      await record({ step: "save", ok: false, detail: saveErr.message });
+      throw new Error(`Подключение прошло, но не сохранилось: ${saveErr.message}`);
+    }
+    await record({ step: "save", ok: true });
 
-    // Флаг поднимаем, только если созданы ВСЕ пять. Частичный набор хуже отсутствующего: код
-    // сочтёт шаблоны готовыми и отправит тот, которого нет, вместо того чтобы уйти в Green-API.
-    const allTemplatesOk = tplSteps.every((s) => s.ok);
-    if (allTemplatesOk) {
-      await supabaseAdmin
-        .from("salons")
-        .update({ wa_cloud_templates_ready: true } as any)
-        .eq("id", data.salonId);
+    // Реальное состояние спрашиваем у Meta, а не выводим из того, что все шаги вернули «ок».
+    // Именно здесь выясняется, одобрены ли шаблоны (созданный приходит PENDING), живой ли номер и
+    // что вообще Meta думает об этом аккаунте. Флаг wa_cloud_templates_ready ставит она же.
+    let status;
+    try {
+      status = await refreshWaConnection(data.salonId);
+      await record({ step: "verify", ok: true, detail: status.code });
+    } catch (e: any) {
+      // Проверка — не часть подключения. Салон уже подключён; не сумели опросить Meta — покажем
+      // состояние по тому, что записали, и предложим проверить кнопкой.
+      await record({ step: "verify", ok: false, detail: e?.message ?? "проверка не удалась" });
+      status = computeWaStatus({
+        whatsapp_cloud_phone_number_id: data.phoneNumberId,
+        whatsapp_cloud_token: exchanged.token,
+        whatsapp_cloud_waba_id: data.wabaId,
+        whatsapp_cloud_templates: templates as any,
+      });
     }
 
-    return {
-      ok: true,
-      steps,
-      templatesReady: allTemplatesOk,
-      // Провайдера НЕ переключаем сами: перевод салона на официальный транспорт — осознанное
-      // решение владельца, и у него для этого есть отдельный переключатель с предупреждениями.
-      wabaId: data.wabaId,
-      phoneNumberId: data.phoneNumberId,
-    };
+    return { ok: true, steps, status };
   });
 
 /**
- * Заводит пять шаблонов уведомлений на УЖЕ подключённом салоне.
+ * Заводит комплект шаблонов уведомлений на УЖЕ подключённом салоне.
  *
  * Тот же код, что отрабатывает внутри `finishWaOnboarding`, но с отдельной ручкой. До этой кнопки
  * шаблоны можно было создать ровно один раз — в момент прохождения Embedded Signup. Если Meta
- * отклонила шаблон, владелец удалил его в WhatsApp Manager или мы добавили шестой, единственным
+ * отклонила шаблон, владелец удалил его в WhatsApp Manager или мы добавили ещё один, единственным
  * выходом было переподключить салон целиком.
  *
- * Реквизиты берём из базы, а не из формы: токен на клиент не отдаём, а WABA ID в форме владелец
- * мог и не заполнить — при подключении кнопкой он приходит от Meta и сохраняется сам.
+ * Реквизиты берём из базы, а не из формы: токен на клиент не отдаём вовсе.
  */
 export const createWaTemplates = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -148,6 +191,7 @@ export const createWaTemplates = createServerFn({ method: "POST" })
     await assertSalonAccess(context.supabase, context.userId, data.salonId);
 
     const { createNotificationTemplates } = await import("@/lib/wa-onboarding.server");
+    const { refreshWaConnection, logOnboardingEvent } = await import("@/lib/wa-connection.server");
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
     const { data: row, error: readErr } = await supabaseAdmin
@@ -159,21 +203,16 @@ export const createWaTemplates = createServerFn({ method: "POST" })
 
     const wabaId = (row as any)?.whatsapp_cloud_waba_id ?? "";
     const token = (row as any)?.whatsapp_cloud_token ?? "";
-    // Разные причины — разные подсказки: без токена чинится подключением, без WABA ID вписыванием
-    // одного поля. Общее «не настроено» отправило бы владельца искать не там.
-    if (!token) {
-      throw new Error("Сначала подключите WhatsApp — без токена шаблоны создавать негде.");
-    }
-    if (!wabaId) {
-      throw new Error(
-        "Не заполнен ID аккаунта WhatsApp (WABA). Он приходит сам при подключении кнопкой; если салон настраивали руками — впишите его в поле выше и сохраните.",
-      );
+    if (!token || !wabaId) {
+      throw new Error("Сначала подключите WhatsApp — без этого шаблоны создавать негде.");
     }
 
+    const attemptId = crypto.randomUUID();
     const { steps, templates } = await createNotificationTemplates(wabaId, token);
+    for (const s of steps) await logOnboardingEvent(data.salonId, attemptId, s);
 
-    // Мержим, а не заменяем: за пятью нашими видами может стоять шестой, заведённый салоном под
-    // свою отрасль. Он к этой кнопке отношения не имеет и переживать её должен.
+    // Мержим, а не заменяем: за нашими видами может стоять ещё один, заведённый салоном под свою
+    // отрасль. Он к этой кнопке отношения не имеет и переживать её должен.
     const merged = { ...((row as any)?.whatsapp_cloud_templates ?? {}), ...templates };
 
     const { error: saveErr } = await supabaseAdmin
@@ -183,18 +222,10 @@ export const createWaTemplates = createServerFn({ method: "POST" })
       });
     if (saveErr) throw new Error(`Шаблоны созданы, но не сохранились: ${saveErr.message}`);
 
-    // Флаг поднимаем только на полном комплекте — ровно по той же причине, что и при подключении:
-    // частичный набор заставит код слать шаблон, которого нет. Опускать его тут нельзя: салон мог
-    // включить переключатель руками под свои имена, и наша неудача не повод это отменять.
-    const allOk = steps.every((s) => s.ok);
-    if (allOk) {
-      await supabaseAdmin
-        .from("salons")
-        .update({ wa_cloud_templates_ready: true } as any)
-        .eq("id", data.salonId);
-    }
-
-    return { ok: true, steps, templatesReady: allOk };
+    // Статусы и флаг готовности — только из ответа Meta. Созданный шаблон это PENDING, и поднимать
+    // по нему флаг значит слать напоминания по неодобренному шаблону и получать 132000.
+    const status = await refreshWaConnection(data.salonId);
+    return { ok: true, steps, status };
   });
 
 /**
@@ -214,6 +245,7 @@ export const subscribeWaWebhooks = createServerFn({ method: "POST" })
     await assertSalonAccess(context.supabase, context.userId, data.salonId);
 
     const { subscribeAppToWaba } = await import("@/lib/wa-onboarding.server");
+    const { logOnboardingEvent } = await import("@/lib/wa-connection.server");
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
     const { data: row, error } = await supabaseAdmin
@@ -226,10 +258,123 @@ export const subscribeWaWebhooks = createServerFn({ method: "POST" })
     const wabaId = (row as any)?.whatsapp_cloud_waba_id ?? "";
     const token = (row as any)?.whatsapp_cloud_token ?? "";
     if (!wabaId || !token) {
-      throw new Error("Сначала сохраните ID аккаунта WhatsApp и токен — подписывать нечего.");
+      throw new Error("Сначала подключите WhatsApp — подписывать нечего.");
     }
 
     const step = await subscribeAppToWaba(wabaId, token);
+    await logOnboardingEvent(data.salonId, crypto.randomUUID(), step);
     if (!step.ok) throw new Error(step.detail ?? "Meta отказала в подписке");
     return { ok: true };
+  });
+
+/**
+ * Состояние канала для экрана. Без запроса в Meta — только то, что уже в базе.
+ *
+ * Отдельно от `checkWaConnection` намеренно: этот вызов делает КАЖДОЕ открытие вкладки, и он
+ * обязан быть дешёвым. Опрос Meta на каждый рендер стоил бы четырёх запросов и упирался бы в
+ * лимит приложения на десятке салонов.
+ */
+export const getWaStatus = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => z.object({ salonId: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    await assertSalonAccess(context.supabase, context.userId, data.salonId);
+    const { computeWaStatus } = await import("@/lib/wa-connection.server");
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+    const { data: row } = await supabaseAdmin
+      .from("salon_secrets")
+      .select("*")
+      .eq("salon_id", data.salonId)
+      .maybeSingle();
+
+    return computeWaStatus(row as any);
+  });
+
+/** Спрашивает Meta и обновляет состояние. За кнопкой «Проверить подключение». */
+export const checkWaConnection = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => z.object({ salonId: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    await assertSalonAccess(context.supabase, context.userId, data.salonId);
+    const { refreshWaConnection } = await import("@/lib/wa-connection.server");
+    return await refreshWaConnection(data.salonId);
+  });
+
+/**
+ * Отключает WhatsApp от салона.
+ *
+ * ЧТО УДАЛЯЕТСЯ: только реквизиты доступа. Переписка, записи и клиенты остаются — отключение
+ * канала не должно означать потерю истории, иначе владелец боится нажать эту кнопку даже когда
+ * она нужна (сменил номер, продал салон, ошибся аккаунтом при подключении).
+ *
+ * Подписку на вебхуки на стороне Meta тоже снимаем: без этого Meta продолжает слать нам события
+ * отключённого салона, а общий вебхук отвечает «неизвестный номер» на каждое.
+ */
+export const disconnectWa = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => z.object({ salonId: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    await assertSalonAccess(context.supabase, context.userId, data.salonId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { logOnboardingEvent } = await import("@/lib/wa-connection.server");
+    const { graphCall } = await import("@/lib/meta-graph.server");
+
+    const { data: row } = await supabaseAdmin
+      .from("salon_secrets")
+      .select("whatsapp_cloud_waba_id, whatsapp_cloud_token")
+      .eq("salon_id", data.salonId)
+      .maybeSingle();
+
+    const wabaId = (row as any)?.whatsapp_cloud_waba_id ?? "";
+    const token = (row as any)?.whatsapp_cloud_token ?? "";
+
+    if (wabaId && token) {
+      // Неудача здесь не отменяет отключение: токен мог уже протухнуть, и именно поэтому владелец
+      // и отключается. Лишняя подписка на стороне Meta — меньшее зло, чем салон, который не может
+      // отвязать сломанный аккаунт.
+      const res = await graphCall(`${encodeURIComponent(wabaId)}/subscribed_apps`, {
+        method: "DELETE",
+        token,
+        retries: 1,
+      });
+      await logOnboardingEvent(data.salonId, crypto.randomUUID(), {
+        step: "unsubscribe",
+        ok: res.ok,
+        detail: res.ok ? undefined : "подписку снять не удалось",
+      });
+    }
+
+    const { error } = await supabaseAdmin
+      .from("salon_secrets")
+      .update({
+        whatsapp_cloud_phone_number_id: null,
+        whatsapp_cloud_token: null,
+        whatsapp_cloud_waba_id: null,
+        whatsapp_cloud_app_secret: null,
+        whatsapp_cloud_templates: null,
+        wa_connection_kind: null,
+        wa_connected_at: null,
+        wa_token_status: null,
+        wa_last_health_check_at: null,
+        wa_last_error: null,
+        wa_last_error_at: null,
+        wa_display_phone_number: null,
+        wa_verified_name: null,
+        wa_quality_rating: null,
+        wa_messaging_limit: null,
+        wa_platform_type: null,
+        wa_account_review_status: null,
+        wa_payment_ready: null,
+        wa_templates_synced_at: null,
+      } as any)
+      .eq("salon_id", data.salonId);
+    if (error) throw new Error(error.message);
+
+    await supabaseAdmin
+      .from("salons")
+      .update({ wa_cloud_templates_ready: false } as any)
+      .eq("id", data.salonId);
+
+    return { ok: true as const };
   });

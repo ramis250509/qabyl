@@ -1,9 +1,14 @@
-// Server functions behind the admin panel's WhatsApp Cloud API section.
+// Серверные функции за разделом WhatsApp в панели салона.
 //
-// Credentials live in salon_secrets, which has no SELECT grant for `authenticated` — the browser can
-// only reach them through these functions, and every one checks has_salon_access first. Same shape
-// as the Instagram tab (src/lib/instagram.functions.ts) and the Green-API one
-// (src/lib/salon-secrets.functions.ts).
+// ГЛАВНОЕ ПРАВИЛО ЭТОГО ФАЙЛА: секреты не покидают сервер.
+//
+// Раньше getWaCloudConfig отдавал в браузер токен доступа и app secret — их клали в React state,
+// и по ним же определялось, подключён ли салон. Токен даёт полный доступ к переписке салона и
+// право слать от его имени; общий app secret платформы позволяет подделать подпись вебхука для
+// ЛЮБОГО салона. Хранить их в DOM ради проверки «поле не пустое» — плохая сделка.
+//
+// Теперь наружу уходят только идентификаторы (они не секрет) и булевы флаги. Всё, что нужно
+// решить о подключении, решается на сервере: computeWaStatus в wa-connection.server.ts.
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
@@ -17,6 +22,24 @@ async function assertSalonAccess(supabase: any, userId: string, salonId: string)
   if (!data) throw new Error("Forbidden");
 }
 
+/**
+ * Ручной ввод реквизитов — только для владельца платформы.
+ *
+ * Это путь для салона, у которого своё приложение Meta: он требует понимать, что такое WABA ID,
+ * системный пользователь и app secret. Владелец салона такого знать не должен и не будет — для
+ * него есть кнопка. Оставлять форму всем значит гарантированно получить салон, который вписал
+ * туда что-то не то и не понимает, почему молчит.
+ */
+async function assertSuperAdmin(supabase: any, userId: string) {
+  const { data } = await supabase
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", userId)
+    .eq("role", "super_admin")
+    .maybeSingle();
+  if (!data) throw new Error("Forbidden: super_admin only");
+}
+
 function publicBaseUrl(): string {
   return process.env.PUBLIC_APP_URL?.replace(/\/$/, "") || "https://qabyl.com";
 }
@@ -27,7 +50,7 @@ function genToken(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** The message kinds that can fall outside Meta's 24-hour window and therefore need a template. */
+/** Виды сообщений, которые могут выпасть из 24-часового окна и потому требуют шаблона. */
 const TEMPLATE_KINDS = [
   "confirmation",
   "reminder",
@@ -37,49 +60,37 @@ const TEMPLATE_KINDS = [
   "owner_change",
 ] as const;
 
-// BOTH fields are optional on the way IN, deliberately. The form builds these entries key by key as
-// the owner types, so a half-filled row — a template name with the language box still untouched — is
-// the NORMAL intermediate state, not a malformed request. Requiring `lang` here made the whole save
-// fail on a zod error, taking the credentials down with it and showing the owner a raw validator
-// dump; the language is defaulted to "ru" in the handler anyway, and a row with no name is dropped
-// there rather than rejected.
-const templateSchema = z.record(
-  z.string(),
-  z
-    .object({ name: z.string().max(128).optional(), lang: z.string().max(16).optional() })
-    .nullable(),
-);
-
+/**
+ * Настройки канала для экрана. Ни одного секрета.
+ *
+ * `verify_token` и `webhook_url` — исключение только на вид: это значения, которые владелец
+ * ПЕРЕНОСИТ в чужой интерфейс при ручной настройке, и без них та ветка не работает вовсе. Оба
+ * бесполезны в отрыве от нашего сервера: verify-токен участвует только в GET-рукопожатии, а адрес
+ * вебхука и так публичен.
+ */
 export const getWaCloudConfig = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => z.object({ salonId: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
     await assertSalonAccess(context.supabase, context.userId, data.salonId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const [{ data: row }, { data: salon }] = await Promise.all([
-      supabaseAdmin.from("salon_secrets").select("*").eq("salon_id", data.salonId).maybeSingle(),
-      supabaseAdmin
-        .from("salons")
-        .select("wa_provider, wa_cloud_templates_ready")
-        .eq("id", data.salonId)
-        .maybeSingle(),
-    ]);
+    const { computeWaStatus } = await import("@/lib/wa-connection.server");
+
+    const { data: row } = await supabaseAdmin
+      .from("salon_secrets")
+      .select("*")
+      .eq("salon_id", data.salonId)
+      .maybeSingle();
 
     const s = (row ?? {}) as Record<string, any>;
 
-    // Generated on first open rather than made a manual step: the salon has to paste it into Meta
-    // during setup, and a field that starts empty with a "generate" button is one more thing to
-    // forget. Stable afterwards.
+    // Генерируется при первом открытии, а не отдельной кнопкой: при ручной настройке владелец
+    // обязан вставить его в кабинет Meta, и поле, которое начинается пустым, просто забывают.
     //
-    // CLAIMED CONDITIONALLY, AND READ BACK. A plain read-then-upsert loses a race that happens on
-    // literally the first render: React mounts the component twice in development, both calls see
-    // NULL, both generate a different token, and both write. The screen then shows whichever
-    // response resolved last while the database keeps whichever write landed last — and the owner
-    // pastes a verify token into Meta that we will never accept, with nothing anywhere explaining
-    // why the handshake fails. Observed on the very first load of this screen.
-    //
-    // So: make sure the row exists, claim the token only while the column is still empty, then
-    // return what is ACTUALLY stored rather than what this call generated.
+    // ЗАБИРАЕТСЯ УСЛОВНО И ПЕРЕЧИТЫВАЕТСЯ. Простое «прочитать и записать» проигрывает гонку на
+    // самом первом рендере: React в разработке монтирует компонент дважды, оба вызова видят NULL,
+    // оба генерируют РАЗНОЕ значение и оба пишут. На экране остаётся одно, в базе другое, и
+    // владелец вставляет в Meta токен, который мы никогда не примем.
     let verifyToken = s.whatsapp_cloud_verify_token ?? null;
     if (!verifyToken) {
       await supabaseAdmin
@@ -98,91 +109,38 @@ export const getWaCloudConfig = createServerFn({ method: "POST" })
       verifyToken = (fresh as any)?.whatsapp_cloud_verify_token ?? null;
     }
 
-    // Токен моста Make — по той же схеме и по той же причине, что и verify_token выше: он нужен
-    // владельцу для вставки в сценарий, а поле с кнопкой «сгенерировать» — лишний шаг, который
-    // забывают. Сам по себе токен мост не включает: маршрут отправки требует ещё и адрес
-    // вебхука, поэтому у салона, который Make не касался, он просто лежит неиспользованным.
-    let makeToken = s.wa_make_token ?? null;
-    if (!makeToken) {
-      await supabaseAdmin
-        .from("salon_secrets")
-        .upsert({ salon_id: data.salonId } as any, { onConflict: "salon_id" });
-      await supabaseAdmin
-        .from("salon_secrets")
-        .update({ wa_make_token: genToken() } as any)
-        .eq("salon_id", data.salonId)
-        .is("wa_make_token", null);
-      const { data: fresh } = await supabaseAdmin
-        .from("salon_secrets")
-        .select("wa_make_token")
-        .eq("salon_id", data.salonId)
-        .maybeSingle();
-      makeToken = (fresh as any)?.wa_make_token ?? null;
-    }
+    // Имена шаблонов не секрет — они видны в кабинете Meta и нужны экрану, чтобы объяснить, что
+    // именно на модерации. Статус приходит оттуда же, из синхронизации с Meta.
+    const templates = (s.whatsapp_cloud_templates ?? {}) as Record<
+      string,
+      { name?: string; lang?: string; status?: string; reason?: string } | undefined
+    >;
 
     return {
-      make_token: (makeToken ?? "") as string,
-      make_outbound_url: (s.wa_make_outbound_url ?? "") as string,
-      make_inbound_url: `${publicBaseUrl()}/api/public/wamake/${data.salonId}`,
-      // Мостом салон считается только при обоих реквизитах: половина — это молчащий ассистент.
-      make_active: Boolean(s.wa_make_token && s.wa_make_outbound_url),
-      phone_number_id: s.whatsapp_cloud_phone_number_id ?? "",
-      token: s.whatsapp_cloud_token ?? "",
-      app_secret: s.whatsapp_cloud_app_secret ?? "",
-      waba_id: s.whatsapp_cloud_waba_id ?? "",
-      templates: (s.whatsapp_cloud_templates ?? {}) as Record<
-        string,
-        { name?: string; lang?: string } | undefined
-      >,
-      verify_token: verifyToken as string,
-      webhook_url: `${publicBaseUrl()}/api/public/wacloud/${data.salonId}`,
-      provider: ((salon as any)?.wa_provider ?? "green_api") as "green_api" | "cloud",
-      templates_ready: Boolean((salon as any)?.wa_cloud_templates_ready),
-      // Whether the hybrid safety net is still available — the UI warns when it is not.
-      has_green_api: Boolean(s.greenapi_instance && s.greenapi_token),
+      status: computeWaStatus(s as any),
+      // Идентификаторы. Не секреты: сами по себе не дают ничего без токена.
+      phone_number_id: (s.whatsapp_cloud_phone_number_id ?? "") as string,
+      waba_id: (s.whatsapp_cloud_waba_id ?? "") as string,
+      // Флаги вместо значений. Экрану нужно знать, заполнено ли поле, а не что в нём.
+      has_token: Boolean(s.whatsapp_cloud_token),
+      has_app_secret: Boolean(s.whatsapp_cloud_app_secret),
+      connection_kind: (s.wa_connection_kind ?? null) as string | null,
+      templates,
       template_kinds: TEMPLATE_KINDS as unknown as string[],
+      verify_token: (verifyToken ?? "") as string,
+      webhook_url: `${publicBaseUrl()}/api/public/wacloud/${data.salonId}`,
+      platform_webhook_url: `${publicBaseUrl()}/api/public/wacloud`,
     };
   });
 
 /**
- * Включить или выключить мост Make для салона.
+ * Ручное сохранение реквизитов. Только super_admin — см. assertSuperAdmin.
  *
- * Единственное, что владелец сюда вводит, — адрес custom webhook своего сценария Make. Токен
- * генерируется нами и только показывается. Пустая строка выключает мост: салон возвращается на
- * прямой Cloud API, если у него заполнены облачные реквизиты, и становится неподключённым, если
- * нет. Это и есть выключатель, которым мост гасится после выдачи Advanced Access.
+ * Пустая строка в токене означает «не менять», а не «стереть»: форма не показывает текущее
+ * значение (его больше нет в браузере), и трактовать пустое поле как удаление значило бы стирать
+ * рабочий токен каждый раз, когда кто-то поправил рядом стоящий WABA ID.
+ * Для удаления есть disconnectWa.
  */
-export const upsertWaMakeConfig = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((input) =>
-    z
-      .object({
-        salonId: z.string().uuid(),
-        outbound_url: z.string().max(500).nullable(),
-      })
-      .parse(input),
-  )
-  .handler(async ({ data, context }) => {
-    await assertSalonAccess(context.supabase, context.userId, data.salonId);
-
-    const url = data.outbound_url?.trim() || null;
-    // Мост шлёт наружу сообщения клиентов салона. Адрес, который случайно ввели с опечаткой в
-    // схеме, отправил бы их куда угодно — поэтому только https, и проверяем здесь, а не в
-    // транспорте: там уже поздно, там уже есть что отправлять.
-    if (url && !/^https:\/\/[^\s]+$/i.test(url)) {
-      throw new Error("Адрес вебхука Make должен начинаться с https://");
-    }
-
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { error } = await supabaseAdmin
-      .from("salon_secrets")
-      .upsert({ salon_id: data.salonId, wa_make_outbound_url: url } as any, {
-        onConflict: "salon_id",
-      });
-    if (error) throw new Error(error.message);
-    return { ok: true, active: Boolean(url) };
-  });
-
 export const upsertWaCloudConfig = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) =>
@@ -193,32 +151,42 @@ export const upsertWaCloudConfig = createServerFn({ method: "POST" })
         token: z.string().max(1024).nullable(),
         app_secret: z.string().max(128).nullable(),
         waba_id: z.string().max(64).nullable(),
-        templates: templateSchema.nullable().optional(),
       })
       .parse(input),
   )
   .handler(async ({ data, context }) => {
     await assertSalonAccess(context.supabase, context.userId, data.salonId);
+    await assertSuperAdmin(context.supabase, context.userId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
-    // Drop half-filled template rows rather than storing them: a kind whose name is blank must look
-    // exactly like a kind that was never configured, because that is what makes the outbound path
-    // fall back to Green-API instead of sending a template Meta will reject.
-    const cleanTemplates: Record<string, { name: string; lang: string }> = {};
-    for (const [kind, tpl] of Object.entries(data.templates ?? {})) {
-      const name = tpl?.name?.trim();
-      if (!name) continue;
-      cleanTemplates[kind] = { name, lang: tpl?.lang?.trim() || "ru" };
+    const phoneNumberId = data.phone_number_id?.trim() || null;
+
+    // Тот же запрет, что и на пути кнопки, и по той же причине: общий вебхук ищет салон ИМЕННО по
+    // номеру и с двумя совпадениями не знает, кому адресовано сообщение. Раньше эта проверка
+    // стояла только в finishWaOnboarding — то есть ручной путь её обходил.
+    if (phoneNumberId) {
+      const { data: taken } = await supabaseAdmin
+        .from("salon_secrets")
+        .select("salon_id")
+        .eq("whatsapp_cloud_phone_number_id", phoneNumberId)
+        .neq("salon_id", data.salonId)
+        .limit(1);
+      if (taken && taken.length > 0) {
+        throw new Error("Этот номер WhatsApp уже подключён к другому салону.");
+      }
     }
+
+    const token = data.token?.trim() || null;
+    const appSecret = data.app_secret?.trim() || null;
 
     const { error } = await supabaseAdmin.from("salon_secrets").upsert(
       {
         salon_id: data.salonId,
-        whatsapp_cloud_phone_number_id: data.phone_number_id?.trim() || null,
-        whatsapp_cloud_token: data.token?.trim() || null,
-        whatsapp_cloud_app_secret: data.app_secret?.trim() || null,
+        whatsapp_cloud_phone_number_id: phoneNumberId,
         whatsapp_cloud_waba_id: data.waba_id?.trim() || null,
-        ...(data.templates !== undefined ? { whatsapp_cloud_templates: cleanTemplates } : {}),
+        wa_connection_kind: "own_app",
+        ...(token ? { whatsapp_cloud_token: token, wa_token_status: "unknown" } : {}),
+        ...(appSecret ? { whatsapp_cloud_app_secret: appSecret } : {}),
       } as any,
       { onConflict: "salon_id" },
     );
@@ -227,177 +195,16 @@ export const upsertWaCloudConfig = createServerFn({ method: "POST" })
   });
 
 /**
- * Flip the salon between transports. THIS is the migration switch.
+ * Отвечает на единственный вопрос, который важен, когда сообщение клиента осталось без ответа:
+ * а Meta вообще звонила в наш вебхук?
  *
- * Switching to 'cloud' with incomplete credentials produces the worst failure mode there is: the
- * owner believes the number has moved, clients write, and the webhook silently 403s because there is
- * no app secret to verify the signature against. Refuse instead, naming exactly what is missing.
- *
- * Switching BACK to 'green_api' is never blocked — it is the rollback, and a rollback that can fail
- * validation is not a rollback.
- */
-export const setWaProvider = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((input) =>
-    z.object({ salonId: z.string().uuid(), provider: z.enum(["green_api", "cloud"]) }).parse(input),
-  )
-  .handler(async ({ data, context }) => {
-    await assertSalonAccess(context.supabase, context.userId, data.salonId);
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-
-    const warnings: string[] = [];
-    if (data.provider === "cloud") {
-      const [{ data: row }, { data: salon }] = await Promise.all([
-        supabaseAdmin.from("salon_secrets").select("*").eq("salon_id", data.salonId).maybeSingle(),
-        supabaseAdmin
-          .from("salons")
-          .select("wa_cloud_templates_ready")
-          .eq("id", data.salonId)
-          .maybeSingle(),
-      ]);
-      const s = (row ?? {}) as Record<string, any>;
-      const missing: string[] = [];
-      if (!s.whatsapp_cloud_phone_number_id) missing.push("Phone Number ID");
-      if (!s.whatsapp_cloud_token) missing.push("Access Token");
-      // Not optional, unlike Instagram's: without it the inbound POST has no authentication at all,
-      // and the route refuses every delivery.
-      if (!s.whatsapp_cloud_app_secret) missing.push("App Secret");
-      if (missing.length) {
-        throw new Error(`Сначала заполните и сохраните: ${missing.join(", ")}`);
-      }
-
-      // Not a refusal — a warning the owner must see before clients feel it. Outside the 24-hour
-      // window a salon in this state can send nothing at all: no template, no Green-API fallback.
-      const hasGreen = Boolean(s.greenapi_instance && s.greenapi_token);
-      const templatesReady = Boolean((salon as any)?.wa_cloud_templates_ready);
-      if (!hasGreen && !templatesReady) {
-        warnings.push(
-          "Green-API отключён, а шаблоны Meta ещё не одобрены: напоминания, перенос и отмена НЕ будут отправляться клиентам, которые писали больше 24 часов назад.",
-        );
-      }
-    }
-
-    const { error } = await supabaseAdmin
-      .from("salons")
-      .update({ wa_provider: data.provider } as any)
-      .eq("id", data.salonId);
-    if (error) throw new Error(error.message);
-    return { ok: true as const, warnings };
-  });
-
-export const setWaCloudTemplatesReady = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((input) =>
-    z.object({ salonId: z.string().uuid(), ready: z.boolean() }).parse(input),
-  )
-  .handler(async ({ data, context }) => {
-    await assertSalonAccess(context.supabase, context.userId, data.salonId);
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-
-    // Turning this ON tells the outbound path to stop using Green-API for out-of-window messages, so
-    // an empty template list here means those messages stop going out entirely.
-    if (data.ready) {
-      const { data: row } = await supabaseAdmin
-        .from("salon_secrets")
-        .select("whatsapp_cloud_templates")
-        .eq("salon_id", data.salonId)
-        .maybeSingle();
-      const templates = ((row as any)?.whatsapp_cloud_templates ?? {}) as Record<string, any>;
-      if (!Object.keys(templates).length) {
-        throw new Error(
-          "Сначала укажите имена одобренных шаблонов хотя бы для одного вида сообщений",
-        );
-      }
-    }
-
-    const { error } = await supabaseAdmin
-      .from("salons")
-      .update({ wa_cloud_templates_ready: data.ready } as any)
-      .eq("id", data.salonId);
-    if (error) throw new Error(error.message);
-    return { ok: true };
-  });
-
-/**
- * Live credential check against Meta, so the salon finds out the token is wrong HERE and not by
- * watching client messages go unanswered.
- *
- * Reads the phone number itself — the cheapest call that proves the token AND the phone number id
- * are both right, and it returns the display number so the owner can confirm they connected the one
- * they meant to.
- */
-export const testWaCloudConnection = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((input) => z.object({ salonId: z.string().uuid() }).parse(input))
-  .handler(async ({ data, context }) => {
-    await assertSalonAccess(context.supabase, context.userId, data.salonId);
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { data: row } = await supabaseAdmin
-      .from("salon_secrets")
-      .select("*")
-      .eq("salon_id", data.salonId)
-      .maybeSingle();
-
-    const s = (row ?? {}) as Record<string, any>;
-    const token = s.whatsapp_cloud_token ?? "";
-    const phoneNumberId = s.whatsapp_cloud_phone_number_id ?? "";
-    if (!token) return { ok: false as const, error: "Access Token не заполнен" };
-    if (!phoneNumberId) return { ok: false as const, error: "Phone Number ID не заполнен" };
-
-    const version = process.env.WA_CLOUD_API_VERSION || "v25.0";
-    try {
-      const res = await fetch(
-        `https://graph.facebook.com/${version}/${encodeURIComponent(phoneNumberId)}?fields=display_phone_number,verified_name,quality_rating`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-          signal: AbortSignal.timeout(10000),
-        },
-      );
-      const body: any = await res.json().catch(() => null);
-      if (!res.ok) {
-        const err = body?.error;
-        // 190 is the one an owner will actually hit: a system-user token that was revoked, or a
-        // temporary token that expired. Saying so beats echoing Meta's generic wording.
-        if (err?.code === 190) {
-          return {
-            ok: false as const,
-            error: "Токен недействителен или отозван — создайте новый в Meta Business Settings",
-          };
-        }
-        if (err?.code === 100) {
-          return {
-            ok: false as const,
-            error:
-              "Meta не знает такой Phone Number ID. Проверьте, что скопирован именно ID номера, а не сам номер телефона",
-          };
-        }
-        return {
-          ok: false as const,
-          error: err?.message ? `Meta: ${err.message}` : `Meta ответила ${res.status}`,
-        };
-      }
-      return {
-        ok: true as const,
-        phone: (body?.display_phone_number ?? null) as string | null,
-        name: (body?.verified_name ?? null) as string | null,
-        quality: (body?.quality_rating ?? null) as string | null,
-      };
-    } catch (e: any) {
-      return { ok: false as const, error: e?.message ?? String(e) };
-    }
-  });
-
-/**
- * Answer the one question that matters when a client's message goes unanswered: did Meta actually
- * call our webhook?
- *
- * Needs no new tables, because the three outcomes each leave their own trace:
- *   - Meta called and we accepted it → an inbound row on a whatsapp_cloud conversation
- *   - Meta called and we refused it  → a warn row in error_logs from source 'wacloud-webhook'
- *   - Meta never called              → neither
- * The third is the common one and is always a Meta-side setup problem (webhook field not subscribed,
- * app in development mode, the number not added to the app) — never something fixable on our side,
- * which is exactly what the salon needs to be told.
+ * Новых таблиц не требует, потому что у каждого из трёх исходов свой след:
+ *   • Meta позвонила и мы приняли  → входящее сообщение на диалоге whatsapp_cloud
+ *   • Meta позвонила и мы отказали → запись в error_logs от источника 'wacloud-webhook'
+ *   • Meta не звонила вовсе        → ни того, ни другого
+ * Третий — самый частый, и он всегда про настройку на стороне Meta (поле не подписано, приложение
+ * в режиме разработки, номер не добавлен), то есть никогда не чинится на нашей стороне. Это ровно
+ * то, что салону и надо сказать.
  */
 export const getWaCloudDiagnostics = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -424,10 +231,10 @@ export const getWaCloudDiagnostics = createServerFn({ method: "POST" })
             .limit(1)
             .maybeSingle()
         : Promise.resolve({ data: null }),
-      // "Last reply" must mean the last reply Meta actually ACCEPTED, not the last one we composed.
-      // A refused send still writes its row (the text is worth keeping for the admin) but with a
-      // null message id — counting those as success would report a healthy channel to a salon whose
-      // every answer is being bounced.
+      // «Последний ответ» обязан означать последний ответ, который Meta ПРИНЯЛА, а не последний,
+      // который мы сочинили. У отклонённой отправки строка тоже пишется (текст нужен панели), но
+      // без идентификатора сообщения — считать её успехом значит показывать здоровый канал салону,
+      // у которого отбивается каждый ответ.
       convIds.length
         ? supabaseAdmin
             .from("wa_messages")

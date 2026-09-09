@@ -59,6 +59,27 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Семантика состояний. До них каждый экран изобретал свою пару цветов —
+     emerald-600 в одном месте, green-700 в соседнем, — и ни одна не знала про
+     тёмную тему. Четыре роли на состояние: цвет текста/иконки, фон подложки,
+     рамка и цвет заливки для акцентов. */
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-success-surface: var(--success-surface);
+  --color-success-border: var(--success-border);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-warning-surface: var(--warning-surface);
+  --color-warning-border: var(--warning-border);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-info-surface: var(--info-surface);
+  --color-info-border: var(--info-border);
+  --color-danger: var(--danger);
+  --color-danger-foreground: var(--danger-foreground);
+  --color-danger-surface: var(--danger-surface);
+  --color-danger-border: var(--danger-border);
 }
 
 :root {
@@ -95,6 +116,25 @@
   --sidebar-accent-foreground: oklch(0.208 0.042 265.755);
   --sidebar-border: oklch(0.929 0.013 255.508);
   --sidebar-ring: oklch(0.704 0.04 256.788);
+
+  /* Контраст текста на подложке держится выше 4.5:1 — это не украшение, а условие
+     читаемости для тех, кто смотрит в телефон на солнце. */
+  --success: oklch(0.52 0.13 155);
+  --success-foreground: oklch(0.99 0 0);
+  --success-surface: oklch(0.96 0.03 155);
+  --success-border: oklch(0.86 0.07 155);
+  --warning: oklch(0.55 0.13 75);
+  --warning-foreground: oklch(0.99 0 0);
+  --warning-surface: oklch(0.97 0.04 85);
+  --warning-border: oklch(0.87 0.09 82);
+  --info: oklch(0.53 0.15 255);
+  --info-foreground: oklch(0.99 0 0);
+  --info-surface: oklch(0.96 0.03 255);
+  --info-border: oklch(0.86 0.07 255);
+  --danger: oklch(0.53 0.21 27);
+  --danger-foreground: oklch(0.99 0 0);
+  --danger-surface: oklch(0.96 0.03 27);
+  --danger-border: oklch(0.86 0.09 27);
 }
 
 .dark {
@@ -130,6 +170,25 @@
   --sidebar-accent-foreground: oklch(0.984 0.003 247.858);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.551 0.027 264.364);
+
+  /* В тёмной теме роли меняются местами: цвет становится СВЕТЛЫМ (иначе он тонет
+     в фоне), а подложка — тёмной и полупрозрачной, чтобы не выглядеть наклейкой. */
+  --success: oklch(0.78 0.15 155);
+  --success-foreground: oklch(0.18 0.03 155);
+  --success-surface: oklch(0.78 0.15 155 / 12%);
+  --success-border: oklch(0.78 0.15 155 / 32%);
+  --warning: oklch(0.82 0.14 85);
+  --warning-foreground: oklch(0.2 0.04 85);
+  --warning-surface: oklch(0.82 0.14 85 / 12%);
+  --warning-border: oklch(0.82 0.14 85 / 32%);
+  --info: oklch(0.75 0.13 255);
+  --info-foreground: oklch(0.18 0.03 255);
+  --info-surface: oklch(0.75 0.13 255 / 12%);
+  --info-border: oklch(0.75 0.13 255 / 32%);
+  --danger: oklch(0.72 0.18 22);
+  --danger-foreground: oklch(0.18 0.04 22);
+  --danger-surface: oklch(0.72 0.18 22 / 12%);
+  --danger-border: oklch(0.72 0.18 22 / 32%);
 }
 
 @layer base {
@@ -173,6 +232,89 @@
     textarea,
     select {
       font-size: 16px !important;
+    }
+  }
+}
+
+/*
+ * Движение.
+ *
+ * Правило одно: анимация показывает СОСТОЯНИЕ или ПЕРЕХОД, а не украшает. Всё, что
+ * ниже, короче 320 мс и работает на transform/opacity — то есть не заставляет
+ * браузер пересчитывать раскладку и не роняет скролл на слабом телефоне.
+ *
+ * prefers-reduced-motion выключает всё разом. Это не вежливость: у части людей
+ * движение на экране вызывает тошноту и головокружение, и «почти незаметная»
+ * анимация для них такая же проблема, как заметная.
+ */
+@layer utilities {
+  @keyframes qb-rise {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes qb-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes qb-pop {
+    0% { opacity: 0; transform: scale(0.86); }
+    60% { transform: scale(1.04); }
+    100% { opacity: 1; transform: scale(1); }
+  }
+  @keyframes qb-pulse-ring {
+    0% { transform: scale(0.9); opacity: 0.55; }
+    70% { transform: scale(1.5); opacity: 0; }
+    100% { transform: scale(1.5); opacity: 0; }
+  }
+  @keyframes qb-shimmer {
+    from { background-position: -180% 0; }
+    to { background-position: 180% 0; }
+  }
+
+  .qb-rise { animation: qb-rise 260ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .qb-fade { animation: qb-fade 200ms ease-out both; }
+  .qb-pop { animation: qb-pop 320ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+  /* Ступенчатое появление списка. Задержка задаётся переменной, а не классом на
+     каждый индекс: пятьдесят классов delay-N в сборке — это пятьдесят правил,
+     которые никто никогда не удалит. */
+  .qb-stagger > * { animation: qb-rise 260ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .qb-stagger > *:nth-child(1) { animation-delay: 0ms; }
+  .qb-stagger > *:nth-child(2) { animation-delay: 40ms; }
+  .qb-stagger > *:nth-child(3) { animation-delay: 80ms; }
+  .qb-stagger > *:nth-child(4) { animation-delay: 120ms; }
+  .qb-stagger > *:nth-child(5) { animation-delay: 160ms; }
+  .qb-stagger > *:nth-child(n + 6) { animation-delay: 200ms; }
+
+  /* Живой индикатор «идёт прямо сейчас»: точка с расходящимся кольцом. */
+  .qb-ping::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    background: currentColor;
+    animation: qb-pulse-ring 1.8s ease-out infinite;
+  }
+
+  .qb-skeleton {
+    background-image: linear-gradient(
+      90deg,
+      var(--color-muted) 0%,
+      color-mix(in oklch, var(--color-muted), var(--color-background) 60%) 50%,
+      var(--color-muted) 100%
+    );
+    background-size: 200% 100%;
+    animation: qb-shimmer 1.4s linear infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .qb-rise,
+    .qb-fade,
+    .qb-pop,
+    .qb-stagger > *,
+    .qb-ping::after,
+    .qb-skeleton {
+      animation: none !important;
     }
   }
 }

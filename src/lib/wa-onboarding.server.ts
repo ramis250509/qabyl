@@ -7,11 +7,9 @@
 // Почему не переиспользуем wa-cloud.server.ts: тот работает с ОДНИМ салоном от его имени
 // (отправить сообщение, забрать медиа). Здесь наоборот — вызовы от имени приложения Qabyl над
 // чужим бизнесом, и права на них даёт статус Tech Provider.
-
-function graphBase(): string {
-  const version = process.env.WA_CLOUD_API_VERSION || "v25.0";
-  return `https://graph.facebook.com/${version}`;
-}
+//
+// Сеть, ретраи и разбор ошибок Meta живут в meta-graph.server.ts — здесь только смысл шагов.
+import { graphCall, humanGraphError } from "@/lib/meta-graph.server";
 
 export type OnboardingStep = {
   step: string;
@@ -21,17 +19,6 @@ export type OnboardingStep = {
   /** Человекочитаемая причина. Показывается владельцу, поэтому без кодов и стектрейсов. */
   detail?: string;
 };
-
-/** Разбирает ответ Graph API: у Meta ошибка приезжает с HTTP 200 не реже, чем с 4xx. */
-async function graphJson(res: Response): Promise<{ ok: boolean; json: any; error: string | null }> {
-  const json = await res.json().catch(() => ({}));
-  const err = json?.error;
-  if (!res.ok || err) {
-    const detail = err?.error_user_msg || err?.message || `HTTP ${res.status}`;
-    return { ok: false, json, error: String(detail) };
-  }
-  return { ok: true, json, error: null };
-}
 
 /**
  * Меняет одноразовый код из Embedded Signup на долгоживущий токен бизнеса.
@@ -48,17 +35,16 @@ export async function exchangeCodeForToken(
     return { ok: false, error: "META_APP_ID или META_APP_SECRET не заданы на сервере" };
   }
 
-  const url =
-    `${graphBase()}/oauth/access_token` +
-    `?client_id=${encodeURIComponent(appId)}` +
-    `&client_secret=${encodeURIComponent(appSecret)}` +
-    `&code=${encodeURIComponent(code)}`;
+  // Ретраев здесь НЕТ намеренно. Код одноразовый и живёт минуты: если Meta уже его приняла и
+  // ответ потерялся по дороге, второй запрос вернёт «код использован», и мы перепишем настоящую
+  // причину выдуманной. Лучше честно сказать «не получилось, нажмите ещё раз».
+  const res = await graphCall<{ access_token?: string }>("oauth/access_token", {
+    retries: 0,
+    query: { client_id: appId, client_secret: appSecret, code },
+  });
+  if (!res.ok) return { ok: false, error: humanGraphError(res.error) };
 
-  const res = await fetch(url, { method: "GET" });
-  const { ok, json, error } = await graphJson(res);
-  if (!ok) return { ok: false, error: error ?? "обмен кода не удался" };
-
-  const token = json?.access_token;
+  const token = res.data?.access_token;
   if (!token) return { ok: false, error: "Meta не вернула access_token" };
   return { ok: true, token: String(token) };
 }
@@ -70,14 +56,13 @@ export async function exchangeCodeForToken(
  * Адрес и поля подписки заданы один раз в настройках приложения — здесь только сама подписка.
  */
 export async function subscribeAppToWaba(wabaId: string, token: string): Promise<OnboardingStep> {
-  const res = await fetch(`${graphBase()}/${encodeURIComponent(wabaId)}/subscribed_apps`, {
+  const res = await graphCall(`${encodeURIComponent(wabaId)}/subscribed_apps`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
+    token,
   });
-  const { ok, error } = await graphJson(res);
-  return ok
+  return res.ok
     ? { step: "subscribe", ok: true }
-    : { step: "subscribe", ok: false, detail: error ?? "не удалось подписать приложение" };
+    : { step: "subscribe", ok: false, detail: humanGraphError(res.error) };
 }
 
 /**
@@ -95,18 +80,17 @@ export async function registerPhoneNumber(
   token: string,
   pin: string,
 ): Promise<OnboardingStep> {
-  const res = await fetch(`${graphBase()}/${encodeURIComponent(phoneNumberId)}/register`, {
+  const res = await graphCall(`${encodeURIComponent(phoneNumberId)}/register`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ messaging_product: "whatsapp", pin }),
+    token,
+    body: { messaging_product: "whatsapp", pin },
   });
-  const { ok, error } = await graphJson(res);
-  if (ok) return { step: "register", ok: true };
+  if (res.ok) return { step: "register", ok: true };
 
-  const already = /already.*registered|already exists/i.test(error ?? "");
+  const already = /already.*registered|already exists/i.test(res.error.message);
   return already
     ? { step: "register", ok: true, detail: "номер уже зарегистрирован" }
-    : { step: "register", ok: false, detail: error ?? "не удалось зарегистрировать номер" };
+    : { step: "register", ok: false, detail: humanGraphError(res.error) };
 }
 
 /**
@@ -165,27 +149,43 @@ export const NOTIFICATION_TEMPLATES = [
 ] as const;
 
 /**
- * Заводит пять шаблонов на WABA салона.
+ * Заводит комплект шаблонов на WABA салона.
  *
  * Ради этого шага всё и затевалось: владелица салона не должна видеть редактор шаблонов Meta —
  * он съедает пробелы перед переменными, дописывает скобки к `{{` и уносит длинное тире в конец
- * строки. Пять штук руками стоят часа и нескольких отказов.
+ * строки. Шесть штук руками стоят часа и нескольких отказов.
  *
  * Уже существующий шаблон пропускаем, а не считаем ошибкой: повторный прогон — штатная ситуация
- * (переподключили салон, добавили шестой шаблон).
+ * (переподключили салон, добавили седьмой шаблон).
+ *
+ * СОЗДАН ≠ ОДОБРЕН. Meta принимает шаблон в статусе PENDING и модерирует его отдельно, от минут
+ * до часов. Поэтому статус здесь проставляется PENDING, а не APPROVED, и решение «можно ли уже
+ * слать» принимается не тут, а в refreshWaConnection, которая спрашивает Meta. Раньше флаг
+ * готовности поднимался по факту создания — и каждое напоминание вне окна падало с 132000.
+ *
+ * Ретраи выключены: создание не идемпотентно на нашей стороне, а повтор уже принятого шаблона
+ * вернёт «уже существует» и замаскирует настоящую причину первой неудачи.
  */
 export async function createNotificationTemplates(
   wabaId: string,
   token: string,
-): Promise<{ steps: OnboardingStep[]; templates: Record<string, { name: string; lang: string }> }> {
+): Promise<{
+  steps: OnboardingStep[];
+  templates: Record<string, { name: string; lang: string; status: string; status_at: string }>;
+}> {
   const steps: OnboardingStep[] = [];
-  const templates: Record<string, { name: string; lang: string }> = {};
+  const templates: Record<
+    string,
+    { name: string; lang: string; status: string; status_at: string }
+  > = {};
+  const now = new Date().toISOString();
 
   for (const tpl of NOTIFICATION_TEMPLATES) {
-    const res = await fetch(`${graphBase()}/${encodeURIComponent(wabaId)}/message_templates`, {
+    const res = await graphCall(`${encodeURIComponent(wabaId)}/message_templates`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
+      token,
+      retries: 0,
+      body: {
         name: tpl.name,
         language: "ru",
         category: "UTILITY",
@@ -195,20 +195,28 @@ export async function createNotificationTemplates(
           // достаточно: Meta проверяет шаблон, а не перебирает варианты.
           { type: "BODY", text: tpl.body, example: { body_text: [[...tpl.examples]] } },
         ],
-      }),
+      },
     });
 
-    const { ok, error } = await graphJson(res);
     // Об уже существующем шаблоне Meta сообщает минимум двумя разными фразами, и вторая —
     // «There is already Russian content for this template» — слов "already exists" не содержит.
     // Проверка на одну только первую превращала штатный повторный прогон в четыре отказа подряд.
-    const already = /already exists|there is already .+ content for this template/i.test(
-      error ?? "",
-    );
-    if (ok || already) {
+    const already =
+      !res.ok &&
+      /already exists|there is already .+ content for this template/i.test(res.error.message);
+
+    if (res.ok || already) {
       // Имя записываем в обоих случаях: салону нужно, чтобы отправка знала, чем слать, а
       // существовал шаблон до нас или создан сейчас — для этого безразлично.
-      templates[tpl.kind] = { name: tpl.name, lang: "ru" };
+      //
+      // Статус существующего ставим UNKNOWN, а не PENDING: мы про него ничего не знаем, он мог
+      // быть одобрен полгода назад или отклонён вчера. Настоящий придёт из синхронизации.
+      templates[tpl.kind] = {
+        name: tpl.name,
+        lang: "ru",
+        status: already ? "UNKNOWN" : "PENDING",
+        status_at: now,
+      };
       steps.push({
         step: `template:${tpl.name}`,
         ok: true,
@@ -216,7 +224,11 @@ export async function createNotificationTemplates(
         detail: already ? "уже существует" : undefined,
       });
     } else {
-      steps.push({ step: `template:${tpl.name}`, ok: false, detail: error ?? "отклонён" });
+      steps.push({
+        step: `template:${tpl.name}`,
+        ok: false,
+        detail: humanGraphError(res.error),
+      });
     }
   }
 
