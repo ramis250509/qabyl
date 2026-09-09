@@ -667,7 +667,6 @@ function WhatsAppStep({
 // ---------------------------------------------------------------------------
 
 function DoneStep({ slug, salonName }: { slug: string; salonName: string }) {
-  const navigate = useNavigate();
   const url = typeof window !== "undefined" ? `${window.location.origin}/book/${slug}` : "";
   const [copied, setCopied] = useState(false);
 
@@ -713,7 +712,13 @@ function DoneStep({ slug, salonName }: { slug: string; salonName: string }) {
         </Button>
       </div>
 
-      <Button size="lg" onClick={() => navigate({ to: "/admin", replace: true })}>
+      {/* Жёсткий переход, а не router.navigate. Роль salon_admin появилась в базе минуту назад,
+          но в текущей сессии её ещё нет: useAuth грузит роли один раз на идентификатор
+          пользователя и по своим ссылкам-охранникам не станет перезапрашивать. Мягкий переход
+          привёл бы в /admin, где охранник не увидел бы роли и отправил владельца обратно сюда —
+          по кругу. Перезагрузка страницы читает роли заново и стоит одну секунду ровно один раз
+          за всю жизнь аккаунта. */}
+      <Button size="lg" onClick={() => window.location.assign("/admin")}>
         Перейти в кабинет
         <ArrowRight className="ml-2 h-4 w-4" />
       </Button>
@@ -859,7 +864,7 @@ function OnboardingWizard() {
                 icon={MessageCircle}
                 title="Салон настроен"
                 body="Ссылку для клиентов можно взять в кабинете, в настройках салона."
-                action={{ label: "В кабинет", onClick: () => navigate({ to: "/admin" }) }}
+                action={{ label: "В кабинет", onClick: () => window.location.assign("/admin") }}
               />
             ))}
         </Card>
