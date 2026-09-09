@@ -129,48 +129,96 @@ function Landing() {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(LANDING_JSON_LD) }}
       />
+      {/* Кнопка на посадочной вела в /admin — то есть в редирект на вход. Для человека, который
+          видит Qabyl впервые, это тупик: он не понял, можно ли попробовать. Главное действие
+          теперь одно и называется тем, что делает. */}
       <header className="border-b">
-        <div className="container mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="font-semibold text-lg">Qabyl</div>
+        <div className="container mx-auto flex h-16 items-center justify-between px-4">
+          <div className="text-lg font-semibold">Qabyl</div>
           <div className="flex gap-2">
             <Link to="/auth">
               <Button variant="ghost">Войти</Button>
             </Link>
-            <Link to="/admin">
-              <Button>Админ-панель</Button>
+            <Link to="/auth">
+              <Button>Начать бесплатно</Button>
             </Link>
           </div>
         </div>
       </header>
 
-      <main className="container mx-auto px-4 py-20">
-        <div className="text-center max-w-3xl mx-auto">
-          <h1 className="text-5xl font-bold tracking-tight">Онлайн-запись для вашего бизнеса</h1>
-          <p className="mt-6 text-xl text-muted-foreground">
-            Управляйте записями из одной панели: салоны красоты, барбершопы, массаж, косметология,
-            клиники и другие услуги. WhatsApp-подтверждения, календарь специалистов, отчёты — всё в
-            одном месте.
+      <main className="container mx-auto px-4 py-16 sm:py-20">
+        <div className="mx-auto max-w-3xl text-center">
+          <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
+            Записывайте клиентов, пока вы работаете
+          </h1>
+          <p className="mt-6 text-lg text-muted-foreground sm:text-xl">
+            Qabyl отвечает клиентам в WhatsApp, подбирает свободное время и записывает их сам —
+            круглосуточно. Салоны красоты, барбершопы, массаж, косметология, клиники.
           </p>
-          <div className="mt-8 flex gap-3 justify-center">
-            <Link to="/admin">
-              <Button size="lg">Перейти в панель</Button>
+          <div className="mt-8 flex flex-wrap justify-center gap-3">
+            <Link to="/auth">
+              <Button size="lg">Создать салон за 5 минут</Button>
             </Link>
           </div>
+          <p className="mt-3 text-sm text-muted-foreground">
+            Без установки и без разработчика. Карта для старта не нужна.
+          </p>
         </div>
 
-        <div className="grid md:grid-cols-4 gap-4 mt-20">
+        {/* Три шага вместо списка возможностей. Возможности отвечают на вопрос «что умеет», а
+            человек на этой странице задаёт другой: «сколько мне это будет стоить усилий». */}
+        <div className="mx-auto mt-20 grid max-w-4xl gap-6 sm:grid-cols-3">
           {[
-            { icon: Calendar, title: "Календарь мастеров", desc: "День/неделя, drag-and-drop" },
-            { icon: Users, title: "Мульти-бизнес", desc: "Один кабинет, много точек" },
-            { icon: MessageCircle, title: "WhatsApp", desc: "Автоподтверждение записей" },
-            { icon: BarChart3, title: "Статистика", desc: "Выручка, загрузка, ТОП" },
+            {
+              n: "1",
+              title: "Заведите салон",
+              desc: "Название, сфера, город. Прайс подставим готовый — останется поправить цены.",
+            },
+            {
+              n: "2",
+              title: "Подключите WhatsApp",
+              desc: "Одна кнопка и вход в Facebook. WhatsApp Business на телефоне продолжит работать.",
+            },
+            {
+              n: "3",
+              title: "Получайте записи",
+              desc: "Клиент пишет — ассистент отвечает и записывает. Вы видите всё в календаре.",
+            },
+          ].map((s) => (
+            <div key={s.n}>
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
+                {s.n}
+              </div>
+              <h3 className="mt-3 font-semibold">{s.title}</h3>
+              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{s.desc}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-20 grid gap-4 md:grid-cols-4">
+          {[
+            { icon: MessageCircle, title: "Ассистент в WhatsApp", desc: "Отвечает и записывает 24/7" },
+            { icon: Calendar, title: "Календарь мастеров", desc: "День и неделя, перенос мышкой" },
+            { icon: Users, title: "Филиалы и команда", desc: "Один кабинет, много точек" },
+            { icon: BarChart3, title: "Статистика", desc: "Выручка, загрузка, топ услуг" },
           ].map((f) => (
             <Card key={f.title} className="p-6">
-              <f.icon className="h-8 w-8 text-primary mb-3" />
+              <f.icon className="mb-3 h-8 w-8 text-primary" />
               <h3 className="font-semibold">{f.title}</h3>
-              <p className="text-sm text-muted-foreground mt-1">{f.desc}</p>
+              <p className="mt-1 text-sm text-muted-foreground">{f.desc}</p>
             </Card>
           ))}
+        </div>
+
+        <div className="mx-auto mt-20 max-w-2xl rounded-2xl border bg-card p-8 text-center">
+          <h2 className="text-2xl font-semibold tracking-tight">Попробуйте на своём салоне</h2>
+          <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
+            Настройка занимает пять минут, и после неё у вас уже есть страница записи, которую можно
+            отправить клиентам.
+          </p>
+          <Link to="/auth" className="mt-6 inline-block">
+            <Button size="lg">Начать бесплатно</Button>
+          </Link>
         </div>
       </main>
 

@@ -147,7 +147,11 @@ export type AuditEntry = {
     | "master_changed"
     | "contact_changed"
     | "deleted";
-  detail: Record<string, unknown>;
+  // Не Record<string, unknown>: сериализатор серверных функций требует, чтобы КАЖДОЕ значение
+  // было заведомо сериализуемым, а `unknown` таковым не считается — из-за этого вся функция
+  // getAppointmentHistory не проходила проверку типов. Здесь лежат только значения из jsonb,
+  // и этот союз описывает их точнее, чем `unknown`.
+  detail: Record<string, string | number | boolean | null | undefined>;
   at: string;
   actor: string;
 };

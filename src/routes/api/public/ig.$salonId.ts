@@ -977,7 +977,10 @@ async function fetchMediaBytes(opts: {
   const withQueryToken = (u: string) =>
     token ? `${u}${u.includes("?") ? "&" : "?"}access_token=${encodeURIComponent(token)}` : u;
 
-  const strategies: { name: string; run: () => Promise<{ bytes: Uint8Array; mime: string } | null> }[] =
+  // Тип объявлен через ReturnType самой загрузки, а не переписан от руки. Переписанный терял
+  // status и target — те самые два поля, ради которых ниже читается HTML-страница вместо
+  // картинки, — и разбор причины отказа Meta не проходил проверку типов.
+  const strategies: { name: string; run: () => ReturnType<typeof download> }[] =
     [
       { name: "webhook-url", run: () => download(url, {}) },
       {

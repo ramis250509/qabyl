@@ -23,6 +23,7 @@ import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
 import { Check, Eye, EyeOff, Mail } from "lucide-react";
+import { SkeletonBlock } from "@/components/ui/status";
 
 export const Route = createFileRoute("/auth")({
   head: () => ({ meta: [{ title: "Вход — Qabyl" }] }),
@@ -130,7 +131,22 @@ function AuthPage() {
     }
   }
 
-  if (checking) return null;
+  // Пока проверяем сессию, показываем каркас формы, а не пустоту. Возврат null давал белый экран
+  // на всё время запроса — на медленной сети это секунда-две, и выглядит она как «сайт не
+  // открылся», а не как «идёт загрузка».
+  if (checking) {
+    return (
+      <Shell>
+        <div className="space-y-4">
+          <SkeletonBlock className="h-7 w-24" />
+          <SkeletonBlock className="h-4 w-3/4" />
+          <SkeletonBlock className="mt-6 h-10 w-full" />
+          <SkeletonBlock className="h-10 w-full" />
+          <SkeletonBlock className="h-11 w-full" />
+        </div>
+      </Shell>
+    );
+  }
 
   if (mode === "check-inbox") {
     return (

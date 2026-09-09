@@ -166,7 +166,15 @@ function IndustrySelectCard({ salonId }: { salonId: string }) {
   );
 }
 
+// Вкладка живёт в адресе, а не только в состоянии компонента. Причина продуктовая: чеклист на
+// дашборде обещает «Подключить» и обязан приводить в раздел WhatsApp, а не на первую вкладку, где
+// владельцу заново искать. Побочно это чинит и обычное «отправь мне ссылку на эту страницу».
 export const Route = createFileRoute("/admin/salons/$salonId")({
+  // Поле возвращается ТОЛЬКО когда оно есть. Вернуть `{ tab: undefined }` — не то же самое:
+  // роутер выводит из этого обязательный параметр, и каждая существующая ссылка на страницу
+  // салона перестаёт компилироваться, требуя `search={{ tab: undefined }}`.
+  validateSearch: (search: Record<string, unknown>): { tab?: string } =>
+    typeof search.tab === "string" ? { tab: search.tab } : {},
   component: SalonEdit,
 });
 
@@ -192,186 +200,26 @@ const TIMEZONES: { value: string; label: string }[] = [
   { value: "Europe/Istanbul", label: "Стамбул (UTC+3)" },
 ];
 
-// Guided first-run setup. Complements (does not replace) the full tab config: one step per main
-// section (Салон · Услуги · Мастера · Сайт), each deep-linking to its tab, with live progress,
-// disappearing once all are done. Pattern: the dismissible onboarding checklist used by
-// Stripe/Notion, not a blocking modal.
-function OnboardingChecklist({
-  salon,
-  activeTab,
-  onGoTo,
-}: {
-  salon: any;
-  activeTab: string;
-  onGoTo: (tab: string) => void;
-}) {
-  const [counts, setCounts] = useState<{ services: number; masters: number } | null>(null);
-  const dismissKey = `qabyl:onboarding-dismissed:${salon.id}`;
-  const [dismissed, setDismissed] = useState(false);
-
-  useEffect(() => {
-    try {
-      setDismissed(localStorage.getItem(dismissKey) === "1");
-    } catch {
-      /* localStorage unavailable — just show the checklist */
-    }
-  }, [dismissKey]);
-
-  // Re-count whenever the salon changes or the user switches tabs, so the progress updates after
-  // they add a service/master and come back. Uses GET + count (limit 1), not HEAD: authenticated
-  // HEAD count requests intermittently 503 on the free tier under the page's concurrent load burst.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const [s, m] = await Promise.all([
-        supabase
-          .from("services")
-          .select("id", { count: "exact" })
-          .eq("salon_id", salon.id)
-          .limit(1),
-        supabase.from("masters").select("id", { count: "exact" }).eq("salon_id", salon.id).limit(1),
-      ]);
-      if (cancelled) return;
-      setCounts({ services: s.count ?? 0, masters: m.count ?? 0 });
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [salon.id, activeTab]);
-
-  if (!counts || dismissed) return null;
-
-  // One step per main section, in the same order as the tabs (Салон · Услуги · Мастера · Сайт).
-  const steps = [
-    {
-      done: !!(salon.phone?.trim() || salon.address?.trim()),
-      title: "Салон и график",
-      desc: "Контакты, часовой пояс и часы работы",
-      tab: "salon",
-    },
-    {
-      done: counts.services > 0,
-      title: "Услуги",
-      desc: "На что клиент может записаться",
-      tab: "services",
-    },
-    {
-      done: counts.masters > 0,
-      title: "Мастера",
-      desc: "Кто оказывает услуги и когда работает",
-      tab: "masters",
-    },
-    {
-      done: !!(salon.about_text?.trim() || salon.hero_title?.trim() || salon.hero_image_url),
-      title: "Сайт салона",
-      desc: "Оформите страницу, которую увидят клиенты",
-      tab: "site",
-    },
-  ];
-
-  const doneCount = steps.filter((s) => s.done).length;
-  // Fully configured — no reason to keep nudging.
-  if (doneCount === steps.length) return null;
-
-  // Bookable once there's at least one service and one master (the schedule always exists).
-  const ready = counts.services > 0 && counts.masters > 0;
-  const nextStep = steps.find((s) => !s.done);
-
-  function dismiss() {
-    try {
-      localStorage.setItem(dismissKey, "1");
-    } catch {
-      /* ignore */
-    }
-    setDismissed(true);
-  }
-
-  return (
-    <Card className="p-5 sm:p-6 space-y-5">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <h2 className="text-lg font-semibold tracking-tight">Быстрый старт</h2>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            {ready
-              ? "Салон уже принимает записи. Осталось пара штрихов."
-              : "Настройте салон, чтобы начать принимать записи."}
-          </p>
-        </div>
-        <button
-          onClick={dismiss}
-          className="shrink-0 text-muted-foreground/70 hover:text-foreground transition-colors"
-          title="Скрыть"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-
-      <div className="flex items-center gap-3">
-        <div className="h-1.5 flex-1 rounded-full bg-muted overflow-hidden">
-          <div
-            className="h-full rounded-full bg-primary transition-all duration-500"
-            style={{ width: `${(doneCount / steps.length) * 100}%` }}
-          />
-        </div>
-        <span className="text-sm font-medium tabular-nums text-muted-foreground shrink-0">
-          {doneCount} из {steps.length}
-        </span>
-      </div>
-
-      <div className="divide-y">
-        {steps.map((s) => {
-          const isNext = s === nextStep;
-          return (
-            <div key={s.tab} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
-              {s.done ? (
-                <CheckCircle2 className="h-5 w-5 shrink-0 text-primary" />
-              ) : (
-                <Circle className="h-5 w-5 shrink-0 text-muted-foreground/40" />
-              )}
-              <div className="min-w-0 flex-1">
-                <p
-                  className={`text-sm font-medium ${s.done ? "text-muted-foreground line-through" : ""}`}
-                >
-                  {s.title}
-                </p>
-                {!s.done && <p className="text-xs text-muted-foreground mt-0.5">{s.desc}</p>}
-              </div>
-              {!s.done && (
-                <Button
-                  size="sm"
-                  variant={isNext ? "default" : "outline"}
-                  onClick={() => onGoTo(s.tab)}
-                  className="shrink-0"
-                >
-                  Настроить
-                  <ArrowRight className="h-3.5 w-3.5 ml-1" />
-                </Button>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </Card>
-  );
-}
-
 function SalonEdit() {
   const { salonId } = Route.useParams();
+  const { tab: tabFromUrl } = Route.useSearch();
   const navigate = useNavigate();
   const { isSuperAdmin } = useAuth();
   const [salon, setSalon] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState("salon");
+  const [activeTab, setActiveTab] = useState(tabFromUrl ?? "salon");
   const tabsRef = useRef<HTMLDivElement>(null);
   const branchesRef = useRef<HTMLDivElement>(null);
 
-  // Switch to a tab and bring its content into view, so onboarding "Настроить" never leaves
-  // the user hunting for the right section.
-  const goToTab = (tab: string) => {
-    setActiveTab(tab);
+  // Приход по ссылке с ?tab= должен ещё и подвести к нужному разделу: на телефоне вкладки
+  // оказываются ниже названия салона и шапки, и без прокрутки человек видит заголовок, а не то,
+  // за чем пришёл.
+  useEffect(() => {
+    if (!tabFromUrl || !salon) return;
+    setActiveTab(tabFromUrl);
     requestAnimationFrame(() =>
       tabsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
     );
-  };
+  }, [tabFromUrl, salon]);
 
   useEffect(() => {
     supabase
@@ -397,8 +245,6 @@ function SalonEdit() {
       </div>
 
       <SalonShareCard slug={salon.slug} name={salon.name} />
-
-      <OnboardingChecklist salon={salon} activeTab={activeTab} onGoTo={goToTab} />
 
       <div ref={tabsRef} className="scroll-mt-4">
         <Tabs value={activeTab} onValueChange={setActiveTab}>
