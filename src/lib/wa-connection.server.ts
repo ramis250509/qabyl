@@ -503,3 +503,231 @@ export async function logOnboardingEvent(
     /* журнал не обязан работать, чтобы работало подключение */
   }
 }
+
+// ---------------------------------------------------------------------------
+// Фоновая проверка
+// ---------------------------------------------------------------------------
+
+/**
+ * Обходит подключённые салоны и приводит их состояние в соответствие с реальностью.
+ *
+ * ЗАЧЕМ. Токен отзывают, WABA блокируют, шаблон отклоняют — и ни одно из этих событий не приходит
+ * к нам само (кроме шаблонов, но подписка на них появилась только что). Единственным способом
+ * узнать было молчание ассистента, о котором сообщал салон. Проверка раз в час превращает
+ * «клиенты не отвечают третий день» в «Qabyl написал вам, что доступ потерян».
+ *
+ * ПОЧЕМУ ПОСЛЕДОВАТЕЛЬНО, А НЕ ПАРАЛЛЕЛЬНО. Каждый салон — три-четыре запроса в Graph API, а
+ * лимит приложения составляет 200–5000 запросов в час в зависимости от статуса аккаунта.
+ * Двадцать салонов разом — это шестьдесят запросов в одну секунду; выше по потоку это выглядит
+ * как всплеск и портит именно тот показатель, который мы бережём. Проверка не срочная: минута
+ * туда-сюда ничего не решает.
+ *
+ * ЧТО СЧИТАЕТСЯ СОБЫТИЕМ. Не «состояние плохое», а «состояние ИСПОРТИЛОСЬ». Салон, у которого
+ * доступ отозван неделю назад и который об этом уже уведомлён, не должен получать по уведомлению
+ * в час — иначе колокольчик перестают открывать.
+ */
+export async function runWaHealthCheck(limit = 100): Promise<{
+  checked: number;
+  broken: number;
+  notified: number;
+}> {
+  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+  const { data: rows } = await supabaseAdmin
+    .from("salon_secrets")
+    .select("salon_id, whatsapp_cloud_phone_number_id, whatsapp_cloud_token, wa_token_status")
+    .not("whatsapp_cloud_phone_number_id", "is", null)
+    .not("whatsapp_cloud_token", "is", null)
+    .limit(limit);
+
+  let checked = 0;
+  let broken = 0;
+  let notified = 0;
+
+  for (const row of rows ?? []) {
+    const salonId = (row as any).salon_id as string;
+    const wasBroken = (row as any).wa_token_status === "invalid";
+
+    let status: WaStatus;
+    try {
+      status = await refreshWaConnection(salonId);
+    } catch (e) {
+      // Один салон не должен ронять обход остальных: сеть у Meta общая, а вот запись в базу —
+      // нет, и упавший upsert одного салона ничего не говорит о девятнадцати следующих.
+      console.error(`[wa-health] салон ${salonId}: ${(e as Error).message}`);
+      continue;
+    }
+    checked++;
+    if (status.level !== "error") continue;
+    broken++;
+
+    // Уведомляем только на ПЕРЕХОДЕ в поломку. Ежечасное напоминание об известной проблеме
+    // обесценивает колокольчик быстрее, чем чинится проблема.
+    if (wasBroken) continue;
+
+    try {
+      await supabaseAdmin.from("notifications").insert({
+        salon_id: salonId,
+        type: "wa.connection",
+        title: status.title,
+        body: status.body,
+      } as any);
+      notified++;
+    } catch {
+      /* уведомление не обязано долететь, чтобы состояние было записано */
+    }
+
+    const { logError } = await import("@/lib/error-log.server");
+    await logError({
+      source: "wa-health",
+      level: "error",
+      message: `WhatsApp салона не работает: ${status.title}`,
+      salonId,
+      context: { code: status.code },
+    });
+  }
+
+  return { checked, broken, notified };
+}
+
+// ---------------------------------------------------------------------------
+// События самой WABA
+// ---------------------------------------------------------------------------
+
+/**
+ * Разбирает вебхуки, адресованные не номеру, а аккаунту салона.
+ *
+ * ЧЕМ ОНИ ОТЛИЧАЮТСЯ ОТ СООБЩЕНИЙ. У обычного вебхука в полезной нагрузке есть
+ * `metadata.phone_number_id`, и по нему общий маршрут находит салон. У этих его нет вовсе:
+ * идентификатор WABA лежит в `entry[].id`, и других зацепок нет. Поэтому они не могут ехать по
+ * общему пути — их надо распознать раньше, иначе маршрут честно скажет «маршрутизировать не по
+ * чему» и выбросит.
+ *
+ * ЧТО ЛОВИМ:
+ *   • message_template_status_update — Meta закончила модерацию шаблона. Единственный способ
+ *     узнать об одобрении, не опрашивая Graph API по кругу.
+ *   • account_update — с аккаунтом что-то произошло: бан, ограничение, снятие ограничения,
+ *     изменение статуса проверки. Раньше это выяснялось молчанием ассистента.
+ *
+ * Возвращает true, если событие обработано и маршруту больше делать нечего.
+ */
+export async function handleWabaAccountEvent(payload: any): Promise<boolean> {
+  const entry = Array.isArray(payload?.entry) ? payload.entry[0] : null;
+  const changes = Array.isArray(entry?.changes) ? entry.changes : [];
+  const wabaId = entry?.id ? String(entry.id) : "";
+  if (!wabaId || changes.length === 0) return false;
+
+  const interesting = changes.filter(
+    (c: any) =>
+      c?.field === "message_template_status_update" ||
+      c?.field === "account_update" ||
+      c?.field === "template_category_update",
+  );
+  if (interesting.length === 0) return false;
+
+  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+  // Один WABA может обслуживать несколько салонов (сеть с общим бизнес-аккаунтом), поэтому не
+  // maybeSingle: событие касается их всех.
+  const { data: rows } = await supabaseAdmin
+    .from("salon_secrets")
+    .select("salon_id, whatsapp_cloud_templates")
+    .eq("whatsapp_cloud_waba_id", wabaId);
+
+  if (!rows || rows.length === 0) {
+    // Штатная ситуация: салон отключился, а подписка на стороне Meta ещё жива. Событие принято,
+    // адресата нет — обрабатывать нечего, но и ошибкой это не является.
+    return true;
+  }
+
+  const now = new Date().toISOString();
+
+  for (const change of interesting) {
+    const v = change?.value ?? {};
+
+    if (change.field === "message_template_status_update") {
+      const name = v?.message_template_name ? String(v.message_template_name) : "";
+      const status = String(v?.event ?? v?.new_status ?? "").toUpperCase();
+      if (!name || !status) continue;
+
+      for (const row of rows) {
+        const salonId = (row as any).salon_id as string;
+        const templates = ((row as any).whatsapp_cloud_templates ?? {}) as Record<
+          string,
+          WaTemplateState | undefined
+        >;
+        // Ищем по ИМЕНИ шаблона: вид сообщения знаем только мы, Meta оперирует именами.
+        const kind = Object.keys(templates).find((k) => templates[k]?.name === name);
+        if (!kind) continue;
+
+        const next = {
+          ...templates,
+          [kind]: {
+            ...templates[kind]!,
+            status,
+            status_at: now,
+            reason: v?.reason && v.reason !== "NONE" ? String(v.reason) : null,
+          },
+        };
+
+        await supabaseAdmin
+          .from("salon_secrets")
+          .update({ whatsapp_cloud_templates: next, wa_templates_synced_at: now } as any)
+          .eq("salon_id", salonId);
+
+        // Флаг готовности пересчитываем по ВСЕМУ комплекту, а не по одному пришедшему шаблону:
+        // отправка вне окна 24 часов опирается на него целиком, и «четыре из шести одобрены»
+        // означает ровно «нельзя», а не «наполовину можно».
+        const { approved, total } = countTemplates({ whatsapp_cloud_templates: next });
+        await supabaseAdmin
+          .from("salons")
+          .update({ wa_cloud_templates_ready: approved === total } as any)
+          .eq("id", salonId);
+
+        await logOnboardingEvent(salonId, crypto.randomUUID(), {
+          step: `template-status:${name}`,
+          ok: status === "APPROVED",
+          detail: status,
+          details: { reason: v?.reason ?? null },
+        });
+      }
+      continue;
+    }
+
+    if (change.field === "account_update") {
+      const event = String(v?.event ?? "").toUpperCase();
+      // Собственного поля «статус» у account_update нет — есть событие. Переводим его в тот же
+      // словарь, которым пользуется computeWaStatus, чтобы экран не учил второй язык.
+      const review =
+        event.includes("DISABLED") || event.includes("BAN")
+          ? "DISABLED"
+          : event.includes("RESTRICT")
+            ? "RESTRICTED"
+            : event.includes("REINSTATE") || event.includes("APPROVED")
+              ? "APPROVED"
+              : null;
+
+      for (const row of rows) {
+        const salonId = (row as any).salon_id as string;
+        if (review) {
+          await supabaseAdmin
+            .from("salon_secrets")
+            .update({
+              wa_account_review_status: review,
+              wa_last_error: review === "APPROVED" ? null : "Meta ограничила аккаунт WhatsApp",
+              wa_last_error_at: review === "APPROVED" ? null : now,
+            } as any)
+            .eq("salon_id", salonId);
+        }
+        await logOnboardingEvent(salonId, crypto.randomUUID(), {
+          step: "account-update",
+          ok: review === "APPROVED" || review === null,
+          detail: event || "без события",
+          details: v,
+        });
+      }
+    }
+  }
+
+  return true;
+}

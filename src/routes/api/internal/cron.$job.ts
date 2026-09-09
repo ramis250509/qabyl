@@ -2,6 +2,7 @@
 //   /api/internal/cron/digest              → Chief of Staff daily digest (Кэп)
 //   /api/internal/cron/sre-scan            → SRE new-error scan (Деби)
 //   /api/internal/cron/prepayment-expired  → tell the client their held slot was released
+//   /api/internal/cron/wa-health           → проверка подключений WhatsApp у всех салонов
 //
 // Called by pg_cron via net.http_post with header x-cron-secret (see migrations
 // 20260730120000 and 20260807130000).
@@ -73,6 +74,17 @@ export const Route = createFileRoute("/api/internal/cron/$job")({
             // Logged in full every run: a job whose whole purpose is "usually send nothing"
             // is indistinguishable from a broken one unless it says why it sent nothing.
             console.log(`[cron followups] ${JSON.stringify(report)}`);
+            return json({ ok: true, ...report });
+          }
+
+          // Здоровье подключений WhatsApp. К Telegram и ops-агентам отношения не имеет, поэтому
+          // стоит до их проверок: отсутствие настроенного чата не повод не проверять салоны.
+          if (job === "wa-health") {
+            const { runWaHealthCheck } = await import("@/lib/wa-connection.server");
+            const report = await runWaHealthCheck();
+            // Логируем каждый прогон целиком: задача, чей нормальный исход — «ничего не
+            // произошло», неотличима от сломанной, пока не скажет, ЧТО именно она проверила.
+            console.log(`[cron wa-health] ${JSON.stringify(report)}`);
             return json({ ok: true, ...report });
           }
 

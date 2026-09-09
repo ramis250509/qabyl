@@ -25,6 +25,15 @@ function AdminLayout() {
     if (!loading && !user) navigate({ to: "/auth" });
   }, [loading, user, navigate]);
 
+  // Роль появляется только после того, как салон заведён (create_salon_for_owner выдаёт
+  // salon_admin в той же транзакции). Пока её нет, идти в кабинет некуда — там всё пусто.
+  useEffect(() => {
+    if (loading || rolesLoading || !user) return;
+    if (!isSuperAdmin && !isSalonAdmin && !isMaster) {
+      navigate({ to: "/onboarding", replace: true });
+    }
+  }, [loading, rolesLoading, user, isSuperAdmin, isSalonAdmin, isMaster, navigate]);
+
   useEffect(() => { setMobileOpen(false); }, [location.pathname]);
 
   // Master should land on calendar — no dashboard available
@@ -69,17 +78,11 @@ function AdminLayout() {
 
   const hasAccess = isSuperAdmin || isSalonAdmin || isMaster;
 
-  if (!hasAccess) {
-    return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <div className="text-center max-w-md">
-          <h1 className="text-xl font-semibold">Нет доступа</h1>
-          <p className="text-muted-foreground mt-2">Этот аккаунт не имеет прав доступа в админ-панель.</p>
-          <Button className="mt-4" onClick={async () => { await signOutFromApp(); navigate({ to: "/auth", replace: true }); }}>Выйти</Button>
-        </div>
-      </div>
-    );
-  }
+  // Аккаунт без единой роли — это НЕ «нет доступа». Это человек, который только что
+  // зарегистрировался и ещё не завёл салон: раньше он упирался здесь в тупик, из которого не было
+  // выхода, кроме письма в поддержку. Отправляем его в мастер настройки — единственное место, где
+  // из такого состояния есть дорога дальше.
+  if (!hasAccess) return null;
 
   const navItems = (isMaster && !isSuperAdmin && !isSalonAdmin)
     ? [

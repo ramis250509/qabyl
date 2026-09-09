@@ -85,6 +85,13 @@ export const Route = createFileRoute("/api/public/wacloud")({
         }
         if (payload?.object && payload.object !== "whatsapp_business_account") return ack();
 
+        // События САМОГО аккаунта — модерация шаблонов и бан WABA — приходят без
+        // metadata.phone_number_id: адресат в них указан идентификатором WABA в entry[].id.
+        // Разбираем их до маршрутизации по номеру, иначе маршрут честно скажет «маршрутизировать
+        // не по чему» и выбросит единственное уведомление Meta о том, что салон заблокирован.
+        const { handleWabaAccountEvent } = await import("@/lib/wa-connection.server");
+        if (await handleWabaAccountEvent(payload)) return ack();
+
         // Единственный ключ маршрутизации. Парсер уже достаёт его из metadata, потому что тот же
         // идентификатор нужен и для дедупликации эха.
         const { phoneNumberId } = parseWaCloudWebhook(payload);
