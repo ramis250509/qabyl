@@ -170,17 +170,19 @@ export const listSalonEmployees = createServerFn({ method: "POST" })
       .eq("salon_id", data.salonId)
       .in("user_id", userIds.length ? userIds : ["00000000-0000-0000-0000-000000000000"]);
 
-    // Emails via admin.listUsers (paginated).
-    const allUsers: { id: string; email?: string }[] = [];
-    let page = 1;
-    while (true) {
-      const { data: list } = await supabaseAdmin.auth.admin.listUsers({ page, perPage: 1000 });
-      const users = list?.users ?? [];
-      allUsers.push(...users);
-      if (users.length < 1000) break;
-      page += 1;
-    }
-    const emailById = new Map(allUsers.map((u) => [u.id, u.email] as const));
+    // Почта — точечно по каждому известному идентификатору, а не перебором всех пользователей.
+    //
+    // Здесь стоял listUsers по 1000 на страницу в цикле до конца списка. У салона из трёх
+    // сотрудников это уже означало выгрузку ВСЕХ аккаунтов платформы на каждое открытие вкладки, и
+    // стоимость росла с числом клиентов Qabyl, а не с размером салона. На сотне салонов такой
+    // экран открывался бы секундами.
+    const found = await Promise.all(
+      userIds.map(async (id) => {
+        const { data } = await supabaseAdmin.auth.admin.getUserById(id);
+        return [id, data?.user?.email as string | undefined] as const;
+      }),
+    );
+    const emailById = new Map(found);
     const masterByUserId = new Map((masters ?? []).map((m: any) => [m.user_id, m] as const));
 
     return (roles ?? []).map((r: any) => ({

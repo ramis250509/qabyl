@@ -99,6 +99,7 @@ import { SalonDayOverridesCard } from "@/components/admin/SalonDayOverridesCard"
 import { AiAssistantTab } from "@/components/admin/AiAssistantTab";
 import { InstagramTab } from "@/components/admin/InstagramTab";
 import { WhatsAppCard } from "@/components/admin/WhatsAppCard";
+import { TeamAccessTab } from "@/components/admin/TeamAccessTab";
 import { GupshupCard } from "@/components/admin/GupshupCard";
 import { PrepaymentTab } from "@/components/admin/PrepaymentTab";
 import { ScheduleImportTab } from "@/components/admin/ScheduleImportTab";
@@ -261,6 +262,7 @@ function SalonEdit() {
               {(isSuperAdmin || salon.ai_assistant_enabled) && (
                 <TabsTrigger value="ai">Ассистент</TabsTrigger>
               )}
+              <TabsTrigger value="team">Команда</TabsTrigger>
               {isSuperAdmin && <TabsTrigger value="access">Доступ</TabsTrigger>}
               {isSuperAdmin && <TabsTrigger value="import">Импорт</TabsTrigger>}
             </TabsList>
@@ -326,6 +328,14 @@ function SalonEdit() {
               />
             </TabsContent>
           )}
+          {/* Приглашение сотрудников принадлежит владельцу салона. Серверная часть (rbac.functions)
+              была написана целиком и умела всё, но экрана к ней не существовало: дать доступ
+              администратору на ресепшене можно было только письмом в поддержку. */}
+          <TabsContent value="team">
+            <TeamAccessTab salonId={salonId} />
+          </TabsContent>
+
+          {/* «Доступ» — выдача салону ВЛАДЕЛЬЦА, то есть операция платформы, а не салона. */}
           {isSuperAdmin && (
             <TabsContent value="access">
               <AccessTab salonId={salonId} />
