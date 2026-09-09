@@ -22,7 +22,7 @@ const ROLE_LABELS: Record<AllowedRole, string> = {
 // salon_admin only within their own salon. Managers cannot promote themselves.
 async function assertCanManageEmployees(userId: string, salonId: string) {
   const mod = await import("@/integrations/supabase/client.server");
-    const supabaseAdmin = mod.supabaseAdmin as any;
+  const supabaseAdmin = mod.supabaseAdmin as any;
   const { data: roles, error } = await supabaseAdmin
     .from("user_roles")
     .select("role, salon_id")
@@ -44,7 +44,7 @@ async function audit(params: {
   after?: unknown;
 }) {
   const mod = await import("@/integrations/supabase/client.server");
-    const supabaseAdmin = mod.supabaseAdmin as any;
+  const supabaseAdmin = mod.supabaseAdmin as any;
   await supabaseAdmin.from("rbac_audit").insert({
     salon_id: params.salonId,
     actor_id: params.actorId,
@@ -93,7 +93,10 @@ export const inviteEmployee = createServerFn({ method: "POST" })
       while (!existing) {
         const { data: list } = await supabaseAdmin.auth.admin.listUsers({ page, perPage: 1000 });
         const users = list?.users ?? [];
-        existing = users.find((u: { id: string; email?: string }) => u.email?.toLowerCase() === data.email.toLowerCase());
+        existing = users.find(
+          (u: { id: string; email?: string }) =>
+            u.email?.toLowerCase() === data.email.toLowerCase(),
+        );
         if (existing || users.length < 1000) break;
         page += 1;
       }

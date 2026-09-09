@@ -31,7 +31,7 @@ type Step = {
   cta: string;
 };
 
-export function buildSetupSteps(p: Progress, salonId: string): Step[] {
+function buildSetupSteps(p: Progress, salonId: string): Step[] {
   const settings = `/admin/salons/${salonId}`;
   return [
     {
