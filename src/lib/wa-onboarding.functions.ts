@@ -79,7 +79,8 @@ export const finishWaOnboarding = createServerFn({ method: "POST" })
         salonId: z.string().uuid(),
         code: z.string().min(10).max(1024),
         wabaId: z.string().min(1).max(64),
-        phoneNumberId: z.string().min(1).max(64),
+        // В Phone Number First flow (ES v4) при coexistence Meta может вернуть только waba_id.
+        phoneNumberId: z.string().min(1).max(64).optional(),
         // Салон прошёл вариант coexistence: номер остаётся в приложении WhatsApp Business. От этого
         // зависит, каким вызовом привязывать аккаунт к кредитной линии YCloud.
         coexistence: z.boolean().optional(),
@@ -111,7 +112,9 @@ export const finishWaOnboarding = createServerFn({ method: "POST" })
 
     await record({ step: "start", ok: true });
 
-    await assertNotTakenByAnotherSalon(supabaseAdmin, data.salonId, data.phoneNumberId);
+    if (data.phoneNumberId) {
+      await assertNotTakenByAnotherSalon(supabaseAdmin, data.salonId, data.phoneNumberId);
+    }
 
     const exchanged = await exchangeCodeForToken(data.code);
     if (!exchanged.ok) {
@@ -120,8 +123,51 @@ export const finishWaOnboarding = createServerFn({ method: "POST" })
     }
     await record({ step: "token", ok: true });
 
+    // Phone Number First (ES v4): при coexistence Meta может вернуть только waba_id. Номер тогда
+    // берём из самой WABA — у только что подключённого салона он там один. Без этого подключение
+    // обрывалось бы на клиенте, а одноразовый код сгорал бы.
+    let phoneNumberId = data.phoneNumberId ?? "";
+    if (!phoneNumberId) {
+      const { graphCall } = await import("@/lib/meta-graph.server");
+      const list = await graphCall<{ data?: { id: string }[] }>(
+        `${encodeURIComponent(data.wabaId)}/phone_numbers`,
+        { token: exchanged.token, query: { fields: "id,display_phone_number,platform_type" } },
+      );
+      phoneNumberId = list.ok ? String(list.data?.data?.[0]?.id ?? "") : "";
+      await record({
+        step: "resolve-phone",
+        ok: Boolean(phoneNumberId),
+        detail: phoneNumberId ? undefined : "номер в аккаунте WhatsApp не найден",
+      });
+      if (!phoneNumberId) {
+        throw new Error("Meta не вернула номер телефона. Попробуйте подключить ещё раз.");
+      }
+      await assertNotTakenByAnotherSalon(supabaseAdmin, data.salonId, phoneNumberId);
+    }
+
     await record(await subscribeAppToWaba(data.wabaId, exchanged.token));
-    await record(await registerPhoneNumber(data.phoneNumberId, exchanged.token, genPin()));
+    // Coexistence определяем по самому номеру, а не только по событию окна. В Phone Number First
+    // flow (ES v4) coexistence запускается автоматически по введённому номеру, и полагаться на то,
+    // что событие называется FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING, нельзя. is_on_biz_app = true
+    // значит, что номер живёт и в приложении WhatsApp Business, и в Cloud API.
+    let coexistence = Boolean(data.coexistence);
+    {
+      const { graphCall } = await import("@/lib/meta-graph.server");
+      const info = await graphCall<{ is_on_biz_app?: boolean; platform_type?: string }>(
+        encodeURIComponent(phoneNumberId),
+        { token: exchanged.token, query: { fields: "is_on_biz_app,platform_type" } },
+      );
+      if (info.ok && info.data?.is_on_biz_app === true) coexistence = true;
+      await record(
+        { step: "detect-coexistence", ok: info.ok, detail: coexistence ? "coexistence" : "cloud" },
+        info.ok ? info.data : { error: info.error.message },
+      );
+    }
+
+    // Номер из coexistence уже зарегистрирован в Cloud API — Meta прямо велит пропустить регистрацию.
+    if (!coexistence) {
+      await record(await registerPhoneNumber(phoneNumberId, exchanged.token, genPin()));
+    }
 
     const { steps: tplSteps, templates } = await createNotificationTemplates(
       data.wabaId,
@@ -133,7 +179,7 @@ export const finishWaOnboarding = createServerFn({ method: "POST" })
       {
         salon_id: data.salonId,
         whatsapp_cloud_waba_id: data.wabaId,
-        whatsapp_cloud_phone_number_id: data.phoneNumberId,
+        whatsapp_cloud_phone_number_id: phoneNumberId,
         whatsapp_cloud_token: exchanged.token,
         whatsapp_cloud_templates: templates,
         // Через приложение Qabyl: вебхук общий, подпись — секретом платформы из окружения.
@@ -160,7 +206,7 @@ export const finishWaOnboarding = createServerFn({ method: "POST" })
     // в wa_payment_ready, и экран салона покажет «оплата не подключена», если не сработало.
     const { platformBillingEnabled, ycloudBindWaba } = await import("@/lib/ycloud.server");
     if (platformBillingEnabled()) {
-      const bind = await ycloudBindWaba(data.wabaId, Boolean(data.coexistence));
+      const bind = await ycloudBindWaba(data.wabaId, coexistence);
       await record(
         {
           step: "billing",
@@ -171,13 +217,33 @@ export const finishWaOnboarding = createServerFn({ method: "POST" })
               : "аккаунт привязан, но оплата не подключена"
             : bind.error,
         },
-        { coexistence: Boolean(data.coexistence), paymentMethodAttached: bind.paymentMethodAttached },
+        { coexistence, paymentMethodAttached: bind.paymentMethodAttached },
       );
       if (bind.ok && bind.paymentMethodAttached !== null) {
         await supabaseAdmin
           .from("salon_secrets")
           .update({ wa_payment_ready: bind.paymentMethodAttached } as any)
           .eq("salon_id", data.salonId);
+      }
+    }
+
+    // Coexistence: у Meta 24 часа на синхронизацию контактов и истории, иначе салон придётся
+    // отключить и провести через окно заново. Запросы разовые, данные приходят вебхуками
+    // smb_app_state_sync и history. Неудача не отменяет подключение — только пишется в журнал.
+    if (coexistence) {
+      const { graphCall } = await import("@/lib/meta-graph.server");
+      for (const syncType of ["smb_app_state_sync", "history"] as const) {
+        const res = await graphCall(`${encodeURIComponent(phoneNumberId)}/smb_app_data`, {
+          method: "POST",
+          token: exchanged.token,
+          retries: 1,
+          body: { messaging_product: "whatsapp", sync_type: syncType },
+        });
+        await record({
+          step: `sync:${syncType}`,
+          ok: res.ok,
+          detail: res.ok ? undefined : res.error.message,
+        });
       }
     }
 
@@ -193,7 +259,7 @@ export const finishWaOnboarding = createServerFn({ method: "POST" })
       // состояние по тому, что записали, и предложим проверить кнопкой.
       await record({ step: "verify", ok: false, detail: e?.message ?? "проверка не удалась" });
       status = computeWaStatus({
-        whatsapp_cloud_phone_number_id: data.phoneNumberId,
+        whatsapp_cloud_phone_number_id: phoneNumberId,
         whatsapp_cloud_token: exchanged.token,
         whatsapp_cloud_waba_id: data.wabaId,
         whatsapp_cloud_templates: templates as any,

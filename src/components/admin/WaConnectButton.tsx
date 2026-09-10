@@ -51,7 +51,15 @@ const SDK_SRC = "https://connect.facebook.net/en_US/sdk.js";
 
 /** Чем закончилось окно Meta — с точки зрения владельца, а не протокола. */
 export type SignupOutcome =
-  | { kind: "ok"; code: string; wabaId: string; phoneNumberId: string; coexistence: boolean }
+  | {
+      kind: "ok";
+      code: string;
+      wabaId: string;
+      // В Phone Number First flow (v4) при coexistence Meta может прислать только waba_id —
+      // номер тогда достаёт сервер из самой WABA.
+      phoneNumberId?: string;
+      coexistence: boolean;
+    }
   | { kind: "cancelled" }
   | { kind: "error"; message: string };
 
@@ -259,7 +267,7 @@ export function WaConnectButton({
       }
 
       const { wabaId, phoneNumberId } = session.current;
-      if (!wabaId || !phoneNumberId) {
+      if (!wabaId) {
         await onConnected({
           kind: "error",
           message:
@@ -277,7 +285,7 @@ export function WaConnectButton({
         kind: "ok",
         code,
         wabaId,
-        phoneNumberId,
+        phoneNumberId: phoneNumberId ?? undefined,
         coexistence: ev === "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING",
       });
     } catch (e: any) {
