@@ -117,7 +117,9 @@ export const getWaCloudConfig = createServerFn({ method: "POST" })
     >;
 
     return {
-      status: computeWaStatus(s as any),
+      status: computeWaStatus(s as any, {
+        platformBilling: Boolean((process.env.YCLOUD_API_KEY ?? "").trim()),
+      }),
       // Идентификаторы. Не секреты: сами по себе не дают ничего без токена.
       phone_number_id: (s.whatsapp_cloud_phone_number_id ?? "") as string,
       waba_id: (s.whatsapp_cloud_waba_id ?? "") as string,

@@ -82,10 +82,14 @@ export const Route = createFileRoute("/api/internal/cron/$job")({
           if (job === "wa-health") {
             const { runWaHealthCheck } = await import("@/lib/wa-connection.server");
             const report = await runWaHealthCheck();
+            // Баланс кредитной линии YCloud — в той же ежечасной задаче: он один на все салоны, и
+            // когда кончается, молчат все разом. Без YCLOUD_API_KEY проверка ничего не делает.
+            const { checkYcloudBalance } = await import("@/lib/ycloud.server");
+            const balance = await checkYcloudBalance();
             // Логируем каждый прогон целиком: задача, чей нормальный исход — «ничего не
             // произошло», неотличима от сломанной, пока не скажет, ЧТО именно она проверила.
-            console.log(`[cron wa-health] ${JSON.stringify(report)}`);
-            return json({ ok: true, ...report });
+            console.log(`[cron wa-health] ${JSON.stringify({ ...report, balance })}`);
+            return json({ ok: true, ...report, balance });
           }
 
           if (job === "prepayment-expired") {

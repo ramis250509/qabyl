@@ -22,6 +22,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { useServerFn } from "@tanstack/react-start";
+import { getWaSignupSettings } from "@/lib/wa-onboarding.functions";
 
 // Значения по умолчанию — идентификаторы САМОГО Qabyl, и они не секрет: App ID и config ID всё
 // равно оказываются в JS страницы, откуда их может прочитать кто угодно. Переменные окружения
@@ -46,7 +48,7 @@ const SDK_SRC = "https://connect.facebook.net/en_US/sdk.js";
 
 /** Чем закончилось окно Meta — с точки зрения владельца, а не протокола. */
 export type SignupOutcome =
-  | { kind: "ok"; code: string; wabaId: string; phoneNumberId: string }
+  | { kind: "ok"; code: string; wabaId: string; phoneNumberId: string; coexistence: boolean }
   | { kind: "cancelled" }
   | { kind: "error"; message: string };
 
@@ -136,6 +138,17 @@ export function WaConnectButton({
 
   const configured = Boolean(APP_ID && CONFIG_ID);
 
+  // Solution ID партнёрского решения с YCloud. Приходит с сервера, потому что появляется после
+  // одобрения и не должен требовать пересборки. Промис, а не state: окно Meta нужно открыть в том же
+  // жесте пользователя, и ждать перерисовки ради одного поля нельзя.
+  const loadSettings = useServerFn(getWaSignupSettings);
+  const solutionIdPromise = useRef<Promise<string | null> | null>(null);
+  useEffect(() => {
+    solutionIdPromise.current = loadSettings()
+      .then((r) => r.solutionId)
+      .catch(() => null);
+  }, [loadSettings]);
+
   useEffect(() => {
     if (!configured) return;
     // Прогреваем SDK заранее: иначе первое нажатие ждёт сеть, и владельцу кажется, что кнопка
@@ -181,6 +194,7 @@ export function WaConnectButton({
 
     try {
       const FB = await loadFacebookSdk();
+      const solutionID = await (solutionIdPromise.current ?? Promise.resolve(null));
 
       const response: any = await new Promise((resolve) => {
         FB.login(resolve, {
@@ -190,7 +204,9 @@ export function WaConnectButton({
           response_type: "code",
           override_default_response_type: true,
           extras: {
-            setup: {},
+            // С solutionID салон попадает в партнёрское решение, и за его сообщения платит
+            // кредитная линия YCloud. Без него — как раньше: оплата на карте салона в Meta.
+            setup: solutionID ? { solutionID } : {},
             // Решает судьбу номера салона. Без него — обычный поток: номер уезжает в Cloud API,
             // а аккаунт в приложении WhatsApp Business удаляется, и владелец теряет возможность
             // отвечать с телефона. С ним открывается coexistence: приложение и API живут на одном
@@ -250,7 +266,13 @@ export function WaConnectButton({
         console.warn("[wa-signup] неизвестное событие Embedded Signup:", ev);
       }
 
-      await onConnected({ kind: "ok", code, wabaId, phoneNumberId });
+      await onConnected({
+        kind: "ok",
+        code,
+        wabaId,
+        phoneNumberId,
+        coexistence: ev === "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING",
+      });
     } catch (e: any) {
       await onConnected({
         kind: "error",

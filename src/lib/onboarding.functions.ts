@@ -363,6 +363,8 @@ export const getOnboardingProgress = createServerFn({ method: "POST" })
       appointmentsCount: ((apptRes as any)?.count ?? 0) as number,
       assistantEnabled: Boolean(salon?.ai_assistant_enabled),
       notificationsEnabled: Boolean(salon?.whatsapp_enabled),
-      whatsapp: computeWaStatus((secretsRes as any)?.data ?? null),
+      whatsapp: computeWaStatus((secretsRes as any)?.data ?? null, {
+        platformBilling: Boolean((process.env.YCLOUD_API_KEY ?? "").trim()),
+      }),
     };
   });

@@ -188,3 +188,53 @@ select jobname, schedule, active from cron.job where jobname = 'wa-health';
    подтверждение.
 
 Пункт 4 — единственный, который занимает время: модерацию текстов делает Meta.
+
+---
+
+## 10. Окно подключения у людей без роли в приложении (10.09.2026)
+
+Симптом: у владельца платформы окно Meta открывается, у клиента — «Функция недоступна. Вход через
+Facebook недоступен для этого приложения, так как мы обновляем дополнительную информацию».
+
+Причина: у `public_profile` нет Advanced Access. Для Embedded Signup v4 он нужен наравне с
+`whatsapp_business_messaging` и `whatsapp_business_management`.
+
+Что сделать: App Review → в «New requests» удалить `email` (корзина), оставить `public_profile` →
+Next → отправить. Пока не одобрено — обходной путь: клиент добавляет владельца платформы админом в
+своё бизнес-портфолио, и окно проходит он, выбирая портфолио клиента.
+
+---
+
+## 11. Единая кредитная линия через YCloud (без наценки)
+
+Код готов и выключен, пока не заданы переменные ниже. Без них салоны платят Meta сами, как раньше.
+
+**Что сделать:**
+
+1. Зарегистрироваться в YCloud Tech Partner Program (Free), пополнить баланс, создать API-ключ.
+2. Meta → Use cases → Connect on WhatsApp → Customize → Become a Partner → Partner Solutions →
+   Create a partner solution: название `Qabyl`, App ID партнёра `2892949377516980`,
+   **Send messages: Only me** (сообщения шлёт наш Cloud API, платит кредитная линия YCloud).
+3. Дождаться одобрения YCloud, получить Solution ID.
+4. Переменные воркера в Cloudflare (Settings → Variables and Secrets). **Пересборка не нужна**:
+
+| Переменная | Тип | Значение |
+|---|---|---|
+| `YCLOUD_API_KEY` | Secret | API-ключ YCloud |
+| `WA_ES_SOLUTION_ID` | Text | Solution ID |
+| `YCLOUD_BALANCE_ALERT_USD` | Text, необязательно | порог тревоги по балансу, по умолчанию `20` |
+
+**Что происходит после:**
+- окно подключения открывается с `solutionID` — салон попадает в партнёрское решение;
+- после подключения аккаунт привязывается к YCloud (`tp/bind`, для coexistence — `smb/bind`),
+  результат пишется в `wa_payment_ready`, шаг — в журнал `wa_onboarding_events` (`step = billing`);
+- экран салона при отсутствии оплаты говорит «напишите в поддержку», а не «привяжите карту в Meta»;
+- cron `wa-health` раз в час проверяет баланс YCloud и пишет в `/admin/errors`, когда он ниже порога.
+
+**Ограничения, известные заранее:**
+- кредитная линия цепляется только к **новому** аккаунту WhatsApp, созданному в окне; существующий
+  аккаунт с картой — не цепляется (`paymentMethodAttached: false`);
+- баланс один на все салоны: закончится — молчат все;
+- если YCloud не примет решение с «Only me», его пересоздают с «Only my partner», и отправку
+  сообщений придётся перевести на API YCloud (`POST /v2/whatsapp/messages/sendDirectly`, вебхук с
+  подписью `YCloud-Signature` = HMAC-SHA256 от `{timestamp}.{body}`). Это отдельная работа.

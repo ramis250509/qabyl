@@ -186,3 +186,22 @@ describe("что видит владелец", () => {
     }
   });
 });
+
+describe("оплата через платформу (кредитная линия YCloud)", () => {
+  test("владельца не отправляют привязывать карту, когда платит платформа", () => {
+    const s = computeWaStatus(healthy({ wa_payment_ready: false }), { platformBilling: true });
+    expect(s.code).toBe("needs_payment");
+    expect(s.action?.kind).toBe("support");
+    expect(`${s.title} ${s.body}`).not.toMatch(/карт/i);
+  });
+
+  test("без платформенной оплаты — прежний путь в биллинг Meta", () => {
+    const s = computeWaStatus(healthy({ wa_payment_ready: false }));
+    expect(s.action?.kind).toBe("add_payment");
+  });
+
+  test("платформенная оплата не меняет здоровый салон", () => {
+    const s = computeWaStatus(healthy(), { platformBilling: true });
+    expect(s.code).toBe("healthy");
+  });
+});

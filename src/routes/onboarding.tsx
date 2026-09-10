@@ -592,6 +592,7 @@ function WhatsAppStep({
           code: outcome.code,
           wabaId: outcome.wabaId,
           phoneNumberId: outcome.phoneNumberId,
+          coexistence: outcome.coexistence,
         },
       });
       setOk(true);

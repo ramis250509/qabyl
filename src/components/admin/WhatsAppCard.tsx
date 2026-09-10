@@ -433,6 +433,7 @@ export function WhatsAppCard({ salonId }: { salonId: string }) {
           code: outcome.code,
           wabaId: outcome.wabaId,
           phoneNumberId: outcome.phoneNumberId,
+          coexistence: outcome.coexistence,
         },
       });
       // Говорим о результате словами состояния, а не списком технических шагов: «подключено,

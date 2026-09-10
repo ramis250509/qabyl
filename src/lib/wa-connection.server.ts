@@ -15,6 +15,11 @@
 import { graphCall, humanGraphError, type GraphError } from "@/lib/meta-graph.server";
 import { NOTIFICATION_TEMPLATES } from "@/lib/wa-onboarding.server";
 
+/** Платит ли платформа за сообщения. Здесь, а не в ycloud.server, чтобы не тянуть его в тесты. */
+function billingOpts(): { platformBilling: boolean } {
+  return { platformBilling: Boolean((process.env.YCLOUD_API_KEY ?? "").trim()) };
+}
+
 // ---------------------------------------------------------------------------
 // Что мы знаем о подключении
 // ---------------------------------------------------------------------------
@@ -139,7 +144,13 @@ function qualityLabel(raw: string | null | undefined): string | null {
  * полностью», потому что владельцу надо назвать ОДНУ причину: ту, которая мешает больше всех.
  * Сказать про шаблоны на модерации салону с отозванным токеном — значит отправить его чинить не то.
  */
-export function computeWaStatus(row: WaConnectionRow | null | undefined): WaStatus {
+export function computeWaStatus(
+  row: WaConnectionRow | null | undefined,
+  // platformBilling — за сообщения платит платформа (кредитная линия YCloud). Меняет только то,
+  // что говорится владельцу при отсутствии оплаты: отправлять его в биллинг Meta в этом случае
+  // значит просить заплатить за то, что уже входит в подписку.
+  opts: { platformBilling?: boolean } = {},
+): WaStatus {
   const r = row ?? {};
   const tpl = countTemplates(r);
   const facts = {
@@ -195,6 +206,17 @@ export function computeWaStatus(row: WaConnectionRow | null | undefined): WaStat
   // Платёжка проверяется ПОСЛЕ доступа и бана, но ДО шаблонов: без неё Meta не выпустит вообще
   // ничего, включая ответ ассистента внутри окна 24 часов. Шаблоны на этом фоне — мелочь.
   if (r.wa_payment_ready === false) {
+    if (opts.platformBilling) {
+      return {
+        connected: true,
+        level: "error",
+        code: "needs_payment",
+        title: "Оплата сообщений ещё не подключена",
+        body: "WhatsApp подключён, но у аккаунта пока нет способа оплаты, поэтому сообщения не уходят. Это на нашей стороне — напишите в поддержку, и мы подключим оплату.",
+        action: { kind: "support", label: "Написать в поддержку" },
+        facts,
+      };
+    }
     return {
       connected: true,
       level: "error",
@@ -389,7 +411,7 @@ export async function refreshWaConnection(salonId: string): Promise<WaStatus> {
   const wabaId = r.whatsapp_cloud_waba_id ?? null;
 
   // Не подключён — проверять нечего, и ходить в Meta незачем.
-  if (!phoneNumberId || !token) return computeWaStatus(r as WaConnectionRow);
+  if (!phoneNumberId || !token) return computeWaStatus(r as WaConnectionRow, billingOpts());
 
   const snap = await fetchWaSnapshot({ phoneNumberId, token, wabaId });
   const now = new Date().toISOString();
@@ -414,7 +436,7 @@ export async function refreshWaConnection(salonId: string): Promise<WaStatus> {
       detail: humanGraphError(err),
       details: { code: err.code, subcode: err.subcode, status: err.status, raw: err.message },
     });
-    return computeWaStatus({ ...(r as WaConnectionRow), ...patch });
+    return computeWaStatus({ ...(r as WaConnectionRow), ...patch }, billingOpts());
   }
 
   // Шаблоны: наши имена сверяем с тем, что реально лежит у Meta. Имя, которого там нет, теряет
@@ -456,6 +478,15 @@ export async function refreshWaConnection(salonId: string): Promise<WaStatus> {
       : {}),
   };
 
+  // Оплату сверяем у YCloud, когда платит платформа. Graph API сам по себе не говорит, привязан ли
+  // к аккаунту способ оплаты, а без этого экран салона не отличит «всё работает» от «сообщения
+  // отбиваются из-за оплаты».
+  if (wabaId && billingOpts().platformBilling) {
+    const { ycloudPaymentAttached } = await import("@/lib/ycloud.server");
+    const attached = await ycloudPaymentAttached(wabaId);
+    if (attached !== null) patch.wa_payment_ready = attached;
+  }
+
   await supabaseAdmin.from("salon_secrets").upsert(patch as any, { onConflict: "salon_id" });
 
   const merged = { ...(r as WaConnectionRow), ...patch } as WaConnectionRow;
@@ -471,7 +502,7 @@ export async function refreshWaConnection(salonId: string): Promise<WaStatus> {
       .eq("id", salonId);
   }
 
-  return computeWaStatus(merged);
+  return computeWaStatus(merged, billingOpts());
 }
 
 // ---------------------------------------------------------------------------

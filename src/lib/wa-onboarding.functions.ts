@@ -80,6 +80,9 @@ export const finishWaOnboarding = createServerFn({ method: "POST" })
         code: z.string().min(10).max(1024),
         wabaId: z.string().min(1).max(64),
         phoneNumberId: z.string().min(1).max(64),
+        // Салон прошёл вариант coexistence: номер остаётся в приложении WhatsApp Business. От этого
+        // зависит, каким вызовом привязывать аккаунт к кредитной линии YCloud.
+        coexistence: z.boolean().optional(),
       })
       .parse(input),
   )
@@ -151,6 +154,32 @@ export const finishWaOnboarding = createServerFn({ method: "POST" })
       throw new Error(`Подключение прошло, но не сохранилось: ${saveErr.message}`);
     }
     await record({ step: "save", ok: true });
+
+    // Кредитная линия платформы (YCloud). Неудача здесь НЕ отменяет подключение: WhatsApp уже
+    // подключён, а оплату можно доделать без повторного окна Meta. Состояние оплаты записывается
+    // в wa_payment_ready, и экран салона покажет «оплата не подключена», если не сработало.
+    const { platformBillingEnabled, ycloudBindWaba } = await import("@/lib/ycloud.server");
+    if (platformBillingEnabled()) {
+      const bind = await ycloudBindWaba(data.wabaId, Boolean(data.coexistence));
+      await record(
+        {
+          step: "billing",
+          ok: bind.ok && bind.paymentMethodAttached === true,
+          detail: bind.ok
+            ? bind.paymentMethodAttached
+              ? "оплата подключена"
+              : "аккаунт привязан, но оплата не подключена"
+            : bind.error,
+        },
+        { coexistence: Boolean(data.coexistence), paymentMethodAttached: bind.paymentMethodAttached },
+      );
+      if (bind.ok && bind.paymentMethodAttached !== null) {
+        await supabaseAdmin
+          .from("salon_secrets")
+          .update({ wa_payment_ready: bind.paymentMethodAttached } as any)
+          .eq("salon_id", data.salonId);
+      }
+    }
 
     // Реальное состояние спрашиваем у Meta, а не выводим из того, что все шаги вернули «ок».
     // Именно здесь выясняется, одобрены ли шаблоны (созданный приходит PENDING), живой ли номер и
@@ -288,7 +317,9 @@ export const getWaStatus = createServerFn({ method: "POST" })
       .eq("salon_id", data.salonId)
       .maybeSingle();
 
-    return computeWaStatus(row as any);
+    return computeWaStatus(row as any, {
+      platformBilling: Boolean((process.env.YCLOUD_API_KEY ?? "").trim()),
+    });
   });
 
 /** Спрашивает Meta и обновляет состояние. За кнопкой «Проверить подключение». */
@@ -377,4 +408,17 @@ export const disconnectWa = createServerFn({ method: "POST" })
       .eq("id", data.salonId);
 
     return { ok: true as const };
+  });
+
+/**
+ * Параметры окна подключения, которые живут на сервере.
+ *
+ * Solution ID отдаётся отсюда, а не зашивается в сборку: он появляется после одобрения YCloud, и
+ * ради него не должно быть нужно пересобирать сайт. Пусто — окно открывается без партнёрского
+ * решения, как раньше, и салон платит Meta сам.
+ */
+export const getWaSignupSettings = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async () => {
+    return { solutionId: (process.env.WA_ES_SOLUTION_ID ?? "").trim() || null };
   });
