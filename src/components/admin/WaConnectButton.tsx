@@ -23,12 +23,19 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
-// Никаких значений по умолчанию. Захардкоженный чужой App ID — это не «удобный запасной
-// вариант», а подключение салона к чужому приложению: токен уедет не туда, вебхуки придут не
-// нам, и выяснится это молчанием ассистента. Пусто — значит кнопка честно не работает и
-// говорит почему.
-const APP_ID = import.meta.env.VITE_META_APP_ID ?? "";
-const CONFIG_ID = import.meta.env.VITE_WA_ES_CONFIG_ID ?? "";
+// Значения по умолчанию — идентификаторы САМОГО Qabyl, и они не секрет: App ID и config ID всё
+// равно оказываются в JS страницы, откуда их может прочитать кто угодно. Переменные окружения
+// оставлены для переопределения (стенд, второе приложение).
+//
+// Почему значения по умолчанию вообще нужны. `VITE_*` вшиваются при СБОРКЕ, а `.env` не лежит в
+// репозитории — значит прод получает их только из build-переменных Cloudflare. Забытая там
+// переменная не роняет сборку, а тихо превращает кнопку в «подключение не настроено» у каждого
+// салона. Зависеть в главном действии продукта от поля, которое никто не видит, — плохая сделка.
+//
+// config_id — конфигурация Facebook Login for Business под Embedded Signup v4, создана 10.09.2026.
+// Старая (1363168405899358) открывала поток, который Meta отключает 15.10.2026.
+const APP_ID = import.meta.env.VITE_META_APP_ID || "1938248030209290";
+const CONFIG_ID = import.meta.env.VITE_WA_ES_CONFIG_ID || "919884354119444";
 const GRAPH_VERSION = import.meta.env.VITE_META_GRAPH_VERSION ?? "v25.0";
 const SDK_SRC = "https://connect.facebook.net/en_US/sdk.js";
 
