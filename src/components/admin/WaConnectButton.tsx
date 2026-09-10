@@ -42,7 +42,10 @@ const APP_ID = import.meta.env.VITE_META_APP_ID || "1938248030209290";
 // регистрацию номера — без варианта coexistence, то есть с потерей WhatsApp Business на телефоне
 // салона. Старая конфигурация вместе с sessionInfoVersion "3" — единственная проверенная
 // комбинация, при которой coexistence работал. Вернуться к новой после выяснения причины.
-const CONFIG_ID = import.meta.env.VITE_WA_ES_CONFIG_ID || "1363168405899358";
+// 10.09.2026: 1111762887844278 — конфигурация БЕЗ Marketing Messages API. Обе прежние
+// (1363168405899358 и 919884354119444) включали его и не показывали вариант coexistence; эта
+// создана, чтобы проверить, не в нём ли причина. Переменная WA_ES_CONFIG_ID на сервере перекрывает.
+const CONFIG_ID = import.meta.env.VITE_WA_ES_CONFIG_ID || "1111762887844278";
 const GRAPH_VERSION = import.meta.env.VITE_META_GRAPH_VERSION ?? "v25.0";
 const SDK_SRC = "https://connect.facebook.net/en_US/sdk.js";
 
