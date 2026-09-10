@@ -13,7 +13,7 @@
 //
 // ВЕРСИЯ ПОТОКА — v4. Meta отключает v2 и v3 15 октября 2026 года, и вместе с ними — старые
 // feature type'ы. Отличия v4, важные для этого файла:
-//   • `sessionInfoVersion` больше не передаётся: версия задана самой конфигурацией входа;
+//   • `sessionInfoVersion` по документации v4 не нужен, но временно возвращён — см. CONFIG_ID;
 //   • конфигурация Facebook Login for Business должна быть СОЗДАНА ЗАНОВО под v4 — старый
 //     config_id продолжает открывать старый поток и умрёт вместе с ним;
 //   • у события появились новые значения `event`, и «успех» теперь не одно слово, а несколько.
@@ -35,7 +35,12 @@ import { toast } from "sonner";
 // config_id — конфигурация Facebook Login for Business под Embedded Signup v4, создана 10.09.2026.
 // Старая (1363168405899358) открывала поток, который Meta отключает 15.10.2026.
 const APP_ID = import.meta.env.VITE_META_APP_ID || "1938248030209290";
-const CONFIG_ID = import.meta.env.VITE_WA_ES_CONFIG_ID || "919884354119444";
+// ВРЕМЕННО обратно на 1363168405899358. Новая конфигурация 919884354119444 (создана 10.09, в
+// продуктах включён Marketing Messages API) на живом подключении 10.09 показала только обычную
+// регистрацию номера — без варианта coexistence, то есть с потерей WhatsApp Business на телефоне
+// салона. Старая конфигурация вместе с sessionInfoVersion "3" — единственная проверенная
+// комбинация, при которой coexistence работал. Вернуться к новой после выяснения причины.
+const CONFIG_ID = import.meta.env.VITE_WA_ES_CONFIG_ID || "1363168405899358";
 const GRAPH_VERSION = import.meta.env.VITE_META_GRAPH_VERSION ?? "v25.0";
 const SDK_SRC = "https://connect.facebook.net/en_US/sdk.js";
 
@@ -192,6 +197,9 @@ export function WaConnectButton({
             // номере, история синхронизируется, ответы владельца приходят вебхуком
             // smb_message_echoes. Цена — потолок 20 сообщений/сек и часть функций приложения.
             featureType: "whatsapp_business_app_onboarding",
+            // Возвращён вместе со старой конфигурацией (см. CONFIG_ID): без него на живом
+            // подключении окно не предлагало coexistence.
+            sessionInfoVersion: "3",
           },
         });
       });
