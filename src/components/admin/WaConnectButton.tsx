@@ -142,11 +142,12 @@ export function WaConnectButton({
   // одобрения и не должен требовать пересборки. Промис, а не state: окно Meta нужно открыть в том же
   // жесте пользователя, и ждать перерисовки ради одного поля нельзя.
   const loadSettings = useServerFn(getWaSignupSettings);
-  const solutionIdPromise = useRef<Promise<string | null> | null>(null);
+  const settingsPromise = useRef<Promise<{
+    solutionId: string | null;
+    configId: string | null;
+  }> | null>(null);
   useEffect(() => {
-    solutionIdPromise.current = loadSettings()
-      .then((r) => r.solutionId)
-      .catch(() => null);
+    settingsPromise.current = loadSettings().catch(() => ({ solutionId: null, configId: null }));
   }, [loadSettings]);
 
   useEffect(() => {
@@ -194,11 +195,14 @@ export function WaConnectButton({
 
     try {
       const FB = await loadFacebookSdk();
-      const solutionID = await (solutionIdPromise.current ?? Promise.resolve(null));
+      const settings = await (settingsPromise.current ??
+        Promise.resolve({ solutionId: null, configId: null }));
+      const solutionID = settings.solutionId;
 
       const response: any = await new Promise((resolve) => {
         FB.login(resolve, {
-          config_id: CONFIG_ID,
+          // Переменная WA_ES_CONFIG_ID на сервере перекрывает значение в коде — см. getWaSignupSettings.
+          config_id: settings.configId || CONFIG_ID,
           // Просим КОД, а не токен: токен в браузере — это утечка, а код без app secret
           // бесполезен.
           response_type: "code",

@@ -420,5 +420,11 @@ export const disconnectWa = createServerFn({ method: "POST" })
 export const getWaSignupSettings = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async () => {
-    return { solutionId: (process.env.WA_ES_SOLUTION_ID ?? "").trim() || null };
+    return {
+      solutionId: (process.env.WA_ES_SOLUTION_ID ?? "").trim() || null,
+      // Конфигурация окна Meta — тоже с сервера. Конфигурацию нельзя отредактировать (продукты,
+      // тип токена «can't be changed later»), только создать новую, а проверять новую приходится на
+      // живом салоне. Переменная в Cloudflare меняется за минуту, выкладка кода — дольше и рискованнее.
+      configId: (process.env.WA_ES_CONFIG_ID ?? "").trim() || null,
+    };
   });
