@@ -49,7 +49,7 @@ const SETTINGS_INPUT = z.object({
 
 async function assertSalonOwner(userId: string, salonId: string) {
   const mod = await import("@/integrations/supabase/client.server");
-    const supabaseAdmin = mod.supabaseAdmin as any;
+  const supabaseAdmin = mod.supabaseAdmin as any;
   const { data: roles, error } = await supabaseAdmin
     .from("user_roles")
     .select("role, salon_id")
@@ -82,6 +82,14 @@ export const upsertPrepaymentSettings = createServerFn({ method: "POST" })
   .inputValidator((input) => SETTINGS_INPUT.parse(input))
   .handler(async ({ data, context }) => {
     await assertSalonOwner(context.userId, data.salonId);
+    if (data.enabled) {
+      const { salonHasFeature } = await import("@/lib/billing.server");
+      if (!(await salonHasFeature(data.salonId, "prepayment"))) {
+        throw new Error(
+          "Предоплата не входит в ваш тариф. Перейдите на тариф выше в разделе «Тариф и оплата».",
+        );
+      }
+    }
     const mod = await import("@/integrations/supabase/client.server");
     const supabaseAdmin = mod.supabaseAdmin as any;
     const payload = {

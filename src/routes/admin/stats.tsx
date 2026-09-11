@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
@@ -14,13 +14,19 @@ import { useAdminFilters } from "@/hooks/use-branch-filter";
 import { BranchFilterBar } from "@/components/admin/BranchFilterBar";
 import { LoadingState } from "@/components/ui/loading-state";
 import { useRegisterRefresh } from "@/lib/refresh-context";
+import { Button } from "@/components/ui/button";
+import { usePlanFeatures } from "@/hooks/use-plan-features";
 
 export const Route = createFileRoute("/admin/stats")({
   component: StatsPage,
 });
 
 function StatsPage() {
-  const { isSuperAdmin } = useAuth();
+  const { isSuperAdmin, salonId: ownSalonId } = useAuth();
+  // Воронка ассистента, неявки и загрузка мастеров — «расширенная аналитика» тарифа.
+  // Владелец платформы видит всё.
+  const plan = usePlanFeatures(isSuperAdmin ? null : ownSalonId);
+  const advanced = isSuperAdmin || plan.has("analytics_advanced");
   const filters = useAdminFilters();
   const { salonId, branchId } = filters;
   const [period, setPeriod] = useState<"today" | "7" | "30" | "month" | "90">("month");
@@ -85,7 +91,7 @@ function StatsPage() {
     // this table) for super admins. wa_conversations has no
     // branch dimension, so the branch filter doesn't apply here.
     let convPromise: Promise<{ count: number | null }> = Promise.resolve({ count: 0 });
-    if (isSuperAdmin) {
+    if (advanced) {
       // GET + count (limit 1), not HEAD: authenticated HEAD count requests intermittently 503 on the free tier.
       let cq = supabase
         .from("wa_conversations")
@@ -104,7 +110,7 @@ function StatsPage() {
     // Fetched as rows and tallied in JS rather than grouped in SQL: PostgREST has no GROUP BY, and
     // at a few hundred conversations a month the difference is not measurable.
     let stagePromise: Promise<{ data: any[] | null }> = Promise.resolve({ data: [] });
-    if (isSuperAdmin) {
+    if (advanced) {
       let sq = supabase
         .from("wa_conversations")
         .select("state_data, status")
@@ -126,7 +132,7 @@ function StatsPage() {
     setConvCount((conv as any).count ?? 0);
     setStageRows((stageRows as any).data ?? []);
     setLoading(false);
-  }, [salonId, branchId, period, isSuperAdmin]);
+  }, [salonId, branchId, period, advanced]);
 
   useEffect(() => {
     load();
@@ -349,7 +355,7 @@ function StatsPage() {
 
       {/* Assistant funnel: how many assistant conversations turned into bookings. Super-admin only.
           Counts every channel — wa_conversations holds both WhatsApp and Instagram Direct. */}
-      {isSuperAdmin && (
+      {advanced && (
         <Card className="p-6">
           <h3 className="font-semibold mb-4">Воронка ассистента</h3>
           <div className="grid grid-cols-3 gap-4 text-center">
@@ -383,7 +389,7 @@ function StatsPage() {
 
       {/* Where conversations stop. The card above says HOW MANY convert; this one says WHERE the
           rest are lost, which is the only version of the number anyone can act on. */}
-      {isSuperAdmin && (
+      {advanced && (
         <Card className="p-6">
           <h3 className="font-semibold mb-1">Где обрываются диалоги</h3>
           <p className="text-xs text-muted-foreground mb-4">
@@ -422,31 +428,36 @@ function StatsPage() {
       )}
 
       {/* No-show analytics — only meaningful once visits are being marked in the calendar. */}
-      <Card className="p-6">
-        <div className="flex items-baseline justify-between flex-wrap gap-2">
-          <h3 className="font-semibold">Неявки (No-Show)</h3>
-          <span className="text-sm text-muted-foreground">
-            {stats.noShowCount} неявок · {stats.noShowRate}% записей
-          </span>
-        </div>
-        {stats.noShowByMaster.length > 0 ? (
-          <div className="space-y-2 mt-3">
-            {stats.noShowByMaster.slice(0, 10).map((m, i) => (
-              <div
-                key={i}
-                className="flex items-center justify-between text-sm border-b last:border-0 pb-1.5"
-              >
-                <span>{m.name}</span>
-                <span className="font-medium text-red-600">{m.count}</span>
-              </div>
-            ))}
+      {!advanced && <LockedAnalyticsCard />}
+
+      {advanced && (
+        <Card className="p-6">
+          <div className="flex items-baseline justify-between flex-wrap gap-2">
+            <h3 className="font-semibold">Неявки (No-Show)</h3>
+            <span className="text-sm text-muted-foreground">
+              {stats.noShowCount} неявок · {stats.noShowRate}% записей
+            </span>
           </div>
-        ) : (
-          <p className="text-sm text-muted-foreground mt-2">
-            Неявок нет. Отмечайте «Не пришёл» в календаре после визита — здесь появится статистика.
-          </p>
-        )}
-      </Card>
+          {stats.noShowByMaster.length > 0 ? (
+            <div className="space-y-2 mt-3">
+              {stats.noShowByMaster.slice(0, 10).map((m, i) => (
+                <div
+                  key={i}
+                  className="flex items-center justify-between text-sm border-b last:border-0 pb-1.5"
+                >
+                  <span>{m.name}</span>
+                  <span className="font-medium text-red-600">{m.count}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground mt-2">
+              Неявок нет. Отмечайте «Не пришёл» в календаре после визита — здесь появится
+              статистика.
+            </p>
+          )}
+        </Card>
+      )}
 
       {showBranchTable && (
         <Card className="p-6">
@@ -485,26 +496,29 @@ function StatsPage() {
             )}
           </div>
         </Card>
-        <Card className="p-6">
-          <h3 className="font-semibold mb-3">Часы в кресле</h3>
-          <div className="space-y-2">
-            {stats.hoursByMaster.slice(0, 10).map((m, i) => (
-              <div key={i} className="flex items-center justify-between text-sm">
-                <span>{m.name}</span>
-                <span className="font-medium">
-                  {Math.floor(m.minutes / 60)} ч {m.minutes % 60 > 0 ? `${m.minutes % 60} мин` : ""}
-                </span>
-              </div>
-            ))}
-            {stats.hoursByMaster.length === 0 && (
-              <p className="text-sm text-muted-foreground">Визитов за период не было</p>
-            )}
-          </div>
-          <p className="text-xs text-muted-foreground mt-3">
-            Считается по дате визита и только по уже прошедшим — в отличие от остальных цифр на этой
-            странице, которые считаются по дате оформления записи.
-          </p>
-        </Card>
+        {advanced && (
+          <Card className="p-6">
+            <h3 className="font-semibold mb-3">Часы в кресле</h3>
+            <div className="space-y-2">
+              {stats.hoursByMaster.slice(0, 10).map((m, i) => (
+                <div key={i} className="flex items-center justify-between text-sm">
+                  <span>{m.name}</span>
+                  <span className="font-medium">
+                    {Math.floor(m.minutes / 60)} ч{" "}
+                    {m.minutes % 60 > 0 ? `${m.minutes % 60} мин` : ""}
+                  </span>
+                </div>
+              ))}
+              {stats.hoursByMaster.length === 0 && (
+                <p className="text-sm text-muted-foreground">Визитов за период не было</p>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground mt-3">
+              Считается по дате визита и только по уже прошедшим — в отличие от остальных цифр на
+              этой странице, которые считаются по дате оформления записи.
+            </p>
+          </Card>
+        )}
         <Card className="p-6">
           <h3 className="font-semibold mb-3">Топ услуг</h3>
           <div className="space-y-2">
@@ -523,5 +537,25 @@ function StatsPage() {
         </Card>
       </div>
     </div>
+  );
+}
+
+/** Что даёт расширенная аналитика — показывается вместо неё на тарифе без неё. */
+function LockedAnalyticsCard() {
+  return (
+    <Card className="p-6 border-dashed">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+        <div className="flex-1 space-y-1">
+          <h3 className="font-semibold">Расширенная аналитика</h3>
+          <p className="text-sm text-muted-foreground">
+            Воронка ассистента — на каком шаге клиенты уходят, не записавшись. Неявки по мастерам.
+            Часы в кресле — кто из мастеров загружен, а кто простаивает.
+          </p>
+        </div>
+        <Button asChild variant="outline" className="shrink-0">
+          <Link to="/admin/billing">Доступно на тарифе выше</Link>
+        </Button>
+      </div>
+    </Card>
   );
 }

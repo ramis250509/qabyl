@@ -38,6 +38,7 @@ import {
   type IndustryKey,
 } from "@/lib/industries";
 import { WaSimulator } from "./WaSimulator";
+import { ExcludedSuggestions } from "./ExcludedSuggestions";
 
 type Assistant = {
   salon_id: string;
@@ -1426,6 +1427,8 @@ function ExcludedContactsCard({ salonId }: { salonId: string }) {
           Добавить
         </Button>
       </div>
+
+      <ExcludedSuggestions salonId={salonId} onAdded={() => void load()} />
 
       {loading ? (
         <p className="text-sm text-muted-foreground">Загрузка…</p>

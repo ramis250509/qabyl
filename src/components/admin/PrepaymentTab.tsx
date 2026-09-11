@@ -28,6 +28,8 @@ import {
 } from "@/components/ui/select";
 import { AlertCircle, Wallet } from "lucide-react";
 import { getPrepaymentSettings, upsertPrepaymentSettings } from "@/lib/prepayment.functions";
+import { Link } from "@tanstack/react-router";
+import { usePlanFeatures } from "@/hooks/use-plan-features";
 import { supabase } from "@/integrations/supabase/client";
 
 type AmountType = "fixed" | "percent";
@@ -80,6 +82,10 @@ function num(v: string): number | null {
 }
 
 export function PrepaymentTab({ salonId }: { salonId: string }) {
+  // Предоплата входит не во все тарифы. Включить её на таком тарифе нельзя; уже включённая
+  // продолжает храниться, но ассистент записывает без неё — до перехода на тариф выше.
+  const plan = usePlanFeatures(salonId);
+  const planAllows = plan.has("prepayment");
   const load = useServerFn(getPrepaymentSettings);
   const save = useServerFn(upsertPrepaymentSettings);
 
@@ -251,11 +257,24 @@ export function PrepaymentTab({ salonId }: { salonId: string }) {
           </div>
           <Switch
             checked={form.enabled}
+            disabled={!planAllows && !form.enabled}
             onCheckedChange={(v) => set("enabled", v)}
             aria-label="Включить предоплату"
           />
         </div>
       </Card>
+
+      {!planAllows && (
+        <Card className="flex flex-col gap-3 border-amber-300 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/30 sm:flex-row sm:items-center">
+          <p className="flex-1 text-sm">
+            Предоплата за запись входит в тарифы выше вашего.
+            {form.enabled ? " Сейчас ассистент записывает клиентов без предоплаты." : ""}
+          </p>
+          <Button asChild size="sm">
+            <Link to="/admin/billing">Сменить тариф</Link>
+          </Button>
+        </Card>
+      )}
 
       <Card className={`space-y-6 p-6 ${off ? "pointer-events-none opacity-50" : ""}`}>
         <div className="space-y-4">
@@ -332,7 +351,9 @@ export function PrepaymentTab({ salonId }: { salonId: string }) {
               min={5}
               max={720}
               value={String(form.holdMinutes)}
-              onChange={(e) => set("holdMinutes", Math.min(720, Math.max(5, num(e.target.value) ?? 30)))}
+              onChange={(e) =>
+                set("holdMinutes", Math.min(720, Math.max(5, num(e.target.value) ?? 30)))
+              }
             />
             <p className="text-xs text-muted-foreground">
               От 5 до 720. Слишком мало — клиент не успеет дойти до банка; слишком много — время
@@ -347,8 +368,8 @@ export function PrepaymentTab({ salonId }: { salonId: string }) {
             <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
               <span>
-                Укажите номер телефона или карту. Без них проверка не сможет отличить перевод вам
-                от перевода кому-то другому и будет отправлять каждый чек на ручную проверку.
+                Укажите номер телефона или карту. Без них проверка не сможет отличить перевод вам от
+                перевода кому-то другому и будет отправлять каждый чек на ручную проверку.
               </span>
             </div>
           )}
@@ -391,13 +412,18 @@ export function PrepaymentTab({ salonId }: { salonId: string }) {
         <div className="space-y-4 border-t pt-6">
           <h4 className="font-medium">Как подтверждать</h4>
           <div className="max-w-md space-y-2">
-            <Select value={form.verifyMode} onValueChange={(v) => set("verifyMode", v as VerifyMode)}>
+            <Select
+              value={form.verifyMode}
+              onValueChange={(v) => set("verifyMode", v as VerifyMode)}
+            >
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="auto">Автоматически, если проверка пройдена</SelectItem>
-                <SelectItem value="auto_under_amount">Автоматически до определённой суммы</SelectItem>
+                <SelectItem value="auto_under_amount">
+                  Автоматически до определённой суммы
+                </SelectItem>
                 <SelectItem value="manual_after_verify">Всегда подтверждаю вручную</SelectItem>
                 <SelectItem value="manual_always">Не проверять автоматически вообще</SelectItem>
               </SelectContent>
@@ -444,7 +470,13 @@ export function PrepaymentTab({ salonId }: { salonId: string }) {
                   alt="QR для оплаты"
                   className="h-28 w-28 rounded border object-contain"
                 />
-                <Button type="button" variant="ghost" size="sm" onClick={removeQr} disabled={qrBusy}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={removeQr}
+                  disabled={qrBusy}
+                >
                   Удалить QR
                 </Button>
               </div>

@@ -6,7 +6,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Check, CreditCard, Loader2, MessageSquare, ShieldCheck } from "lucide-react";
+import { CreditCard, Loader2, MessageSquare, ShieldCheck } from "lucide-react";
 import { useAuth } from "@/lib/auth-client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -27,6 +27,7 @@ import {
   setBillingExempt,
 } from "@/lib/billing.functions";
 import { PlatformBillingOverview } from "@/components/admin/PlatformBillingOverview";
+import { PlanCards } from "@/components/billing/PlanCards";
 
 export const Route = createFileRoute("/admin/billing")({
   head: () => ({ meta: [{ title: "Тариф и оплата — Qabyl" }] }),
@@ -395,62 +396,14 @@ function BillingPage() {
         <h2 id="plans-heading" className="text-lg font-semibold">
           Тарифы
         </h2>
-        <div className="grid gap-4 md:grid-cols-3 items-stretch">
-          {data.plans.map((p) => {
-            const isCurrent = p.code === s.plan_code;
-            const isPending = p.code === s.pending_plan_code;
-            return (
-              <Card
-                key={p.code}
-                className={`relative p-5 flex flex-col gap-4 transition-shadow hover:shadow-md ${
-                  p.is_featured ? "ring-2 ring-primary md:-translate-y-1 shadow-md" : ""
-                }`}
-              >
-                {p.is_featured && (
-                  <span className="absolute -top-3 left-5 rounded-full bg-primary px-3 py-0.5 text-xs font-medium text-primary-foreground">
-                    Самый популярный
-                  </span>
-                )}
-                <div className="space-y-1">
-                  <h3 className="text-lg font-semibold">{p.name}</h3>
-                  {p.tagline && <p className="text-sm text-muted-foreground">{p.tagline}</p>}
-                </div>
-                <div>
-                  <span className="text-3xl font-bold tabular-nums">
-                    {formatNumber(p.price_kgs)}
-                  </span>
-                  <span className="text-muted-foreground"> сом/мес</span>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {p.trial_days} дней бесплатно для новых салонов
-                  </p>
-                </div>
-                <ul className="space-y-2 text-sm flex-1">
-                  {p.lines.map((line) => (
-                    <li key={line} className="flex gap-2">
-                      <Check className="h-4 w-4 mt-0.5 shrink-0 text-emerald-600" aria-hidden />
-                      <span>{line}</span>
-                    </li>
-                  ))}
-                  <li className="flex gap-2 text-muted-foreground">
-                    <Check className="h-4 w-4 mt-0.5 shrink-0 opacity-0" aria-hidden />
-                    <span>
-                      Пакет +{formatNumber(p.pack_messages)} сообщений —{" "}
-                      {formatNumber(p.pack_price_kgs)} сом
-                    </span>
-                  </li>
-                </ul>
-                <Button
-                  variant={p.is_featured && !isCurrent ? "default" : "outline"}
-                  disabled={isCurrent || isPending || busy !== null || (s.exempt && !isSuperAdmin)}
-                  onClick={() => choosePlan(p.code, p.name)}
-                >
-                  {busy === `plan:${p.code}` && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                  {isCurrent ? "Ваш тариф" : isPending ? "Со следующего месяца" : "Выбрать"}
-                </Button>
-              </Card>
-            );
-          })}
-        </div>
+        <PlanCards
+          plans={data.plans}
+          currentCode={s.plan_code}
+          pendingCode={s.pending_plan_code}
+          busyCode={busy?.startsWith("plan:") ? busy.slice(5) : null}
+          disabled={busy !== null || (s.exempt === true && !isSuperAdmin)}
+          onChoose={(p) => choosePlan(p.code, p.name)}
+        />
         <p className="text-xs text-muted-foreground">
           Сообщения — это ответы ассистента, подтверждения и напоминания, которые Qabyl отправляет
           клиентам от имени салона. Входящие сообщения не считаются. Когда сообщения заканчиваются,

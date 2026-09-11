@@ -38,6 +38,7 @@ import {
   Check,
   Copy,
   ExternalLink,
+  Loader2,
   MessageCircle,
   Plus,
   Sparkles,
@@ -54,6 +55,8 @@ import {
 } from "@/lib/onboarding.functions";
 import { WaConnectButton, type SignupOutcome } from "@/components/admin/WaConnectButton";
 import { finishWaOnboarding } from "@/lib/wa-onboarding.functions";
+import { changeBillingPlan, getBillingOverview } from "@/lib/billing.functions";
+import { PlanCards, type PlanCardData } from "@/components/billing/PlanCards";
 
 export const Route = createFileRoute("/onboarding")({
   head: () => ({ meta: [{ title: "Настройка салона — Qabyl" }] }),
@@ -91,13 +94,14 @@ const WEEKDAYS = [
   { dow: 0, short: "Вс" },
 ];
 
-type StepKey = "business" | "services" | "team" | "whatsapp" | "done";
+type StepKey = "business" | "services" | "team" | "whatsapp" | "plan" | "done";
 
 const STEPS: { key: StepKey; title: string; hint: string }[] = [
   { key: "business", title: "О салоне", hint: "Название, сфера, город" },
   { key: "services", title: "Услуги", hint: "На что записываются клиенты" },
   { key: "team", title: "Мастера", hint: "Кто принимает и когда" },
   { key: "whatsapp", title: "WhatsApp", hint: "Ассистент отвечает клиентам" },
+  { key: "plan", title: "Тариф", hint: "Первые дни бесплатно" },
   { key: "done", title: "Готово", hint: "Ссылка для клиентов" },
 ];
 
@@ -664,7 +668,111 @@ function WhatsAppStep({
 }
 
 // ---------------------------------------------------------------------------
-// Шаг 5 — готово
+// Шаг 5 — тариф
+// ---------------------------------------------------------------------------
+//
+// После WhatsApp, а не в начале: к этому моменту владелец уже видел, что Qabyl делает, и выбирает
+// осознанно. Пробный период идёт с создания салона на Start; выбор другого тарифа пересчитывает
+// его по правилам выбранного (Business и Pro — 14 дней). Карта не нужна. Не выбрал — остаётся Start,
+// сменить можно в кабинете в любой момент.
+
+function PlanStep({ salonId, onDone }: { salonId: string; onDone: () => void }) {
+  const [data, setData] = useState<Awaited<ReturnType<typeof getBillingOverview>> | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [busyCode, setBusyCode] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getBillingOverview({ data: { salonId } })
+      .then((r) => {
+        if (!cancelled) setData(r);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [salonId]);
+
+  async function choose(p: PlanCardData) {
+    setBusyCode(p.code);
+    try {
+      const r = await changeBillingPlan({ data: { salonId, planCode: p.code } });
+      if (r.redirectUrl) {
+        window.location.assign(r.redirectUrl);
+        return;
+      }
+      toast.success(`Тариф ${p.name} выбран`);
+      onDone();
+    } catch (e: any) {
+      toast.error(e?.message ?? "Не удалось выбрать тариф");
+    } finally {
+      setBusyCode(null);
+    }
+  }
+
+  // Тариф не читается — не держим человека на пороге: выбрать можно и в кабинете.
+  if (failed || (data && !data.state?.has_subscription)) {
+    return (
+      <div className="qb-rise space-y-4">
+        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Тариф выберете позже</h1>
+        <p className="text-sm text-muted-foreground">
+          Пробный период уже идёт. Сравнить тарифы и выбрать можно в кабинете, в разделе «Тариф и
+          оплата».
+        </p>
+        <Button size="lg" onClick={onDone}>
+          Продолжить
+          <ArrowRight className="ml-2 h-4 w-4" />
+        </Button>
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="flex justify-center py-16" role="status" aria-label="Загружаем тарифы">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  const current = data.plans.find((p) => p.code === data.state?.plan_code) ?? null;
+
+  return (
+    <div className="qb-rise space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Выберите тариф</h1>
+        <p className="mt-1.5 text-sm text-muted-foreground">
+          Первые дни — бесплатно, карта не нужна. Тариф можно сменить в любой момент в кабинете.
+        </p>
+      </div>
+
+      <PlanCards
+        plans={data.plans}
+        currentCode={current?.code ?? null}
+        busyCode={busyCode}
+        disabled={busyCode !== null}
+        onChoose={choose}
+        mode="onboarding"
+      />
+
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          variant="ghost"
+          className="text-muted-foreground"
+          onClick={onDone}
+          disabled={busyCode !== null}
+        >
+          {current ? `Остаться на ${current.name}` : "Решу позже"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Шаг 6 — готово
 // ---------------------------------------------------------------------------
 
 function DoneStep({ slug, salonName }: { slug: string; salonName: string }) {
@@ -812,7 +920,9 @@ function OnboardingWizard() {
         </Button>
       </header>
 
-      <main className="mx-auto w-full max-w-2xl px-4 py-8 sm:px-6 sm:py-12">
+      <main
+        className={`mx-auto w-full px-4 py-8 sm:px-6 sm:py-12 ${step === "plan" ? "max-w-5xl" : "max-w-2xl"}`}
+      >
         <Progress current={step} />
 
         <Card className="p-5 sm:p-8">
@@ -852,9 +962,13 @@ function OnboardingWizard() {
                     /* финальный экран переживёт отсутствие имени */
                   }
                 }
-                setStep("done");
+                setStep("plan");
               }}
             />
+          )}
+
+          {step === "plan" && mySalonId && (
+            <PlanStep salonId={mySalonId} onDone={() => setStep("done")} />
           )}
 
           {step === "done" &&

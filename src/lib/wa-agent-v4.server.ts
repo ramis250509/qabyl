@@ -1830,7 +1830,15 @@ export async function executeV4Tool(
           `[wa-v4] prepayment_settings unreadable, booking without prepayment: ${e?.message ?? e}`,
         );
       }
-      const prepayOn = Boolean(prepayCfg?.enabled);
+      // Предоплата — функция тарифа. Салон на тарифе без неё записывает без предоплаты, даже если
+      // включил её раньше; настройки не трогаем, чтобы при переходе на тариф выше всё вернулось.
+      // Ошибка чтения тарифа — предоплата работает как настроена (fail-open внутри salonHasFeature).
+      let planAllowsPrepay = true;
+      if (prepayCfg?.enabled) {
+        const { salonHasFeature } = await import("@/lib/billing.server");
+        planAllowsPrepay = await salonHasFeature(input.salon.salonId, "prepayment");
+      }
+      const prepayOn = Boolean(prepayCfg?.enabled) && planAllowsPrepay;
 
       const rpcArgs: any = {
         _salon_id: input.salon.salonId,
@@ -2686,13 +2694,7 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   })();
 
   const [closedDates, mastersRoster, servicesRoster, hasUpcomingAppointment, entryOffer] =
-    await Promise.all([
-      closedDatesP,
-      mastersRosterP,
-      servicesRosterP,
-      upcomingApptP,
-      entryOfferP,
-    ]);
+    await Promise.all([closedDatesP, mastersRosterP, servicesRosterP, upcomingApptP, entryOfferP]);
   // Observability: prove in prod logs whether the closed-list block actually rendered this turn.
   // If servicesRoster is empty here despite the salon having services in the admin, the fault is
   // upstream (loadAiVisibleServicesForSalon), not in the prompt — that changes the debugging path.
