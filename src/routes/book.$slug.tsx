@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { supabase } from "@/integrations/supabase/client";
 import { PublicBooking } from "@/components/book/PublicBooking";
 import { SalonSite } from "@/components/site/SalonSite";
+import { BookingSuspended } from "@/components/book/BookingSuspended";
 
 // The canonical home of a salon is its custom domain when configured, otherwise /book/{slug}
 // on the platform domain. Used for <link rel=canonical> and og:url so a salon with a custom
@@ -23,16 +24,25 @@ export const Route = createFileRoute("/book/$slug")({
       .eq("is_active", true)
       .maybeSingle();
 
-    const { data: branches } = salon
-      ? await supabase
-          .from("branches")
-          .select("*")
-          .eq("salon_id", salon.id)
-          .eq("is_active", true)
-          .order("sort_order")
-      : { data: [] };
+    const [{ data: branches }, { data: blocked }] = salon
+      ? await Promise.all([
+          supabase
+            .from("branches")
+            .select("*")
+            .eq("salon_id", salon.id)
+            .eq("is_active", true)
+            .order("sort_order"),
+          // Подписка салона не оплачена — запись всё равно не пройдёт (её режет триггер в базе),
+          // поэтому честнее сразу сказать об этом, чем дать клиенту заполнить форму впустую.
+          // Ошибка проверки — показываем сайт как обычно.
+          (supabase as any).rpc("billing_salon_is_blocked", { _salon_id: salon.id }).then(
+            (r: any) => r,
+            () => ({ data: false }),
+          ),
+        ])
+      : [{ data: [] }, { data: false }];
 
-    return { salon: salon ?? null, branches: branches ?? [] };
+    return { salon: salon ?? null, branches: branches ?? [], blocked: blocked === true };
   },
   head: ({ loaderData }) => {
     const salon = loaderData?.salon;
@@ -69,7 +79,7 @@ export const Route = createFileRoute("/book/$slug")({
 });
 
 function BookBySlug() {
-  const { salon, branches } = Route.useLoaderData();
+  const { salon, branches, blocked } = Route.useLoaderData();
 
   if (!salon) {
     return (
@@ -78,6 +88,8 @@ function BookBySlug() {
       </div>
     );
   }
+
+  if (blocked) return <BookingSuspended salon={salon} />;
 
   return salon.site_enabled !== false ? (
     <SalonSite salon={salon} />

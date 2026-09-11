@@ -304,6 +304,20 @@ export const Route = createFileRoute("/api/public/ig/$salonId")({
         }
         if (conversationsToProcess.size === 0) return ack();
 
+        // Биллинг: неоплаченный салон или исчерпанный лимит — сообщения сохранены, ассистент молчит.
+        // Ворота сами пробуют автодокупку и при своей ошибке пропускают (fail-open).
+        let planAllowsSales = true;
+        {
+          const { assistantGate, recordUsage } = await import("@/lib/billing.server");
+          const gate = await assistantGate(salonId);
+          if (!gate.allowed) {
+            await record(`Ассистент не ответил: ${gate.reason}`);
+            return ack();
+          }
+          if (gate.features && !gate.features.sales_mode) planAllowsSales = false;
+          await recordUsage(salonId, "ai_reply", conversationsToProcess.size);
+        }
+
         const assistantConfig = {
           greeting: (assistant as any)?.greeting ?? null,
           tone_instructions: (assistant as any)?.tone_instructions ?? null,
@@ -317,7 +331,7 @@ export const Route = createFileRoute("/api/public/ig/$salonId")({
           industry: (assistant as any)?.industry ?? null,
           knowledge_answers: (assistant as any)?.knowledge_answers ?? null,
           sales_style: (assistant as any)?.sales_style ?? null,
-          sales_mode: (assistant as any)?.sales_mode ?? false,
+          sales_mode: planAllowsSales && ((assistant as any)?.sales_mode ?? false),
           start_language: (assistant as any)?.start_language ?? null,
           entry_service_id: (assistant as any)?.entry_service_id ?? null,
           sales_price_framing: (assistant as any)?.sales_price_framing ?? null,
@@ -980,27 +994,26 @@ async function fetchMediaBytes(opts: {
   // Тип объявлен через ReturnType самой загрузки, а не переписан от руки. Переписанный терял
   // status и target — те самые два поля, ради которых ниже читается HTML-страница вместо
   // картинки, — и разбор причины отказа Meta не проходил проверку типов.
-  const strategies: { name: string; run: () => ReturnType<typeof download> }[] =
-    [
-      { name: "webhook-url", run: () => download(url, {}) },
-      {
-        name: "webhook-url+bearer",
-        run: () =>
-          token
-            ? download(url, { headers: { Authorization: `Bearer ${token}` } })
-            : Promise.resolve(null),
+  const strategies: { name: string; run: () => ReturnType<typeof download> }[] = [
+    { name: "webhook-url", run: () => download(url, {}) },
+    {
+      name: "webhook-url+bearer",
+      run: () =>
+        token
+          ? download(url, { headers: { Authorization: `Bearer ${token}` } })
+          : Promise.resolve(null),
+    },
+    { name: "webhook-url+access_token", run: () => download(withQueryToken(url), {}) },
+    {
+      name: "graph-attachment",
+      run: async () => {
+        if (!mid || !token) return null;
+        const fresh = await igFetchAttachmentUrl(creds, mid);
+        if (!fresh) return null;
+        return (await download(fresh, {})) ?? (await download(withQueryToken(fresh), {}));
       },
-      { name: "webhook-url+access_token", run: () => download(withQueryToken(url), {}) },
-      {
-        name: "graph-attachment",
-        run: async () => {
-          if (!mid || !token) return null;
-          const fresh = await igFetchAttachmentUrl(creds, mid);
-          if (!fresh) return null;
-          return (await download(fresh, {})) ?? (await download(withQueryToken(fresh), {}));
-        },
-      },
-    ];
+    },
+  ];
 
   const rejected: string[] = [];
   const sampledHtml: string[] = [];

@@ -3,12 +3,28 @@ import { useEffect, useState } from "react";
 import { signOutFromApp, useAuth } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { LayoutDashboard, Building2, Calendar, LogOut, BarChart3, Settings, Menu, Bell, UserCog, Activity, AlertOctagon } from "lucide-react";
+import {
+  LayoutDashboard,
+  Building2,
+  Calendar,
+  LogOut,
+  BarChart3,
+  Settings,
+  Menu,
+  Bell,
+  UserCog,
+  Activity,
+  AlertOctagon,
+  CreditCard,
+} from "lucide-react";
 import { useNotifications } from "@/hooks/use-notifications";
 import { FullScreenLoader } from "@/components/ui/loading-state";
 import { RefreshProvider } from "@/lib/refresh-context";
 import { PullToRefresh } from "@/components/ui/pull-to-refresh";
 import { ensurePushSubscription, isPushSupported, isIos, isStandalonePWA } from "@/lib/push";
+import { getBillingStatus } from "@/lib/billing.functions";
+import { BillingBanner, BillingPaywall } from "@/components/admin/BillingBanner";
+import type { BillingState } from "@/lib/billing-logic";
 
 export const Route = createFileRoute("/admin")({
   head: () => ({ meta: [{ title: "Админ-панель — Qabyl" }] }),
@@ -16,10 +32,12 @@ export const Route = createFileRoute("/admin")({
 });
 
 function AdminLayout() {
-  const { user, loading, rolesLoading, isSuperAdmin, isSalonAdmin, isMaster, salonId, branchId } = useAuth();
+  const { user, loading, rolesLoading, isSuperAdmin, isSalonAdmin, isMaster, salonId, branchId } =
+    useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [billing, setBilling] = useState<BillingState | null>(null);
 
   useEffect(() => {
     if (!loading && !user) navigate({ to: "/auth" });
@@ -34,7 +52,25 @@ function AdminLayout() {
     }
   }, [loading, rolesLoading, user, isSuperAdmin, isSalonAdmin, isMaster, navigate]);
 
-  useEffect(() => { setMobileOpen(false); }, [location.pathname]);
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [location.pathname]);
+
+  // Состояние оплаты салона: баннер и экран блокировки. Перечитывается при переходах, чтобы после
+  // оплаты кабинет открылся без перезагрузки. Ошибка чтения — кабинет открыт (fail-open): сбой
+  // нашего учёта не должен запирать салон.
+  useEffect(() => {
+    if (!salonId || isSuperAdmin) return;
+    let cancelled = false;
+    getBillingStatus({ data: { salonId } })
+      .then((r) => {
+        if (!cancelled) setBilling(r.state);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [salonId, isSuperAdmin, location.pathname]);
 
   // Master should land on calendar — no dashboard available
   useEffect(() => {
@@ -52,9 +88,13 @@ function AdminLayout() {
     if (Notification.permission === "denied") return;
     if (isIos() && !isStandalonePWA()) return; // iOS needs PWA install
     const masterScope = isMaster && !isSuperAdmin && !isSalonAdmin;
-    const subSalonId = isSuperAdmin ? null : salonId ?? null;
-    const subBranchId = masterScope ? branchId ?? null : null;
-    ensurePushSubscription({ salonId: subSalonId, branchId: subBranchId, skipPermissionRequest: true }).catch(() => {});
+    const subSalonId = isSuperAdmin ? null : (salonId ?? null);
+    const subBranchId = masterScope ? (branchId ?? null) : null;
+    ensurePushSubscription({
+      salonId: subSalonId,
+      branchId: subBranchId,
+      skipPermissionRequest: true,
+    }).catch(() => {});
 
     // Браузер может отозвать подписку в любой момент (см. pushsubscriptionchange
     // в public/sw.js). Без этого слушателя новый endpoint попадёт в базу только
@@ -63,13 +103,21 @@ function AdminLayout() {
     const onSwMessage = (event: MessageEvent) => {
       if (event.data?.source !== "qabyl-sw") return;
       if (event.data.event !== "subscription-renew") return;
-      ensurePushSubscription({ salonId: subSalonId, branchId: subBranchId, skipPermissionRequest: true }).catch(() => {});
+      ensurePushSubscription({
+        salonId: subSalonId,
+        branchId: subBranchId,
+        skipPermissionRequest: true,
+      }).catch(() => {});
     };
     navigator.serviceWorker.addEventListener("message", onSwMessage);
     return () => navigator.serviceWorker.removeEventListener("message", onSwMessage);
   }, [user, isSuperAdmin, isSalonAdmin, isMaster, salonId, branchId]);
 
-  const { unreadCount } = useNotifications({ salonId, isSuperAdmin, branchId: isMaster && !isSuperAdmin && !isSalonAdmin ? branchId : null });
+  const { unreadCount } = useNotifications({
+    salonId,
+    isSuperAdmin,
+    branchId: isMaster && !isSuperAdmin && !isSalonAdmin ? branchId : null,
+  });
 
   // Пока сессия или роли еще не подгрузились — показываем спиннер,
   // а не экран "Нет доступа" и не редирект на /auth.
@@ -84,33 +132,50 @@ function AdminLayout() {
   // из такого состояния есть дорога дальше.
   if (!hasAccess) return null;
 
-  const navItems = (isMaster && !isSuperAdmin && !isSalonAdmin)
-    ? [
-        { to: "/admin/calendar", label: "Календарь", icon: Calendar },
-        { to: "/admin/notifications", label: "Уведомления", icon: Bell, badge: unreadCount },
-        { to: "/admin/account", label: "Аккаунт", icon: UserCog },
-      ]
-    : isSuperAdmin
-    ? [
-        { to: "/admin", label: "Дашборд", icon: LayoutDashboard, exact: true },
-        { to: "/admin/ops", label: "Ops Dashboard", icon: Activity },
-        { to: "/admin/errors", label: "Ошибки", icon: AlertOctagon },
-        { to: "/admin/salons", label: "Салоны", icon: Building2 },
-        { to: "/admin/calendar", label: "Календарь", icon: Calendar },
-        { to: "/admin/notifications", label: "Уведомления", icon: Bell, badge: unreadCount },
-        { to: "/admin/stats", label: "Статистика", icon: BarChart3 },
-        { to: "/admin/account", label: "Аккаунт", icon: UserCog },
-      ]
-    : [
-        { to: "/admin", label: "Дашборд", icon: LayoutDashboard, exact: true },
-        { to: "/admin/calendar", label: "Календарь", icon: Calendar },
-        { to: "/admin/notifications", label: "Уведомления", icon: Bell, badge: unreadCount },
-        { to: "/admin/stats", label: "Статистика", icon: BarChart3 },
-        ...(salonId ? [{ to: `/admin/salons/${salonId}`, label: "Мой салон", icon: Settings }] : []),
-        { to: "/admin/account", label: "Аккаунт", icon: UserCog },
-      ];
+  const navItems =
+    isMaster && !isSuperAdmin && !isSalonAdmin
+      ? [
+          { to: "/admin/calendar", label: "Календарь", icon: Calendar },
+          { to: "/admin/notifications", label: "Уведомления", icon: Bell, badge: unreadCount },
+          { to: "/admin/account", label: "Аккаунт", icon: UserCog },
+        ]
+      : isSuperAdmin
+        ? [
+            { to: "/admin", label: "Дашборд", icon: LayoutDashboard, exact: true },
+            { to: "/admin/ops", label: "Ops Dashboard", icon: Activity },
+            { to: "/admin/errors", label: "Ошибки", icon: AlertOctagon },
+            { to: "/admin/salons", label: "Салоны", icon: Building2 },
+            { to: "/admin/billing", label: "Биллинг", icon: CreditCard },
+            { to: "/admin/calendar", label: "Календарь", icon: Calendar },
+            { to: "/admin/notifications", label: "Уведомления", icon: Bell, badge: unreadCount },
+            { to: "/admin/stats", label: "Статистика", icon: BarChart3 },
+            { to: "/admin/account", label: "Аккаунт", icon: UserCog },
+          ]
+        : [
+            { to: "/admin", label: "Дашборд", icon: LayoutDashboard, exact: true },
+            { to: "/admin/calendar", label: "Календарь", icon: Calendar },
+            { to: "/admin/notifications", label: "Уведомления", icon: Bell, badge: unreadCount },
+            { to: "/admin/stats", label: "Статистика", icon: BarChart3 },
+            ...(salonId
+              ? [{ to: `/admin/salons/${salonId}`, label: "Мой салон", icon: Settings }]
+              : []),
+            { to: "/admin/billing", label: "Тариф и оплата", icon: CreditCard },
+            { to: "/admin/account", label: "Аккаунт", icon: UserCog },
+          ];
 
-  const roleLabel = isSuperAdmin ? "Админ-панель" : isSalonAdmin ? "Кабинет салона" : "Кабинет мастера";
+  const roleLabel = isSuperAdmin
+    ? "Админ-панель"
+    : isSalonAdmin
+      ? "Кабинет салона"
+      : "Кабинет мастера";
+
+  // Неоплаченный салон видит только экран оплаты. Страницы тарифа и аккаунта открыты: без первой
+  // не оплатить, без второй не сменить пароль и не выйти.
+  const paywalled =
+    !isSuperAdmin &&
+    billing?.blocked === true &&
+    !location.pathname.startsWith("/admin/billing") &&
+    !location.pathname.startsWith("/admin/account");
 
   const SidebarContent = (
     <>
@@ -120,13 +185,22 @@ function AdminLayout() {
       </div>
       <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
         {navItems.map((item) => {
-          const active = item.exact ? location.pathname === item.to : location.pathname.startsWith(item.to);
+          const active = item.exact
+            ? location.pathname === item.to
+            : location.pathname.startsWith(item.to);
           const badge = (item as any).badge as number | undefined;
           return (
-            <Link key={item.to} to={item.to as any} className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition ${active ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}>
-              <item.icon className="h-4 w-4" /><span className="flex-1">{item.label}</span>
+            <Link
+              key={item.to}
+              to={item.to as any}
+              className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition ${active ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
+            >
+              <item.icon className="h-4 w-4" />
+              <span className="flex-1">{item.label}</span>
               {badge ? (
-                <span className={`text-[10px] min-w-5 h-5 px-1.5 rounded-full flex items-center justify-center ${active ? "bg-primary-foreground text-primary" : "bg-primary text-primary-foreground"}`}>
+                <span
+                  className={`text-[10px] min-w-5 h-5 px-1.5 rounded-full flex items-center justify-center ${active ? "bg-primary-foreground text-primary" : "bg-primary text-primary-foreground"}`}
+                >
                   {badge > 99 ? "99+" : badge}
                 </span>
               ) : null}
@@ -135,8 +209,16 @@ function AdminLayout() {
         })}
       </nav>
       <div className="p-3 border-t">
-        <Button variant="ghost" className="w-full justify-start" onClick={async () => { await signOutFromApp(); navigate({ to: "/auth", replace: true }); }}>
-          <LogOut className="h-4 w-4 mr-2" />Выйти
+        <Button
+          variant="ghost"
+          className="w-full justify-start"
+          onClick={async () => {
+            await signOutFromApp();
+            navigate({ to: "/auth", replace: true });
+          }}
+        >
+          <LogOut className="h-4 w-4 mr-2" />
+          Выйти
         </Button>
       </div>
     </>
@@ -152,16 +234,19 @@ function AdminLayout() {
           <div className="font-bold">Qabyl</div>
           <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
             <SheetTrigger asChild>
-              <Button variant="ghost" size="icon"><Menu className="h-5 w-5" /></Button>
+              <Button variant="ghost" size="icon">
+                <Menu className="h-5 w-5" />
+              </Button>
             </SheetTrigger>
             <SheetContent side="left" className="w-64 p-0 flex flex-col">
               {SidebarContent}
             </SheetContent>
           </Sheet>
         </header>
+        {!isSuperAdmin && isSalonAdmin && <BillingBanner state={billing} />}
         <RefreshProvider>
           <PullToRefresh className="flex-1 overflow-auto relative">
-            <Outlet />
+            {paywalled ? <BillingPaywall isOwner={isSalonAdmin} /> : <Outlet />}
           </PullToRefresh>
         </RefreshProvider>
       </div>

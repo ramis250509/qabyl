@@ -228,7 +228,9 @@ export function PublicBooking({
     (async () => {
       let q = supabase
         .from("masters")
-        .select("id, name, specialization, photo_url, branch_id, rating, experience_years, master_services!inner(service_id)")
+        .select(
+          "id, name, specialization, photo_url, branch_id, rating, experience_years, master_services!inner(service_id)",
+        )
         .eq("salon_id", salon.id)
         .eq("is_active", true)
         .eq("master_services.service_id", selectedService.id)
@@ -275,7 +277,10 @@ export function PublicBooking({
         .select("master_id, rating")
         .eq("salon_id", salon.id)
         .eq("is_published", true)
-        .in("master_id", visible.map((m) => m.id));
+        .in(
+          "master_id",
+          visible.map((m) => m.id),
+        );
       const ratingsByMaster = new Map<string, number[]>();
       for (const r of (reviewRows ?? []) as any[]) {
         if (!r.master_id) continue;
@@ -673,7 +678,10 @@ export function PublicBooking({
             </div>
             <div className="rounded-xl border-2 border-red-500 bg-red-50 dark:bg-red-950/30 p-4 space-y-3">
               <div className="flex items-start gap-3">
-                <AlertTriangle className="h-6 w-6 shrink-0 text-red-600 dark:text-red-400" aria-hidden />
+                <AlertTriangle
+                  className="h-6 w-6 shrink-0 text-red-600 dark:text-red-400"
+                  aria-hidden
+                />
                 <div className="text-red-900 dark:text-red-100">
                   <div className="font-extrabold uppercase tracking-wide text-base">
                     {t("salonRuleTitle")}
@@ -723,7 +731,11 @@ export function PublicBooking({
                   // WhatsApp confirmation is dispatched server-side via DB trigger.
                   setSuccess(true);
                 } catch (err: any) {
-                  toast.error(err.message);
+                  toast.error(
+                    String(err?.message ?? "").includes("salon_billing_suspended")
+                      ? "Онлайн-запись в этом салоне временно недоступна. Позвоните или напишите салону напрямую."
+                      : err.message,
+                  );
                 } finally {
                   setSubmitting(false);
                 }

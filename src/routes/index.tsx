@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Calendar, Users, MessageCircle, BarChart3 } from "lucide-react";
 import { PublicBooking } from "@/components/book/PublicBooking";
 import { SalonSite } from "@/components/site/SalonSite";
+import { BookingSuspended } from "@/components/book/BookingSuspended";
 import { FullScreenLoader } from "@/components/ui/loading-state";
 import { getSsrLanding } from "@/lib/ssr-landing";
 
@@ -69,6 +70,7 @@ function Index() {
   const { ssrLanding } = Route.useLoaderData();
   const navigate = useNavigate();
   const [hostSalon, setHostSalon] = useState<any | null>(null);
+  const [hostBlocked, setHostBlocked] = useState(false);
   const [resolved, setResolved] = useState(false);
 
   useEffect(() => {
@@ -89,7 +91,15 @@ function Index() {
     import("@/integrations/supabase/client").then(({ supabase }) =>
       supabase.rpc("get_salon_by_host", { _host: host }).then(({ data }) => {
         if (cancelled) return;
-        if (data && data.length > 0) setHostSalon(data[0]);
+        if (data && data.length > 0) {
+          setHostSalon(data[0]);
+          // Подписка салона не оплачена — вместо сайта страница «запись временно недоступна».
+          (supabase as any)
+            .rpc("billing_salon_is_blocked", { _salon_id: data[0].id })
+            .then(({ data: blocked }: any) => {
+              if (!cancelled) setHostBlocked(blocked === true);
+            });
+        }
         setResolved(true);
       }),
     );
@@ -105,6 +115,7 @@ function Index() {
   }, [hostSalon]);
 
   if (hostSalon) {
+    if (hostBlocked) return <BookingSuspended salon={hostSalon} />;
     return hostSalon.site_enabled !== false ? (
       <SalonSite salon={hostSalon} />
     ) : (
@@ -197,7 +208,11 @@ function Landing() {
 
         <div className="mt-20 grid gap-4 md:grid-cols-4">
           {[
-            { icon: MessageCircle, title: "Ассистент в WhatsApp", desc: "Отвечает и записывает 24/7" },
+            {
+              icon: MessageCircle,
+              title: "Ассистент в WhatsApp",
+              desc: "Отвечает и записывает 24/7",
+            },
             { icon: Calendar, title: "Календарь мастеров", desc: "День и неделя, перенос мышкой" },
             { icon: Users, title: "Филиалы и команда", desc: "Один кабинет, много точек" },
             { icon: BarChart3, title: "Статистика", desc: "Выручка, загрузка, топ услуг" },

@@ -148,6 +148,12 @@ async function waCloudPost(
           : `WA ${res.status} ${raw.slice(0, 300)}`,
       };
     }
+    // Биллинг: считаем сообщение, за которое платит Meta. Отметка «прочитано» и индикатор набора
+    // идут на тот же адрес, но это не сообщение — у них есть поле status.
+    if ((!path || path.endsWith("/messages")) && (body as any)?.status === undefined) {
+      const { recordWaUsageByPhone } = await import("@/lib/billing.server");
+      await recordWaUsageByPhone(creds.phoneNumberId);
+    }
     return { ok: true, messageId: parsed?.messages?.[0]?.id };
   } catch (e: any) {
     return { ok: false, error: e?.message ?? String(e) };

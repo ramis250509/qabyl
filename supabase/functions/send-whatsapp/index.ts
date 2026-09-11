@@ -276,6 +276,33 @@ Deno.serve(async (req) => {
       return (recent ?? []).length > 0;
     }
 
+    // ---- Биллинг Qabyl.
+    // Салон, заблокированный за неоплату или перешедший потолок уведомлений, сообщений не шлёт.
+    // Ошибка чтения состояния — отправляем (fail-open): клиент без подтверждения хуже, чем
+    // неучтённое сообщение. Каждое отправленное сообщение идёт в расход салона.
+    let billingChecked = false;
+    let billingStop: string | null = null;
+    async function billingBlocked(): Promise<string | null> {
+      if (billingChecked) return billingStop;
+      billingChecked = true;
+      const { data, error } = await supabase.rpc("billing_salon_state", {
+        _salon_id: appt.salon_id,
+      });
+      if (error || !data || data.exempt) return null;
+      if (data.blocked) billingStop = "Подписка Qabyl не оплачена — уведомления приостановлены";
+      else if (data.notifications_paused)
+        billingStop = "Сообщения тарифа закончились — уведомления приостановлены";
+      return billingStop;
+    }
+    async function recordWaUsage() {
+      const { error } = await supabase.rpc("billing_record_usage", {
+        _salon_id: appt.salon_id,
+        _metric: "wa_out",
+        _qty: 1,
+      });
+      if (error) console.error("send-whatsapp billing usage failed", error.message);
+    }
+
     /**
      * Send one message by whatever route is legal for it right now.
      *
@@ -296,6 +323,10 @@ Deno.serve(async (req) => {
       const toPhone = normalizePhone(rawPhone);
       if (!toPhone) {
         return { ok: false, messageId: null, detail: "Номер телефона нераспознаваем", via: "none" };
+      }
+      const billingStopReason = await billingBlocked();
+      if (billingStopReason) {
+        return { ok: false, messageId: null, detail: billingStopReason, via: "none" };
       }
       const tpl = templates[templateKind];
       // Окно стоит запроса, поэтому спрашиваем только когда ответ может на что-то повлиять:
@@ -324,7 +355,10 @@ Deno.serve(async (req) => {
 
       if (decision === "cloud_text") {
         const res = await sendCloudApi({ ...cloudCreds, toPhone, text });
-        if (res.ok) return { ok: true, messageId: res.messageId, detail: null, via: "cloud_text" };
+        if (res.ok) {
+          await recordWaUsage();
+          return { ok: true, messageId: res.messageId, detail: null, via: "cloud_text" };
+        }
         // Отката больше нет: Green-API удалён. Отказ Meta — это и есть конец пути, и владелец
         // обязан увидеть причину, а не решить, что сообщение ушло.
         console.error("CloudAPI free-form send failed", { target, error: res.error });
@@ -338,6 +372,7 @@ Deno.serve(async (req) => {
           template: { name: tpl!.name!, lang: tpl!.lang || "ru", params: templateParams },
         });
         if (res.ok) {
+          await recordWaUsage();
           return { ok: true, messageId: res.messageId, detail: null, via: "cloud_template" };
         }
         console.error("CloudAPI template send failed", { target, error: res.error });

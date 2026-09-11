@@ -26,6 +26,7 @@ import { Route as AdminOpsRouteImport } from './routes/admin/ops'
 import { Route as AdminNotificationsRouteImport } from './routes/admin/notifications'
 import { Route as AdminErrorsRouteImport } from './routes/admin/errors'
 import { Route as AdminCalendarRouteImport } from './routes/admin/calendar'
+import { Route as AdminBillingRouteImport } from './routes/admin/billing'
 import { Route as AdminAccountRouteImport } from './routes/admin/account'
 import { Route as AdminSalonsIndexRouteImport } from './routes/admin/salons/index'
 import { Route as PreviewSalonSalonIdRouteImport } from './routes/preview.salon.$salonId'
@@ -35,6 +36,7 @@ import { Route as AdminSalonsSalonIdRouteImport } from './routes/admin/salons/$s
 import { Route as ApiPublicWagupshupTokenRouteImport } from './routes/api/public/wagupshup.$token'
 import { Route as ApiPublicWacloudSalonIdRouteImport } from './routes/api/public/wacloud.$salonId'
 import { Route as ApiPublicIgSalonIdRouteImport } from './routes/api/public/ig.$salonId'
+import { Route as ApiPublicBillingFreedompayRouteImport } from './routes/api/public/billing.freedompay'
 import { Route as ApiInternalCronJobRouteImport } from './routes/api/internal/cron.$job'
 
 const TermsRoute = TermsRouteImport.update({
@@ -122,6 +124,11 @@ const AdminCalendarRoute = AdminCalendarRouteImport.update({
   path: '/calendar',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminBillingRoute = AdminBillingRouteImport.update({
+  id: '/billing',
+  path: '/billing',
+  getParentRoute: () => AdminRoute,
+} as any)
 const AdminAccountRoute = AdminAccountRouteImport.update({
   id: '/account',
   path: '/account',
@@ -167,6 +174,12 @@ const ApiPublicIgSalonIdRoute = ApiPublicIgSalonIdRouteImport.update({
   path: '/api/public/ig/$salonId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicBillingFreedompayRoute =
+  ApiPublicBillingFreedompayRouteImport.update({
+    id: '/api/public/billing/freedompay',
+    path: '/api/public/billing/freedompay',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiInternalCronJobRoute = ApiInternalCronJobRouteImport.update({
   id: '/api/internal/cron/$job',
   path: '/api/internal/cron/$job',
@@ -183,6 +196,7 @@ export interface FileRoutesByFullPath {
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/terms': typeof TermsRoute
   '/admin/account': typeof AdminAccountRoute
+  '/admin/billing': typeof AdminBillingRoute
   '/admin/calendar': typeof AdminCalendarRoute
   '/admin/errors': typeof AdminErrorsRoute
   '/admin/notifications': typeof AdminNotificationsRoute
@@ -198,6 +212,7 @@ export interface FileRoutesByFullPath {
   '/preview/salon/$salonId': typeof PreviewSalonSalonIdRoute
   '/admin/salons/': typeof AdminSalonsIndexRoute
   '/api/internal/cron/$job': typeof ApiInternalCronJobRoute
+  '/api/public/billing/freedompay': typeof ApiPublicBillingFreedompayRoute
   '/api/public/ig/$salonId': typeof ApiPublicIgSalonIdRoute
   '/api/public/wacloud/$salonId': typeof ApiPublicWacloudSalonIdRoute
   '/api/public/wagupshup/$token': typeof ApiPublicWagupshupTokenRoute
@@ -211,6 +226,7 @@ export interface FileRoutesByTo {
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/terms': typeof TermsRoute
   '/admin/account': typeof AdminAccountRoute
+  '/admin/billing': typeof AdminBillingRoute
   '/admin/calendar': typeof AdminCalendarRoute
   '/admin/errors': typeof AdminErrorsRoute
   '/admin/notifications': typeof AdminNotificationsRoute
@@ -226,6 +242,7 @@ export interface FileRoutesByTo {
   '/preview/salon/$salonId': typeof PreviewSalonSalonIdRoute
   '/admin/salons': typeof AdminSalonsIndexRoute
   '/api/internal/cron/$job': typeof ApiInternalCronJobRoute
+  '/api/public/billing/freedompay': typeof ApiPublicBillingFreedompayRoute
   '/api/public/ig/$salonId': typeof ApiPublicIgSalonIdRoute
   '/api/public/wacloud/$salonId': typeof ApiPublicWacloudSalonIdRoute
   '/api/public/wagupshup/$token': typeof ApiPublicWagupshupTokenRoute
@@ -241,6 +258,7 @@ export interface FileRoutesById {
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/terms': typeof TermsRoute
   '/admin/account': typeof AdminAccountRoute
+  '/admin/billing': typeof AdminBillingRoute
   '/admin/calendar': typeof AdminCalendarRoute
   '/admin/errors': typeof AdminErrorsRoute
   '/admin/notifications': typeof AdminNotificationsRoute
@@ -256,6 +274,7 @@ export interface FileRoutesById {
   '/preview/salon/$salonId': typeof PreviewSalonSalonIdRoute
   '/admin/salons/': typeof AdminSalonsIndexRoute
   '/api/internal/cron/$job': typeof ApiInternalCronJobRoute
+  '/api/public/billing/freedompay': typeof ApiPublicBillingFreedompayRoute
   '/api/public/ig/$salonId': typeof ApiPublicIgSalonIdRoute
   '/api/public/wacloud/$salonId': typeof ApiPublicWacloudSalonIdRoute
   '/api/public/wagupshup/$token': typeof ApiPublicWagupshupTokenRoute
@@ -272,6 +291,7 @@ export interface FileRouteTypes {
     | '/sitemap.xml'
     | '/terms'
     | '/admin/account'
+    | '/admin/billing'
     | '/admin/calendar'
     | '/admin/errors'
     | '/admin/notifications'
@@ -287,6 +307,7 @@ export interface FileRouteTypes {
     | '/preview/salon/$salonId'
     | '/admin/salons/'
     | '/api/internal/cron/$job'
+    | '/api/public/billing/freedompay'
     | '/api/public/ig/$salonId'
     | '/api/public/wacloud/$salonId'
     | '/api/public/wagupshup/$token'
@@ -300,6 +321,7 @@ export interface FileRouteTypes {
     | '/sitemap.xml'
     | '/terms'
     | '/admin/account'
+    | '/admin/billing'
     | '/admin/calendar'
     | '/admin/errors'
     | '/admin/notifications'
@@ -315,6 +337,7 @@ export interface FileRouteTypes {
     | '/preview/salon/$salonId'
     | '/admin/salons'
     | '/api/internal/cron/$job'
+    | '/api/public/billing/freedompay'
     | '/api/public/ig/$salonId'
     | '/api/public/wacloud/$salonId'
     | '/api/public/wagupshup/$token'
@@ -329,6 +352,7 @@ export interface FileRouteTypes {
     | '/sitemap.xml'
     | '/terms'
     | '/admin/account'
+    | '/admin/billing'
     | '/admin/calendar'
     | '/admin/errors'
     | '/admin/notifications'
@@ -344,6 +368,7 @@ export interface FileRouteTypes {
     | '/preview/salon/$salonId'
     | '/admin/salons/'
     | '/api/internal/cron/$job'
+    | '/api/public/billing/freedompay'
     | '/api/public/ig/$salonId'
     | '/api/public/wacloud/$salonId'
     | '/api/public/wagupshup/$token'
@@ -365,6 +390,7 @@ export interface RootRouteChildren {
   ApiPublicWacloudRoute: typeof ApiPublicWacloudRouteWithChildren
   PreviewSalonSalonIdRoute: typeof PreviewSalonSalonIdRoute
   ApiInternalCronJobRoute: typeof ApiInternalCronJobRoute
+  ApiPublicBillingFreedompayRoute: typeof ApiPublicBillingFreedompayRoute
   ApiPublicIgSalonIdRoute: typeof ApiPublicIgSalonIdRoute
   ApiPublicWagupshupTokenRoute: typeof ApiPublicWagupshupTokenRoute
 }
@@ -490,6 +516,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminCalendarRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/billing': {
+      id: '/admin/billing'
+      path: '/billing'
+      fullPath: '/admin/billing'
+      preLoaderRoute: typeof AdminBillingRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/account': {
       id: '/admin/account'
       path: '/account'
@@ -553,6 +586,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicIgSalonIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/billing/freedompay': {
+      id: '/api/public/billing/freedompay'
+      path: '/api/public/billing/freedompay'
+      fullPath: '/api/public/billing/freedompay'
+      preLoaderRoute: typeof ApiPublicBillingFreedompayRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/internal/cron/$job': {
       id: '/api/internal/cron/$job'
       path: '/api/internal/cron/$job'
@@ -565,6 +605,7 @@ declare module '@tanstack/react-router' {
 
 interface AdminRouteChildren {
   AdminAccountRoute: typeof AdminAccountRoute
+  AdminBillingRoute: typeof AdminBillingRoute
   AdminCalendarRoute: typeof AdminCalendarRoute
   AdminErrorsRoute: typeof AdminErrorsRoute
   AdminNotificationsRoute: typeof AdminNotificationsRoute
@@ -577,6 +618,7 @@ interface AdminRouteChildren {
 
 const AdminRouteChildren: AdminRouteChildren = {
   AdminAccountRoute: AdminAccountRoute,
+  AdminBillingRoute: AdminBillingRoute,
   AdminCalendarRoute: AdminCalendarRoute,
   AdminErrorsRoute: AdminErrorsRoute,
   AdminNotificationsRoute: AdminNotificationsRoute,
@@ -616,6 +658,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPublicWacloudRoute: ApiPublicWacloudRouteWithChildren,
   PreviewSalonSalonIdRoute: PreviewSalonSalonIdRoute,
   ApiInternalCronJobRoute: ApiInternalCronJobRoute,
+  ApiPublicBillingFreedompayRoute: ApiPublicBillingFreedompayRoute,
   ApiPublicIgSalonIdRoute: ApiPublicIgSalonIdRoute,
   ApiPublicWagupshupTokenRoute: ApiPublicWagupshupTokenRoute,
 }

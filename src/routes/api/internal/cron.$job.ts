@@ -3,6 +3,7 @@
 //   /api/internal/cron/sre-scan            → SRE new-error scan (Деби)
 //   /api/internal/cron/prepayment-expired  → tell the client their held slot was released
 //   /api/internal/cron/wa-health           → проверка подключений WhatsApp у всех салонов
+//   /api/internal/cron/billing             → цикл биллинга: продление, отсрочка, блокировка
 //
 // Called by pg_cron via net.http_post with header x-cron-secret (see migrations
 // 20260730120000 and 20260807130000).
@@ -79,6 +80,15 @@ export const Route = createFileRoute("/api/internal/cron/$job")({
 
           // Здоровье подключений WhatsApp. К Telegram и ops-агентам отношения не имеет, поэтому
           // стоит до их проверок: отсутствие настроенного чата не повод не проверять салоны.
+          // Цикл биллинга: конец пробного периода, продление, повторы списаний, отсрочка,
+          // блокировка, предупреждения. К Telegram и ops-агентам отношения не имеет.
+          if (job === "billing") {
+            const { runBillingCycle } = await import("@/lib/billing.server");
+            const report = await runBillingCycle();
+            console.log(`[cron billing] ${JSON.stringify(report)}`);
+            return json({ ok: true, ...report });
+          }
+
           if (job === "wa-health") {
             const { runWaHealthCheck } = await import("@/lib/wa-connection.server");
             const report = await runWaHealthCheck();

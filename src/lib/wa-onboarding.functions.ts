@@ -89,6 +89,10 @@ export const finishWaOnboarding = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     await assertSalonAccess(context.supabase, context.userId, data.salonId);
+    {
+      const { assertCanAddChannel } = await import("@/lib/billing.server");
+      await assertCanAddChannel(data.salonId, "wa");
+    }
 
     const {
       exchangeCodeForToken,

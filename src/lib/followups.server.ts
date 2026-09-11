@@ -168,6 +168,12 @@ export async function runFollowups(nowMs = Date.now()): Promise<FollowupRunRepor
       skip(settings.enabled ? "no_text" : "disabled");
       continue;
     }
+    // Возврат молчащих клиентов входит не во все тарифы.
+    const { salonHasFeature } = await import("@/lib/billing.server");
+    if (!(await salonHasFeature(row.salon_id, "reactivation"))) {
+      skip("plan");
+      continue;
+    }
 
     const [{ data: salon }, { data: convs }, excludedLookup] = await Promise.all([
       db.from("salons").select("timezone").eq("id", row.salon_id).maybeSingle(),

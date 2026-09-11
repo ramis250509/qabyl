@@ -1094,6 +1094,21 @@ export async function processWaCloudPayload(opts: {
 
   const runtime = resolveAssistantRuntimeConfig(salon, assistant, secrets);
   if (!runtime.assistantEnabled) return ack();
+
+  // Биллинг: салон, заблокированный за неоплату или исчерпавший сообщения тарифа, ассистентом не
+  // отвечает. Сообщения клиентов при этом уже сохранены выше — владелец видит их в переписках и
+  // на телефоне. Ворота сами пробуют автодокупку и при любой своей ошибке пропускают (fail-open).
+  {
+    const { assistantGate, recordUsage } = await import("@/lib/billing.server");
+    const gate = await assistantGate(salonId);
+    if (!gate.allowed) {
+      await record(`Ассистент не ответил: ${gate.reason}`);
+      return ack();
+    }
+    // Режим продаж входит не во все тарифы: выключаем его на этот ответ, настройку салона не трогаем.
+    if (gate.features && !gate.features.sales_mode) runtime.assistantConfig.sales_mode = false;
+    if (toRun.size) await recordUsage(salonId, "ai_reply", toRun.size);
+  }
   if (!tx.ready) {
     await record(`Ассистент не может ответить: не заполнено — ${tx.missing}`);
     return ack();

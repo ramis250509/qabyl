@@ -1294,7 +1294,7 @@ function BranchDialog({
       const { error } = await supabase
         .from("branches")
         .insert({ salon_id: form.salon_id, ...payload });
-      if (error) return toast.error(error.message);
+      if (error) return toast.error((error as any).hint || error.message);
     }
     toast.success("Сохранено");
     onSaved();

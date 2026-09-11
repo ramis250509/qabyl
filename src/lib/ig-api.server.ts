@@ -104,6 +104,11 @@ async function igPost(creds: IgCreds, path: string, body: unknown): Promise<IgSe
           : `IG ${res.status} ${raw.slice(0, 300)}`,
       };
     }
+    // Биллинг: sender_action (прочитано, печатает) — не сообщение.
+    if (creds.igUserId && !(body as any)?.sender_action) {
+      const { recordIgUsageByAccount } = await import("@/lib/billing.server");
+      await recordIgUsageByAccount(creds.igUserId);
+    }
     return { ok: true, messageId: parsed?.message_id };
   } catch (e: any) {
     return { ok: false, error: e?.message ?? String(e) };
@@ -263,13 +268,10 @@ export async function igFetchAttachmentUrl(
   messageId: string,
 ): Promise<string | null> {
   try {
-    const res = await fetch(
-      `${IG_GRAPH}/${encodeURIComponent(messageId)}?fields=attachments`,
-      {
-        headers: { Authorization: `Bearer ${creds.token}` },
-        signal: AbortSignal.timeout(8000),
-      },
-    );
+    const res = await fetch(`${IG_GRAPH}/${encodeURIComponent(messageId)}?fields=attachments`, {
+      headers: { Authorization: `Bearer ${creds.token}` },
+      signal: AbortSignal.timeout(8000),
+    });
     if (!res.ok) return null;
     const body: any = await res.json();
     // Shape: { attachments: { data: [ { image_data: { url }, video_data: { url }, file_url } ] } }

@@ -109,6 +109,8 @@ export const setInstagramEnabled = createServerFn({ method: "POST" })
     // the salon believes the assistant is live, clients write, and the webhook silently 403s.
     // Refuse instead, naming what is missing.
     if (data.enabled) {
+      const { assertCanAddChannel } = await import("@/lib/billing.server");
+      await assertCanAddChannel(data.salonId, "ig");
       const { data: row } = await supabaseAdmin
         .from("salon_secrets")
         .select("instagram_user_id, instagram_token, instagram_app_secret")
