@@ -2,6 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { useAuth } from "@/lib/auth-client";
 import { Card } from "@/components/ui/card";
+import { HelpCircle } from "lucide-react";
+import { resetTour } from "@/components/admin/ProductTour";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -163,6 +165,29 @@ function AccountPage() {
         <div className="flex justify-end">
           <Button onClick={savePassword} disabled={pwSaving}>
             {pwSaving ? "Сохранение..." : "Сменить пароль"}
+          </Button>
+        </div>
+      </Card>
+
+      {/* Экскурсия показывается один раз и больше никогда. Способ вернуть её нужен ровно для
+          двух случаев: человек пролистал её не глядя, и человек передал кабинет сотруднику. */}
+      <Card className="p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="font-semibold">Знакомство с кабинетом</h2>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Короткая экскурсия по основным разделам — минута.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            onClick={() => {
+              resetTour();
+              window.location.assign("/admin");
+            }}
+          >
+            <HelpCircle className="mr-1.5 h-4 w-4" />
+            Показать снова
           </Button>
         </div>
       </Card>

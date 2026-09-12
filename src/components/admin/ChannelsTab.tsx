@@ -101,7 +101,12 @@ export function ChannelsTab({
     const prev = assistantOn;
     setAssistantOn(v);
     const [{ data, error }, { error: rowError }] = await Promise.all([
-      supabase.from("salons").update({ ai_assistant_enabled: v }).eq("id", salonId).select().single(),
+      supabase
+        .from("salons")
+        .update({ ai_assistant_enabled: v })
+        .eq("id", salonId)
+        .select()
+        .single(),
       supabase
         .from("salon_ai_assistant")
         .upsert({ salon_id: salonId, enabled: v } as any, { onConflict: "salon_id" }),

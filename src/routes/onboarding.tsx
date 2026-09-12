@@ -57,6 +57,7 @@ import { WaConnectButton, type SignupOutcome } from "@/components/admin/WaConnec
 import { finishWaOnboarding } from "@/lib/wa-onboarding.functions";
 import { changeBillingPlan, getBillingOverview } from "@/lib/billing.functions";
 import { PlanCards, type PlanCardData } from "@/components/billing/PlanCards";
+import { markTourPending } from "@/components/admin/ProductTour";
 
 export const Route = createFileRoute("/onboarding")({
   head: () => ({ meta: [{ title: "Настройка салона — Qabyl" }] }),
@@ -287,6 +288,35 @@ function BusinessStep({
 // Шаг 2 — услуги
 // ---------------------------------------------------------------------------
 
+/**
+ * Шаг 2 — прайс.
+ *
+ * ЧТО БЫЛО. Список галочек: владелец мог только снять лишнее. Цены и время он видел, но поменять
+ * не мог, и на экране честно писалось «поправите потом». На практике «потом» не наступало: салон
+ * уходил в работу со средними по рынку ценами, ассистент называл их клиентам, и первое, что
+ * владелец узнавал о Qabyl, — что тот врёт про деньги.
+ *
+ * ЧТО СТАЛО. Тот же каталог, но каждая строка — живая: имя, цена и время правятся на месте,
+ * лишнее удаляется крестиком, своё добавляется одной кнопкой. Обязательных полей нет: не тронул
+ * ничего — получил ровно прежнее поведение.
+ *
+ * ПОЧЕМУ НЕ ФОРМА НА КАЖДУЮ УСЛУГУ. Их тридцать. Тридцать раз «Добавить → заполнить → Сохранить» —
+ * это не онбординг, это рабочий день.
+ */
+type DraftService = {
+  /** Ключ строки. Имя для этого не годится: его как раз и редактируют. */
+  key: string;
+  name: string;
+  price: string;
+  duration: string;
+  category: string;
+  /** Придумана владельцем, а не взята из каталога, — показываем отдельно. */
+  custom?: boolean;
+};
+
+let draftSeq = 0;
+const nextKey = () => `svc-${++draftSeq}`;
+
 function ServicesStep({
   salonId,
   industry,
@@ -298,44 +328,65 @@ function ServicesStep({
 }) {
   const seed = useServerFn(seedServiceCatalog);
   const catalog = useMemo(() => SERVICE_CATALOG_TEMPLATES[industry] ?? [], [industry]);
-  const categories = useMemo(() => Array.from(new Set(catalog.map((s) => s.category))), [catalog]);
-  // Всё отмечено по умолчанию. Снять лишнее быстрее, чем набрать нужное с нуля, а главное —
-  // владелец, который просто нажмёт «Дальше», получит рабочий прайс, а не пустой.
-  const [picked, setPicked] = useState<Set<string>>(() => new Set(catalog.map((s) => s.name)));
+
+  // Стартуем с полного каталога: снять лишнее быстрее, чем набрать нужное с нуля.
+  const [rows, setRows] = useState<DraftService[]>(() =>
+    catalog.map((s) => ({
+      key: nextKey(),
+      name: s.name,
+      price: String(s.price),
+      duration: String(s.duration_min),
+      category: s.category,
+    })),
+  );
   const [busy, setBusy] = useState(false);
 
-  function toggle(name: string) {
-    setPicked((p) => {
-      const n = new Set(p);
-      if (n.has(name)) n.delete(name);
-      else n.add(name);
-      return n;
+  const categories = useMemo(() => {
+    const seen: string[] = [];
+    for (const r of rows) if (!seen.includes(r.category)) seen.push(r.category);
+    return seen;
+  }, [rows]);
+
+  function patch(key: string, p: Partial<DraftService>) {
+    setRows((prev) => prev.map((r) => (r.key === key ? { ...r, ...p } : r)));
+  }
+
+  function remove(key: string) {
+    setRows((prev) => prev.filter((r) => r.key !== key));
+  }
+
+  function removeCategory(cat: string) {
+    setRows((prev) => prev.filter((r) => r.category !== cat));
+  }
+
+  function addCustom(category: string) {
+    const key = nextKey();
+    setRows((prev) => [
+      ...prev,
+      { key, name: "", price: "", duration: "60", category, custom: true },
+    ]);
+    // Новая строка бесполезна, если до неё надо ещё доскроллить и догадаться кликнуть.
+    requestAnimationFrame(() => {
+      document.getElementById(`svc-name-${key}`)?.focus();
     });
   }
 
-  function toggleCategory(cat: string) {
-    const names = catalog.filter((s) => s.category === cat).map((s) => s.name);
-    const allOn = names.every((n) => picked.has(n));
-    setPicked((p) => {
-      const n = new Set(p);
-      for (const name of names) {
-        if (allOn) n.delete(name);
-        else n.add(name);
-      }
-      return n;
-    });
-  }
+  const ready = rows.filter((r) => r.name.trim());
 
   async function submit() {
+    const items = ready.map((r) => ({
+      name: r.name.trim(),
+      // Пустая цена — это «пока не знаю», а не ноль. Ноль ассистент назовёт клиенту как «бесплатно».
+      price: Math.max(0, Math.round(Number(r.price.replace(/[^\d]/g, "")) || 0)),
+      duration_min: Math.min(1440, Math.max(5, Math.round(Number(r.duration) || 60))),
+    }));
     setBusy(true);
     try {
-      const res = await seed({
-        data: { salonId, industry, names: Array.from(picked) },
-      });
-      if (res.created > 0) toast.success(`Добавлено услуг: ${res.created}`);
+      const res = await seed({ data: { salonId, industry, items } });
+      if (res.created > 0) toast.success(`Готово: услуг в прайсе — ${res.created}`);
       onDone();
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось добавить услуги");
+      toast.error(e?.message ?? "Не удалось сохранить прайс");
     } finally {
       setBusy(false);
     }
@@ -344,58 +395,107 @@ function ServicesStep({
   return (
     <div className="qb-rise space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Что вы делаете</h1>
+        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Ваш прайс</h1>
         <p className="mt-1.5 text-sm text-muted-foreground">
-          Мы подготовили прайс для вашей сферы. Снимите лишнее — цены и длительность поправите
-          потом, они сейчас средние по рынку.
+          Мы подставили типичные услуги и цены для вашей сферы. Поправьте цену и время прямо здесь,
+          лишнее удалите крестиком. Ничего не трогать тоже можно — всё изменится и потом.
         </p>
       </div>
 
-      <div className="max-h-[46vh] space-y-5 overflow-y-auto rounded-xl border p-4">
-        {categories.map((cat) => {
-          const items = catalog.filter((s) => s.category === cat);
-          const allOn = items.every((s) => picked.has(s.name));
-          return (
-            <div key={cat}>
-              <button
-                type="button"
-                onClick={() => toggleCategory(cat)}
-                className="mb-2 text-sm font-semibold hover:underline"
-              >
-                {cat}
-                <span className="ml-2 text-xs font-normal text-muted-foreground">
-                  {allOn ? "снять все" : "выбрать все"}
-                </span>
-              </button>
-              <div className="space-y-1.5">
-                {items.map((s) => (
-                  <label
-                    key={s.name}
-                    className="flex cursor-pointer items-center gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-muted/50"
+      <div className="max-h-[52vh] space-y-6 overflow-y-auto rounded-xl border p-3 sm:p-4">
+        {categories.length === 0 ? (
+          <div className="py-8 text-center text-sm text-muted-foreground">
+            Прайс пуст. Добавьте первую услугу — или пропустите шаг и заполните позже.
+          </div>
+        ) : (
+          categories.map((cat) => {
+            const items = rows.filter((r) => r.category === cat);
+            return (
+              <div key={cat}>
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <h2 className="text-sm font-semibold">{cat}</h2>
+                  <button
+                    type="button"
+                    onClick={() => removeCategory(cat)}
+                    className="text-xs text-muted-foreground transition-colors hover:text-danger"
                   >
-                    <Checkbox checked={picked.has(s.name)} onCheckedChange={() => toggle(s.name)} />
-                    <span className="min-w-0 flex-1 truncate text-sm">{s.name}</span>
-                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                      {s.price_type === "range" && s.price_max
-                        ? `${s.price}–${s.price_max}`
-                        : s.price}{" "}
-                      · {s.duration_min} мин
-                    </span>
-                  </label>
-                ))}
+                    убрать всё
+                  </button>
+                </div>
+                <div className="space-y-1.5">
+                  {items.map((r) => (
+                    <div
+                      key={r.key}
+                      className="flex items-center gap-2 rounded-lg border bg-card px-2 py-1.5"
+                    >
+                      <Input
+                        id={`svc-name-${r.key}`}
+                        value={r.name}
+                        onChange={(e) => patch(r.key, { name: e.target.value })}
+                        placeholder="Название услуги"
+                        aria-label="Название услуги"
+                        className="h-9 min-w-0 flex-1 border-0 bg-transparent px-1.5 shadow-none focus-visible:bg-muted/60"
+                      />
+                      <div className="flex shrink-0 items-center gap-1">
+                        <Input
+                          value={r.price}
+                          onChange={(e) =>
+                            patch(r.key, { price: e.target.value.replace(/[^\d]/g, "") })
+                          }
+                          inputMode="numeric"
+                          placeholder="0"
+                          aria-label={`Цена: ${r.name || "услуга"}`}
+                          className="h-9 w-[4.5rem] px-1.5 text-right tabular-nums"
+                        />
+                        <span className="w-8 text-xs text-muted-foreground">сом</span>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <Input
+                          value={r.duration}
+                          onChange={(e) =>
+                            patch(r.key, { duration: e.target.value.replace(/[^\d]/g, "") })
+                          }
+                          inputMode="numeric"
+                          placeholder="60"
+                          aria-label={`Длительность: ${r.name || "услуга"}`}
+                          className="h-9 w-14 px-1.5 text-right tabular-nums"
+                        />
+                        <span className="w-8 text-xs text-muted-foreground">мин</span>
+                      </div>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => remove(r.key)}
+                        aria-label={`Удалить ${r.name || "услугу"}`}
+                        className="h-8 w-8 shrink-0 text-muted-foreground hover:text-danger"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => addCustom(cat)}
+                    className="qb-press flex w-full items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Добавить услугу в «{cat}»
+                  </button>
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })
+        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        <Button size="lg" onClick={submit} disabled={busy || picked.size === 0}>
-          {busy ? "Добавляем…" : `Добавить ${picked.size}`}
+        <Button size="lg" onClick={submit} disabled={busy || ready.length === 0}>
+          {busy ? "Сохраняем…" : `Сохранить ${ready.length}`}
           {!busy && <ArrowRight className="ml-2 h-4 w-4" />}
         </Button>
         <Button variant="ghost" onClick={onDone} disabled={busy} className="text-muted-foreground">
-          Заполню сам позже
+          Заполню позже
         </Button>
       </div>
     </div>
@@ -827,7 +927,15 @@ function DoneStep({ slug, salonName }: { slug: string; salonName: string }) {
           привёл бы в /admin, где охранник не увидел бы роли и отправил владельца обратно сюда —
           по кругу. Перезагрузка страницы читает роли заново и стоит одну секунду ровно один раз
           за всю жизнь аккаунта. */}
-      <Button size="lg" onClick={() => window.location.assign("/admin")}>
+      <Button
+        size="lg"
+        onClick={() => {
+          // Заказываем короткую экскурсию по кабинету. Показать её здесь нельзя: кабинета ещё
+          // нет на экране, подсвечивать нечего. Кабинет сам заберёт эту отметку при загрузке.
+          markTourPending();
+          window.location.assign("/admin");
+        }}
+      >
         Перейти в кабинет
         <ArrowRight className="ml-2 h-4 w-4" />
       </Button>

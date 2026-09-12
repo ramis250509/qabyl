@@ -257,13 +257,19 @@ function SalonEdit() {
               <TabsTrigger value="services">Услуги</TabsTrigger>
               <TabsTrigger value="masters">Мастера</TabsTrigger>
               <TabsTrigger value="site">Сайт</TabsTrigger>
-              <TabsTrigger value="channels">Каналы</TabsTrigger>
+              <TabsTrigger value="channels" data-tour="tab-channels">
+                Каналы
+              </TabsTrigger>
               <TabsTrigger value="chats">Переписки</TabsTrigger>
               <TabsTrigger value="prepayment">Предоплата</TabsTrigger>
               {(isSuperAdmin || salon.ai_assistant_enabled) && (
-                <TabsTrigger value="ai">Ассистент</TabsTrigger>
+                <TabsTrigger value="ai" data-tour="tab-ai">
+                  Ассистент
+                </TabsTrigger>
               )}
-              <TabsTrigger value="team">Команда</TabsTrigger>
+              <TabsTrigger value="team" data-tour="tab-team">
+                Команда
+              </TabsTrigger>
               {isSuperAdmin && <TabsTrigger value="access">Доступ</TabsTrigger>}
               {isSuperAdmin && <TabsTrigger value="import">Импорт</TabsTrigger>}
             </TabsList>

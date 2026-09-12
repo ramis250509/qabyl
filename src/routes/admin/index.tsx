@@ -318,7 +318,9 @@ function Dashboard() {
       value: stats.masters,
       icon: Users,
       tone: "text-muted-foreground",
-      ...(settings ? { to: settings, search: { tab: "masters" }, hint: "Открыть список мастеров" } : {}),
+      ...(settings
+        ? { to: settings, search: { tab: "masters" }, hint: "Открыть список мастеров" }
+        : {}),
     },
   ];
 

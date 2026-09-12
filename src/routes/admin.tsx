@@ -24,6 +24,8 @@ import { PullToRefresh } from "@/components/ui/pull-to-refresh";
 import { ensurePushSubscription, isPushSupported, isIos, isStandalonePWA } from "@/lib/push";
 import { getBillingStatus } from "@/lib/billing.functions";
 import { BillingBanner, BillingPaywall } from "@/components/admin/BillingBanner";
+import { ProductTour, ownerTourSteps, useTourAutostart } from "@/components/admin/ProductTour";
+import { InstallPrompt } from "@/components/admin/InstallPrompt";
 import type { BillingState } from "@/lib/billing-logic";
 
 export const Route = createFileRoute("/admin")({
@@ -113,6 +115,12 @@ function AdminLayout() {
     return () => navigator.serviceWorker.removeEventListener("message", onSwMessage);
   }, [user, isSuperAdmin, isSalonAdmin, isMaster, salonId, branchId]);
 
+  // Экскурсия заказывается онбордингом и запускается здесь: раньше просто нечего подсвечивать —
+  // меню ещё не нарисовано. Мастеру и супер-админу она не показывается: первому кабинет состоит
+  // из одного календаря, второй его и построил.
+  const tourEligible = Boolean(isSalonAdmin && !isSuperAdmin && salonId);
+  const [tourOpen, closeTour] = useTourAutostart(tourEligible);
+
   const { unreadCount } = useNotifications({
     salonId,
     isSuperAdmin,
@@ -135,7 +143,7 @@ function AdminLayout() {
   const navItems =
     isMaster && !isSuperAdmin && !isSalonAdmin
       ? [
-          { to: "/admin/calendar", label: "Календарь", icon: Calendar },
+          { to: "/admin/calendar", label: "Календарь", icon: Calendar, tour: "nav-calendar" },
           { to: "/admin/notifications", label: "Уведомления", icon: Bell, badge: unreadCount },
           { to: "/admin/account", label: "Аккаунт", icon: UserCog },
         ]
@@ -152,12 +160,25 @@ function AdminLayout() {
             { to: "/admin/account", label: "Аккаунт", icon: UserCog },
           ]
         : [
-            { to: "/admin", label: "Дашборд", icon: LayoutDashboard, exact: true },
-            { to: "/admin/calendar", label: "Календарь", icon: Calendar },
+            {
+              to: "/admin",
+              label: "Дашборд",
+              icon: LayoutDashboard,
+              exact: true,
+              tour: "nav-dashboard",
+            },
+            { to: "/admin/calendar", label: "Календарь", icon: Calendar, tour: "nav-calendar" },
             { to: "/admin/notifications", label: "Уведомления", icon: Bell, badge: unreadCount },
             { to: "/admin/stats", label: "Статистика", icon: BarChart3 },
             ...(salonId
-              ? [{ to: `/admin/salons/${salonId}`, label: "Мой салон", icon: Settings }]
+              ? [
+                  {
+                    to: `/admin/salons/${salonId}`,
+                    label: "Мой салон",
+                    icon: Settings,
+                    tour: "nav-settings",
+                  },
+                ]
               : []),
             { to: "/admin/billing", label: "Тариф и оплата", icon: CreditCard },
             { to: "/admin/account", label: "Аккаунт", icon: UserCog },
@@ -193,6 +214,7 @@ function AdminLayout() {
             <Link
               key={item.to}
               to={item.to as any}
+              data-tour={(item as any).tour}
               className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition ${active ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
             >
               <item.icon className="h-4 w-4" />
@@ -249,7 +271,13 @@ function AdminLayout() {
             {paywalled ? <BillingPaywall isOwner={isSalonAdmin} /> : <Outlet />}
           </PullToRefresh>
         </RefreshProvider>
+        {/* Предложение установки не показывается, пока салон заперт экраном оплаты: просить
+            поставить приложение у того, кто не может им пользоваться, — издевательство. */}
+        {!paywalled && isSalonAdmin && !isSuperAdmin && <InstallPrompt />}
       </div>
+      {tourEligible && (
+        <ProductTour steps={ownerTourSteps(salonId)} open={tourOpen} onClose={closeTour} />
+      )}
     </div>
   );
 }

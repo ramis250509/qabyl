@@ -135,6 +135,24 @@ export const seedServiceCatalog = createServerFn({ method: "POST" })
         industry: industryEnum,
         /** Имена услуг из каталога. Пусто — берём весь каталог. */
         names: z.array(z.string().max(200)).max(400).optional(),
+        /**
+         * Готовый прайс владельца: имя, цена и длительность уже поправлены на экране.
+         *
+         * ЗАЧЕМ ОТДЕЛЬНОЕ ПОЛЕ, А НЕ ЗАМЕНА `names`. Каталог по-прежнему даёт категорию, описание
+         * и цвет — то, чего в форме нет и чего владелец вводить не должен. `items` переопределяет
+         * только три поля, которые он действительно правил; остальное берётся из шаблона по имени,
+         * а для услуги, которую он придумал сам, подставляются разумные значения.
+         */
+        items: z
+          .array(
+            z.object({
+              name: z.string().trim().min(1).max(200),
+              price: z.number().int().min(0).max(10_000_000),
+              duration_min: z.number().int().min(5).max(1440),
+            }),
+          )
+          .max(400)
+          .optional(),
       })
       .parse(input),
   )
@@ -143,8 +161,51 @@ export const seedServiceCatalog = createServerFn({ method: "POST" })
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
     const catalog = SERVICE_CATALOG_TEMPLATES[normalizeIndustry(data.industry)] ?? [];
-    const wanted = data.names?.length ? new Set(data.names) : null;
-    const picked = wanted ? catalog.filter((s) => wanted.has(s.name)) : catalog;
+    const byName = new Map(catalog.map((s) => [s.name, s]));
+    const DEFAULT_CATEGORY = "Услуги";
+
+    let picked: {
+      name: string;
+      category: string;
+      description?: string | null;
+      duration_min: number;
+      duration_max_min?: number | null;
+      price: number;
+      price_max?: number | null;
+      price_type: string;
+    }[];
+
+    if (data.items?.length) {
+      picked = data.items.map((it) => {
+        const tpl = byName.get(it.name);
+        return {
+          name: it.name,
+          category: tpl?.category ?? DEFAULT_CATEGORY,
+          description: tpl?.description ?? null,
+          duration_min: it.duration_min,
+          // Вилку по цене и времени намеренно сбрасываем: в форме владелец задал одно число,
+          // и оставить рядом с ним старое «до» из шаблона значит показать клиенту цену
+          // «2000–4500» там, где салон написал 2000.
+          duration_max_min: null,
+          price: it.price,
+          price_max: null,
+          price_type: "fixed",
+        };
+      });
+    } else {
+      const wanted = data.names?.length ? new Set(data.names) : null;
+      picked = (wanted ? catalog.filter((s) => wanted.has(s.name)) : catalog).map((s) => ({
+        name: s.name,
+        category: s.category,
+        description: s.description ?? null,
+        duration_min: s.duration_min,
+        duration_max_min: s.duration_max_min ?? null,
+        price: s.price,
+        price_max: s.price_max ?? null,
+        price_type: s.price_type,
+      }));
+    }
+
     if (picked.length === 0) return { ok: true as const, created: 0 };
 
     const { data: existing } = await supabaseAdmin
@@ -378,8 +439,8 @@ export const getOnboardingProgress = createServerFn({ method: "POST" })
       instagram: {
         connected: Boolean(
           (secretsRes as any)?.data?.instagram_token &&
-            (secretsRes as any)?.data?.instagram_user_id &&
-            (secretsRes as any)?.data?.instagram_app_secret,
+          (secretsRes as any)?.data?.instagram_user_id &&
+          (secretsRes as any)?.data?.instagram_app_secret,
         ),
         enabled: Boolean(salon?.instagram_enabled),
       },
