@@ -76,7 +76,13 @@ const EXECUTORS: Record<string, (action: ApprovalAction) => Promise<ExecResult>>
       const id = await createTask(
         "marketer",
         `Опубликовать (${String(p?.format ?? "пост")}): ${String(p?.hook ?? "").slice(0, 80)}`,
-        { source: "content_plan" },
+        {
+          source: "content_plan",
+          format: p?.format ?? "Пост",
+          hook: p?.hook ?? "",
+          caption: p?.caption ?? "",
+          cta: p?.cta ?? "",
+        },
         "approved",
       );
       if (id) created++;
@@ -114,6 +120,33 @@ const EXECUTORS: Record<string, (action: ApprovalAction) => Promise<ExecResult>>
       return { ok: true, note: `${res.note} — текст сохранён, задача на доске` };
     }
     return { ok: true, note: res.note };
+  },
+
+  /**
+   * Публикация поста в Instagram Qabyl. Картинка к этому моменту уже сгенерирована и показана
+   * владельцу — здесь остаётся только выложить и закрыть задачу.
+   */
+  publish_post: async (action) => {
+    const caption = String(action.caption ?? "");
+    const imageUrl = String(action.imageUrl ?? "");
+    const taskId = Number(action.taskId ?? 0);
+    if (!caption || !imageUrl) return { ok: false, note: "нет картинки или текста" };
+    const { publishImage } = await import("@/lib/ops-instagram.server");
+    const res = await publishImage({ imageUrl, caption });
+    if (!res.ok) {
+      await createTask(
+        "marketer",
+        `Опубликовать вручную: ${caption.slice(0, 60)}`,
+        { imageUrl, caption, error: res.error },
+        "approved",
+      );
+      return { ok: false, note: `${res.error} — картинка и текст сохранены задачей` };
+    }
+    if (taskId) {
+      const { closeTask } = await import("@/lib/ops-bus.server");
+      await closeTask(taskId, "marketer");
+    }
+    return { ok: true, note: res.permalink ? `опубликовано: ${res.permalink}` : "опубликовано" };
   },
 
   /** Лечение от Деби, которое требует разрешения владельца. */

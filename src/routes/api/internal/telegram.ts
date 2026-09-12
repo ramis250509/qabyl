@@ -18,6 +18,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
   sendMessage,
+  sendPhoto,
   editMessageText,
   answerCallbackQuery,
   type TgUpdate,
@@ -36,7 +37,10 @@ import {
 } from "@/lib/ops-agents.server";
 import { buildWeeklyPlan } from "@/lib/ops-marketer.server";
 import { executeApproval, pendingApprovals, requestApproval } from "@/lib/ops-approvals.server";
-import { closeTask, listOpenTasks } from "@/lib/ops-bus.server";
+import { closeTask, getTask, listOpenTasks } from "@/lib/ops-bus.server";
+import { imagePromptForPost } from "@/lib/ops-content";
+import { generateImage, mediaConfigured, mediaSpendToday } from "@/lib/ops-media.server";
+import { igPublishConfigured } from "@/lib/ops-instagram.server";
 import {
   createLead,
   draftOutreach,
@@ -99,6 +103,7 @@ const HELP = [
   "",
   "<b>Мира (маркетинг)</b>",
   "/mira — план контента на неделю с кнопкой одобрения",
+  "/publish 12 — картинка к задаче и публикация в Instagram",
   "",
   "<b>Айдар (продажи)</b>",
   "/lead 0700112233 Нурзат Lashes — добавить лида",
@@ -300,6 +305,82 @@ async function handleUpdate(update: TgUpdate): Promise<void> {
       await sendMessage({ chatId, threadId, text: "Не удалось сохранить план. Ошибки: /errors" });
     }
     await audit("owner", "cmd.mira", { from_model: plan.fromModel });
+    return;
+  }
+
+  // ---- Мира: картинка и публикация --------------------------------------
+  if (cmd === "/publish") {
+    const id = Number(text.split(/\s+/)[1]);
+    if (!Number.isFinite(id)) {
+      await sendMessage({
+        chatId,
+        threadId,
+        text: "Так: /publish 12 — номер задачи из /tasks",
+      });
+      return;
+    }
+    if (!mediaConfigured()) {
+      await sendMessage({
+        chatId,
+        threadId,
+        text: "Картинки пока негде брать: не задан ключ OpenAI (OPENAI_API_KEY).",
+      });
+      return;
+    }
+    const task = await getTask(id);
+    if (!task || !task.detail?.caption) {
+      await sendMessage({
+        chatId,
+        threadId,
+        text: `Задача #${id} не найдена или в ней нет текста поста. Список: /tasks`,
+      });
+      return;
+    }
+
+    const post = {
+      format: String(task.detail.format ?? "Пост"),
+      hook: String(task.detail.hook ?? task.title),
+      caption: String(task.detail.caption ?? ""),
+    };
+    const spend = await mediaSpendToday();
+    await sendMessage({
+      chatId,
+      threadId,
+      text: `🎨 Рисую картинку к посту… Потрачено сегодня: ${spend.spentUsd.toFixed(2)} из ${spend.capUsd.toFixed(2)} $`,
+    });
+
+    const image = await generateImage({
+      prompt: imagePromptForPost(post),
+      vertical: /сторис|рилс/i.test(post.format),
+    });
+    if (!image.ok) {
+      await sendMessage({ chatId, threadId, text: `Не получилось: ${image.error}` });
+      return;
+    }
+
+    const caption = [post.caption, task.detail.cta ? `\n\n${task.detail.cta}` : ""].join("");
+    const approvalId = await requestApproval({
+      agent: "marketer",
+      kind: "publish_post",
+      summary:
+        `📣 <b>Пост готов</b>\n\n${escapeHtml(caption)}\n\n` +
+        (igPublishConfigured()
+          ? "Одобрить — опубликую в Instagram Qabyl."
+          : "⚠️ Доступ к Instagram не настроен: одобрение сохранит картинку и текст задачей."),
+      action: { type: "publish_post", taskId: id, caption, imageUrl: image.url },
+      chatId,
+      threadId,
+    });
+
+    // Картинку отдельным сообщением: в подписи к фото Telegram не даёт столько текста, а решение
+    // владелец принимает, глядя на кадр.
+    await sendPhoto({
+      chatId,
+      threadId,
+      photoUrl: image.url,
+      caption: `Картинка к посту · ${image.costUsd.toFixed(3)} $${approvalId ? "" : " (кнопки не ушли)"}`,
+    });
+    await audit("owner", "cmd.publish", { task: id, costUsd: image.costUsd });
     return;
   }
 

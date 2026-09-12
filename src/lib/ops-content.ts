@@ -182,7 +182,44 @@ export function formatContentPlan(plan: ContentPlan, f: PlatformFacts): string {
 export function contentPlanAction(plan: ContentPlan): Record<string, unknown> {
   return {
     type: "content_plan",
-    posts: plan.posts.map((p) => ({ format: p.format, hook: p.hook })),
+    // Текст поста едет вместе с планом: именно его потом публикуем, и переспрашивать модель
+    // второй раз значило бы получить другой текст, чем тот, который владелец одобрил.
+    posts: plan.posts.map((p) => ({
+      format: p.format,
+      hook: p.hook,
+      caption: p.caption,
+      cta: p.cta,
+    })),
     promo: plan.promo ? { title: plan.promo.title, offer: plan.promo.offer } : null,
   };
+}
+
+/**
+ * Промпт для картинки к посту.
+ *
+ * ДВА ПРАВИЛА, которые стоили бы денег при каждой ошибке. Первое: никакого текста на изображении —
+ * модели пишут его с ошибками, а пост с кривой надписью нельзя выложить и нельзя починить, только
+ * сгенерировать заново. Второе: снимок салона, а не коллаж из стоков — лента бьюти-аккаунта
+ * состоит из живых кадров, и сгенерированная открытка видна сразу.
+ */
+export function imagePromptForPost(post: {
+  format: string;
+  hook: string;
+  caption: string;
+}): string {
+  const vertical = /сторис|рилс/i.test(post.format);
+  return [
+    "Фотореалистичный кадр для соцсетей бьюти-бизнеса в Центральной Азии.",
+    `Настроение задаёт мысль: «${post.hook}».`,
+    "Салон красоты: тёплый дневной свет, мягкие тени, естественные цвета кожи, аккуратный интерьер.",
+    "Люди выглядят как местные жительницы 25-45 лет, без глянцевой ретуши.",
+    vertical ? "Вертикальный кадр, композиция под телефон." : "Горизонтальный или квадратный кадр.",
+    "БЕЗ текста, надписей, логотипов и водяных знаков в кадре.",
+    "Без коллажей, без рамок, без инфографики.",
+  ].join(" ");
+}
+
+/** Оценка стоимости картинки в долларах — по тарифам gpt-image-2 на 13.09.2026. */
+export function imageCostUsd(quality: "low" | "medium" | "high"): number {
+  return quality === "low" ? 0.006 : quality === "medium" ? 0.053 : 0.211;
 }

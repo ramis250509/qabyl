@@ -64,6 +64,15 @@ export async function listOpenTasks(limit = 12): Promise<OpsTask[]> {
   return (data ?? []) as OpsTask[];
 }
 
+export async function getTask(id: number): Promise<(OpsTask & { detail: any }) | null> {
+  const { data } = await db()
+    .from("ops_tasks")
+    .select("id, agent, title, status, created_at, detail")
+    .eq("id", id)
+    .maybeSingle();
+  return (data ?? null) as any;
+}
+
 export async function closeTask(id: number, by: string): Promise<boolean> {
   const { error } = await db()
     .from("ops_tasks")

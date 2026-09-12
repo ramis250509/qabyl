@@ -122,3 +122,24 @@ export async function editMessageText(opts: {
   if (opts.parseMode) body.parse_mode = opts.parseMode;
   await call("editMessageText", body);
 }
+
+/**
+ * Отправить фотографию с подписью и кнопками. Нужна там, где владелец решает по картинке:
+ * описание словами тут ничего не решает — он смотрит на кадр и жмёт «опубликовать» или «другую».
+ */
+export async function sendPhoto(opts: {
+  chatId: string | number;
+  photoUrl: string;
+  caption?: string;
+  threadId?: number | null;
+  buttons?: TgInlineButton[][];
+  parseMode?: "HTML" | "Markdown" | "MarkdownV2";
+}): Promise<number | null> {
+  const body: Record<string, unknown> = { chat_id: opts.chatId, photo: opts.photoUrl };
+  if (opts.caption) body.caption = opts.caption.slice(0, 1024);
+  if (opts.threadId) body.message_thread_id = opts.threadId;
+  if (opts.buttons) body.reply_markup = inlineKeyboard(opts.buttons);
+  if (opts.parseMode) body.parse_mode = opts.parseMode;
+  const msg = await call<TgMessage>("sendPhoto", body);
+  return msg?.message_id ?? null;
+}

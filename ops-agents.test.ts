@@ -118,10 +118,11 @@ describe("сообщение владельцу", () => {
     expect(text).not.toMatch(/Gemini|Meta|API|токен|webhook|промпт/i);
   });
 
-  test("действие для кнопки не тащит в базу простыни текста", () => {
+  test("действие для кнопки несёт одобренный текст поста — публикуется именно он", () => {
     const action = contentPlanAction(parseContentPlan(goodPlan)!);
-    expect(JSON.stringify(action).length).toBeLessThan(500);
-    expect((action as any).posts[0].caption).toBeUndefined();
+    expect((action as any).posts[0].caption).toBe("Текст поста про пользу.");
+    // Кнопка несёт только id строки, но сама строка едет в базу: держим её в разумных размерах.
+    expect(JSON.stringify(action).length).toBeLessThan(4000);
   });
 });
 
