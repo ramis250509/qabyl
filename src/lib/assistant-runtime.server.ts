@@ -6,9 +6,32 @@
 //
 // Поле hasGreenApiCreds пока остаётся: на него смотрит код, который уходит следующими шагами.
 
-export function resolveAssistantRuntimeConfig(salon: any, assistant: any, secrets: any) {
+/**
+ * @param channel Канал, из которого пришло сообщение. У каждого свой выключатель, и общий
+ *   выключатель салона имеет приоритет: выключен он — молчат все.
+ *
+ *   Для WhatsApp это salons.whatsapp_ai_enabled (миграция 20260912090000), для Instagram —
+ *   salons.instagram_enabled: он и раньше значил ровно «ИИ работает в Instagram», маршрут
+ *   /api/public/ig проверяет его и для директа, и для комментариев, поэтому второй колонки
+ *   рядом с ним не заводили.
+ *
+ *   `?? true` на обеих колонках — не вежливость: база, к которой миграция ещё не применена,
+ *   должна вести себя как раньше, а не замолчать во всех каналах разом.
+ */
+export function resolveAssistantRuntimeConfig(
+  salon: any,
+  assistant: any,
+  secrets: any,
+  channel: "whatsapp" | "instagram" = "whatsapp",
+) {
+  const channelEnabled =
+    channel === "instagram"
+      ? (salon?.instagram_enabled ?? true) !== false
+      : (salon?.whatsapp_ai_enabled ?? true) !== false;
   const assistantEnabled =
-    (salon?.ai_assistant_enabled ?? true) !== false && (assistant?.enabled ?? true);
+    (salon?.ai_assistant_enabled ?? true) !== false &&
+    (assistant?.enabled ?? true) &&
+    channelEnabled;
   const hasGreenApiCreds = Boolean(secrets?.greenapi_instance && secrets?.greenapi_token);
   return {
     assistantEnabled,

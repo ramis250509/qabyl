@@ -127,12 +127,48 @@ describe("resolveAssistantRuntimeConfig", () => {
     expect(resolveAssistantRuntimeConfig({}, { engine: "v9" }, {}).engine).toBe("v4");
   });
 
-  test("ассистент включён по умолчанию, но выключается любым из двух флагов", () => {
+  test("ассистент включён по умолчанию, но выключается любым из двух общих флагов", () => {
     expect(resolveAssistantRuntimeConfig({}, {}, {}).assistantEnabled).toBe(true);
     expect(
       resolveAssistantRuntimeConfig({ ai_assistant_enabled: false }, {}, {}).assistantEnabled,
     ).toBe(false);
     expect(resolveAssistantRuntimeConfig({}, { enabled: false }, {}).assistantEnabled).toBe(false);
+  });
+
+  test("канал выключается отдельно, не задевая соседний", () => {
+    const salon = { whatsapp_ai_enabled: false, instagram_enabled: true };
+    expect(resolveAssistantRuntimeConfig(salon, {}, {}, "whatsapp").assistantEnabled).toBe(false);
+    expect(resolveAssistantRuntimeConfig(salon, {}, {}, "instagram").assistantEnabled).toBe(true);
+
+    const other = { whatsapp_ai_enabled: true, instagram_enabled: false };
+    expect(resolveAssistantRuntimeConfig(other, {}, {}, "whatsapp").assistantEnabled).toBe(true);
+    expect(resolveAssistantRuntimeConfig(other, {}, {}, "instagram").assistantEnabled).toBe(false);
+  });
+
+  test("общий выключатель сильнее канального", () => {
+    const salon = {
+      ai_assistant_enabled: false,
+      whatsapp_ai_enabled: true,
+      instagram_enabled: true,
+    };
+    expect(resolveAssistantRuntimeConfig(salon, {}, {}, "whatsapp").assistantEnabled).toBe(false);
+    expect(resolveAssistantRuntimeConfig(salon, {}, {}, "instagram").assistantEnabled).toBe(false);
+  });
+
+  test("база без миграции ведёт себя как раньше, а не замолкает", () => {
+    // Колонки whatsapp_ai_enabled может не быть: код уезжает в прод раньше миграции или откат
+    // вернул схему назад. Отсутствие колонки обязано читаться как «включено» — иначе выкатка
+    // гасит ответы во всех салонах разом, и молча.
+    expect(resolveAssistantRuntimeConfig({}, {}, {}, "whatsapp").assistantEnabled).toBe(true);
+    expect(resolveAssistantRuntimeConfig({}, {}, {}, "instagram").assistantEnabled).toBe(true);
+  });
+
+  test("канал по умолчанию — WhatsApp", () => {
+    // Через resolveAssistantRuntimeConfig проходят три WhatsApp-маршрута; забытый аргумент не
+    // должен случайно включить ассистента там, где владелец его выключил.
+    expect(
+      resolveAssistantRuntimeConfig({ whatsapp_ai_enabled: false }, {}, {}).assistantEnabled,
+    ).toBe(false);
   });
 
   test("учётные данные Green-API считаются только при обоих полях", () => {
@@ -215,4 +251,3 @@ describe("mapWaCloudDeliveryStatus", () => {
     expect(mapWaCloudDeliveryStatus(undefined as any)).toBeNull();
   });
 });
-

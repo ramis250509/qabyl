@@ -140,9 +140,9 @@ export function ChannelsTab({
         </p>
       </div>
 
-      {/* Выключатель ассистента стоит НАД каналами, а не в каждом: он один на салон, и
-          показывать две одинаковые галочки в двух вкладках — верный способ получить вопрос
-          «а они связаны?». */}
+      {/* Выключателей три и они устроены как автомат в щитке: этот общий, и пока он выключен,
+          не работает ни один канал, сколько ни щёлкай их собственные. Ставим его отдельно и
+          выше, чтобы порядок подчинения читался глазами, а не выяснялся опытом. */}
       <Card className="p-5">
         <div className="flex items-start gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10">
@@ -166,9 +166,9 @@ export function ChannelsTab({
             <p className="mt-1 text-sm text-muted-foreground">
               {assistantOn
                 ? anyConnected
-                  ? "Отвечает клиентам во всех подключённых каналах: консультирует, считает свободное время и записывает."
+                  ? "Главный выключатель. Где именно он отвечает — настраивается отдельно в каждом канале ниже."
                   : "Включён, но пока некуда отвечать — подключите канал ниже."
-                : "Пока выключен: сообщения клиентов будут копиться в «Переписках», отвечать на них придётся вручную."}{" "}
+                : "Выключен целиком: молчит во всех каналах, что бы ни стояло в их настройках. Сообщения клиентов копятся в «Переписках» — отвечать придётся вручную."}{" "}
               Как именно он разговаривает — во вкладке «Ассистент».
             </p>
           </div>
@@ -198,7 +198,7 @@ export function ChannelsTab({
               <SkeletonBlock className="h-40" />
             </div>
           ) : (
-            <WhatsAppChannel salon={salon} onSalonSaved={onSalonSaved} />
+            <WhatsAppChannel salon={salon} onSalonSaved={onSalonSaved} masterOn={assistantOn} />
           )}
         </TabsContent>
 
@@ -220,12 +220,23 @@ export function ChannelsTab({
 /**
  * Панель канала WhatsApp.
  *
- * Переехала сюда из вкладки «WhatsApp» страницы салона — без изменений в логике, но с одной
- * правкой по смыслу: подключение (WhatsAppCard) теперь стоит ПЕРВЫМ. Раньше человек, у которого
- * WhatsApp ещё не подключён, сначала видел два переключателя про уведомления, которым некуда
- * отправлять, и только под ними — кнопку, ради которой пришёл.
+ * Переехала сюда из вкладки «WhatsApp» страницы салона. Порядок блоков — по важности вопроса:
+ * отвечает ли здесь ассистент → подключён ли канал → пишем ли клиентам первыми → куда писать вам.
+ * Раньше человек, у которого WhatsApp ещё не подключён, сначала видел два переключателя про
+ * уведомления, которым некуда отправлять, и только под ними — кнопку, ради которой пришёл.
  */
-function WhatsAppChannel({ salon, onSalonSaved }: { salon: any; onSalonSaved: (s: any) => void }) {
+function WhatsAppChannel({
+  salon,
+  onSalonSaved,
+  masterOn,
+}: {
+  salon: any;
+  onSalonSaved: (s: any) => void;
+  /** Общий выключатель салона. Выключен — свой выключатель канала ничего не решает. */
+  masterOn: boolean;
+}) {
+  const [aiOn, setAiOn] = useState<boolean>(salon.whatsapp_ai_enabled !== false);
+  const [aiBusy, setAiBusy] = useState(false);
   const [ownerPhone, setOwnerPhone] = useState("");
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -238,6 +249,31 @@ function WhatsAppChannel({ salon, onSalonSaved }: { salon: any; onSalonSaved: (s
   useEffect(() => {
     setNotifyOn(!!salon.whatsapp_enabled);
   }, [salon.whatsapp_enabled]);
+
+  useEffect(() => {
+    setAiOn(salon.whatsapp_ai_enabled !== false);
+  }, [salon.whatsapp_ai_enabled]);
+
+  async function toggleAi(v: boolean) {
+    setAiBusy(true);
+    const prev = aiOn;
+    setAiOn(v);
+    const { data, error } = await supabase
+      .from("salons")
+      .update({ whatsapp_ai_enabled: v } as any)
+      .eq("id", salon.id)
+      .select()
+      .single();
+    setAiBusy(false);
+    if (error) {
+      setAiOn(prev);
+      return toast.error(error.message);
+    }
+    toast.success(
+      v ? "Ассистент отвечает в WhatsApp" : "В WhatsApp теперь отвечаете вы — ассистент молчит",
+    );
+    if (data) onSalonSaved(data);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -295,7 +331,33 @@ function WhatsAppChannel({ salon, onSalonSaved }: { salon: any; onSalonSaved: (s
 
   return (
     <div className="max-w-2xl space-y-4">
-      {/* Подключение — первым. Транспорт один: официальный Cloud API от Meta. */}
+      {/* Выключатель канала — первым, ровно как в панели Instagram. Симметрия здесь не
+          украшение: человек, настроивший один канал, должен узнавать второй с первого взгляда. */}
+      <Card className="space-y-3 p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h3 className="font-semibold">Ассистент отвечает в WhatsApp</h3>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Выключите, если на WhatsApp хотите отвечать сами. Входящие всё равно сохранятся в
+              «Переписках», записи и напоминания продолжат работать — молчать будет только ИИ.
+            </p>
+          </div>
+          <Switch
+            checked={aiOn && masterOn}
+            onCheckedChange={toggleAi}
+            disabled={aiBusy || !masterOn}
+            aria-label="Ассистент отвечает в WhatsApp"
+          />
+        </div>
+        {!masterOn && (
+          <p className="text-xs text-warning">
+            Ассистент выключен целиком — переключатель выше. Пока он выключен, этот ничего не
+            меняет.
+          </p>
+        )}
+      </Card>
+
+      {/* Подключение. Транспорт один: официальный Cloud API от Meta. */}
       <WhatsAppCard salonId={salon.id} />
 
       <Card className="space-y-3 p-6">

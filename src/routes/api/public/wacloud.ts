@@ -149,7 +149,7 @@ export const Route = createFileRoute("/api/public/wacloud")({
           supabaseAdmin
             .from("salons")
             .select(
-              "id, name, timezone, ai_assistant_enabled, wa_provider, working_hours, address, slug, custom_domain",
+              "id, name, timezone, ai_assistant_enabled, whatsapp_ai_enabled, wa_provider, working_hours, address, slug, custom_domain",
             )
             .eq("id", salonId)
             .maybeSingle(),

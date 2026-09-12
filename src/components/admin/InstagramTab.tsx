@@ -542,14 +542,17 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
       <Card className="p-6 space-y-3">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
+            {/* Заголовок и формулировка — те же, что у переключателя WhatsApp в ChannelsTab.
+                Это один и тот же по смыслу выключатель в двух каналах, и называться он обязан
+                одинаково: разные слова для одного действия читаются как разные действия. */}
             <h2 className="font-semibold flex items-center gap-2">
               <Instagram className="h-4 w-4" />
-              ИИ-Админ в Instagram Direct
+              Ассистент отвечает в Instagram
             </h2>
             <p className="text-sm text-muted-foreground mt-0.5">
-              Тот же ассистент, что отвечает в WhatsApp: консультирует, показывает свободные окна и
-              записывает клиентов прямо в переписке Instagram. Настройки ассистента (услуги, тон,
-              база знаний) — общие, отдельно настраивать не нужно.
+              Тот же ассистент, что и в WhatsApp: консультирует, показывает свободные окна и
+              записывает прямо в переписке. Настройки (услуги, тон, база знаний) общие — настраивать
+              отдельно не нужно. Выключите, если в Instagram хотите отвечать сами.
             </p>
             <p className="text-xs text-muted-foreground mt-2">
               Переписка Instagram через официальный API Meta — бесплатна. Платить нужно только за
@@ -564,8 +567,8 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
         </div>
         {!loading && !enabled && (
           <p className="text-xs text-amber-700">
-            Канал выключен — сообщения из Instagram не обрабатываются. Включите после того, как
-            заполните данные ниже и проверка связи пройдёт успешно.
+            Сейчас в Instagram отвечаете вы: ассистент сообщения из директа не читает. Включите
+            после того, как заполните данные ниже и проверка связи пройдёт успешно.
           </p>
         )}
       </Card>

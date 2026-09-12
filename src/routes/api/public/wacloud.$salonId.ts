@@ -128,7 +128,7 @@ export const Route = createFileRoute("/api/public/wacloud/$salonId")({
           supabaseAdmin
             .from("salons")
             .select(
-              "id, name, timezone, ai_assistant_enabled, wa_provider, working_hours, address, slug, custom_domain",
+              "id, name, timezone, ai_assistant_enabled, whatsapp_ai_enabled, wa_provider, working_hours, address, slug, custom_domain",
             )
             .eq("id", salonId)
             .maybeSingle(),
@@ -1092,7 +1092,9 @@ export async function processWaCloudPayload(opts: {
     if (convId) toRun.add(convId);
   }
 
-  const runtime = resolveAssistantRuntimeConfig(salon, assistant, secrets);
+  // "whatsapp" жёстко: через эту функцию проходят все три WhatsApp-маршрута (своё приложение
+  // салона, общее приложение Qabyl, мост Gupshup) и ни одного другого канала.
+  const runtime = resolveAssistantRuntimeConfig(salon, assistant, secrets, "whatsapp");
   if (!runtime.assistantEnabled) return ack();
 
   // Биллинг: салон, заблокированный за неоплату или исчерпавший сообщения тарифа, ассистентом не
