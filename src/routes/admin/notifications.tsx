@@ -19,6 +19,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
+import { humanError } from "@/lib/human-error";
 import { useSalonTimezone, formatInTz, dayKeyInTz } from "@/lib/tz";
 import { LoadingState } from "@/components/ui/loading-state";
 import { useRegisterRefresh } from "@/lib/refresh-context";
@@ -326,7 +327,7 @@ function NotificationsPage() {
       .update({ status: "confirmed" })
       .eq("id", t.apptId);
     if (error) {
-      toast.error(error.message);
+      toast.error(humanError(error));
       return;
     }
     toast.success("Запись восстановлена");

@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
+import { humanError } from "@/lib/human-error";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -33,6 +34,7 @@ import {
   revokeEmployeeAccess,
   setStaffIsolation,
 } from "@/lib/rbac.functions";
+import { useAuth } from "@/lib/auth-client";
 import { useSalonShape } from "@/hooks/use-salon-shape";
 import { SharedMasterLoginsCard } from "@/components/admin/SharedMasterLoginsCard";
 
@@ -69,6 +71,8 @@ function roleTone(role: string) {
 }
 
 export function TeamAccessTab({ salonId }: { salonId: string }) {
+  const { isSalonAdmin, isSuperAdmin } = useAuth();
+  const isOwner = isSalonAdmin || isSuperAdmin;
   const list = useServerFn(listSalonEmployees);
   const invite = useServerFn(inviteEmployee);
   const revoke = useServerFn(revokeEmployeeAccess);
@@ -94,7 +98,7 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
       setRows(emp);
       setIsolationState(Boolean((salon.data as any)?.staff_isolation));
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось загрузить список сотрудников");
+      toast.error(humanError(e, "Не удалось загрузить список сотрудников"));
       setRows([]);
     }
   }, [salonId]);
@@ -130,17 +134,20 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
           email: value,
           role,
           branchId: role === "master" ? branchId : null,
+          // Без этого Supabase уводит по ссылке из письма на Site URL проекта — то есть на
+          // рекламную страницу Qabyl, где сотруднику предлагают зарегистрироваться заново.
+          origin: typeof window !== "undefined" ? window.location.origin : null,
         },
       });
       toast.success(
         res.invited
-          ? `Приглашение отправлено на ${value} — сотрудник задаст пароль по ссылке из письма`
+          ? `Письмо отправлено на ${value}. По ссылке из письма сотрудник придумает пароль и сразу попадёт в кабинет.`
           : `Доступ выдан: у ${value} уже был аккаунт в Qabyl`,
       );
       setEmail("");
       await load();
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось выдать доступ");
+      toast.error(humanError(e, "Не удалось выдать доступ"));
     } finally {
       setBusy(false);
     }
@@ -154,7 +161,7 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
       toast.success("Доступ отозван");
       await load();
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось отозвать доступ");
+      toast.error(humanError(e, "Не удалось отозвать доступ"));
     } finally {
       setBusy(false);
     }
@@ -166,13 +173,11 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
     try {
       await setIsolation({ data: { salonId, enabled: next } });
       toast.success(
-        next
-          ? "Мастера теперь видят только свои записи"
-          : "Мастера снова видят весь календарь",
+        next ? "Мастера теперь видят только свои записи" : "Мастера снова видят весь календарь",
       );
     } catch (e: any) {
       setIsolationState(prev);
-      toast.error(e?.message ?? "Не удалось изменить настройку");
+      toast.error(humanError(e, "Не удалось изменить настройку"));
     }
   }
 
@@ -184,8 +189,8 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
         <div>
           <h2 className="font-semibold">Пригласить сотрудника</h2>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            Сотрудник получит письмо со ссылкой и сам задаст пароль. Пароли вы не видите и не
-            передаёте.
+            Сотрудник получит письмо, придумает пароль и сразу попадёт в кабинет. Пароль знает
+            только он. Если почты нет — ниже есть второй способ.
           </p>
         </div>
 
@@ -291,19 +296,24 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
         )}
       </Card>
 
-      <Card className="p-6">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <h2 className="font-semibold">Мастер видит только свои записи</h2>
-            <p className="mt-0.5 text-sm text-muted-foreground">
-              Обычно мастер видит весь календарь — так удобнее подменять друг друга. В клиниках и
-              там, где записи считаются личными, это стоит выключить: тогда каждый видит только то,
-              что записано на него.
-            </p>
+      {/* Настройка принадлежит владельцу: в базе на неё стоит триггер, и у администратора
+          она всё равно бы не сработала. Показывать выключатель, который заведомо откажет, —
+          это обещание, которое интерфейс не может сдержать. */}
+      {isOwner && (
+        <Card className="p-6">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h2 className="font-semibold">Мастер видит только свои записи</h2>
+              <p className="mt-0.5 text-sm text-muted-foreground">
+                Обычно мастер видит весь календарь — так удобнее подменять друг друга. В клиниках и
+                там, где записи считаются личными, это стоит выключить: тогда каждый видит только
+                то, что записано на него.
+              </p>
+            </div>
+            <Switch checked={isolation} onCheckedChange={onToggleIsolation} />
           </div>
-          <Switch checked={isolation} onCheckedChange={onToggleIsolation} />
-        </div>
-      </Card>
+        </Card>
+      )}
 
       {/* Переехало из «Салон → Филиалы»: все доступы теперь в одном месте. */}
       <SharedMasterLoginsCard salonId={salonId} branches={branches} isMulti={isMulti} />

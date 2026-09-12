@@ -4,6 +4,7 @@ import { signOutFromApp, useAuth } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import {
+  MessageSquare,
   LayoutDashboard,
   Building2,
   Calendar,
@@ -34,8 +35,17 @@ export const Route = createFileRoute("/admin")({
 });
 
 function AdminLayout() {
-  const { user, loading, rolesLoading, isSuperAdmin, isSalonAdmin, isMaster, salonId, branchId } =
-    useAuth();
+  const {
+    user,
+    loading,
+    rolesLoading,
+    isSuperAdmin,
+    isSalonAdmin,
+    isManager,
+    isMaster,
+    salonId,
+    branchId,
+  } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -49,10 +59,10 @@ function AdminLayout() {
   // salon_admin в той же транзакции). Пока её нет, идти в кабинет некуда — там всё пусто.
   useEffect(() => {
     if (loading || rolesLoading || !user) return;
-    if (!isSuperAdmin && !isSalonAdmin && !isMaster) {
+    if (!isSuperAdmin && !isSalonAdmin && !isManager && !isMaster) {
       navigate({ to: "/onboarding", replace: true });
     }
-  }, [loading, rolesLoading, user, isSuperAdmin, isSalonAdmin, isMaster, navigate]);
+  }, [loading, rolesLoading, user, isSuperAdmin, isSalonAdmin, isManager, isMaster, navigate]);
 
   useEffect(() => {
     setMobileOpen(false);
@@ -132,7 +142,7 @@ function AdminLayout() {
   if (loading || (user && rolesLoading)) return <FullScreenLoader />;
   if (!user) return null;
 
-  const hasAccess = isSuperAdmin || isSalonAdmin || isMaster;
+  const hasAccess = isSuperAdmin || isSalonAdmin || isManager || isMaster;
 
   // Аккаунт без единой роли — это НЕ «нет доступа». Это человек, который только что
   // зарегистрировался и ещё не завёл салон: раньше он упирался здесь в тупик, из которого не было
@@ -140,8 +150,27 @@ function AdminLayout() {
   // из такого состояния есть дорога дальше.
   if (!hasAccess) return null;
 
-  const navItems =
-    isMaster && !isSuperAdmin && !isSalonAdmin
+  // Администратор на ресепшене: всё про сегодняшний день и ни одной настройки. Цены, тариф и
+  // статистика — не его работа и не его данные.
+  const managerOnly = isManager && !isSuperAdmin && !isSalonAdmin;
+
+  const navItems = managerOnly
+    ? [
+        { to: "/admin/calendar", label: "Календарь", icon: Calendar, tour: "nav-calendar" },
+        { to: "/admin/notifications", label: "Уведомления", icon: Bell, badge: unreadCount },
+        ...(salonId
+          ? [
+              {
+                to: `/admin/salons/${salonId}`,
+                search: { tab: "chats" },
+                label: "Переписки",
+                icon: MessageSquare,
+              },
+            ]
+          : []),
+        { to: "/admin/account", label: "Аккаунт", icon: UserCog },
+      ]
+    : isMaster && !isSuperAdmin && !isSalonAdmin
       ? [
           { to: "/admin/calendar", label: "Календарь", icon: Calendar, tour: "nav-calendar" },
           { to: "/admin/notifications", label: "Уведомления", icon: Bell, badge: unreadCount },
@@ -188,7 +217,9 @@ function AdminLayout() {
     ? "Админ-панель"
     : isSalonAdmin
       ? "Кабинет салона"
-      : "Кабинет мастера";
+      : managerOnly
+        ? "Кабинет администратора"
+        : "Кабинет мастера";
 
   // Неоплаченный салон видит только экран оплаты. Страницы тарифа и аккаунта открыты: без первой
   // не оплатить, без второй не сменить пароль и не выйти.
@@ -206,7 +237,7 @@ function AdminLayout() {
       </div>
       <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
         {navItems.map((item) => {
-          const active = item.exact
+          const active = (item as any).exact
             ? location.pathname === item.to
             : location.pathname.startsWith(item.to);
           const badge = (item as any).badge as number | undefined;
@@ -214,6 +245,7 @@ function AdminLayout() {
             <Link
               key={item.to}
               to={item.to as any}
+              search={((item as any).search ?? {}) as any}
               data-tour={(item as any).tour}
               className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition ${active ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
             >
@@ -275,7 +307,7 @@ function AdminLayout() {
             </SheetContent>
           </Sheet>
         </header>
-        {!isSuperAdmin && isSalonAdmin && <BillingBanner state={billing} />}
+        {!isSuperAdmin && <BillingBanner state={billing} isOwner={isSalonAdmin} />}
         <RefreshProvider>
           <PullToRefresh className="flex-1 overflow-auto relative">
             {paywalled ? <BillingPaywall isOwner={isSalonAdmin} /> : <Outlet />}

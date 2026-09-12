@@ -71,6 +71,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { toast } from "sonner";
+import { humanError } from "@/lib/human-error";
 import { createSalonAdmin, listSalonAdmins, revokeSalonAdmin } from "@/lib/salon-admins.functions";
 import { getSalonSecrets, upsertSalonSecrets } from "@/lib/salon-secrets.functions";
 import { SiteTab } from "@/components/admin/SiteTab";
@@ -124,7 +125,7 @@ function IndustrySelectCard({ salonId }: { salonId: string }) {
     const { error } = await supabase
       .from("salon_ai_assistant")
       .upsert({ salon_id: salonId, industry: v }, { onConflict: "salon_id" });
-    if (error) return toast.error(error.message);
+    if (error) return toast.error(humanError(error));
     toast.success("Сфера бизнеса сохранена — применится во всём кабинете");
   }
 
@@ -280,11 +281,15 @@ function SalonEdit() {
               <TabsTrigger value="channels" data-tour="tab-channels">
                 Каналы
               </TabsTrigger>
-              {(isSuperAdmin || salon.ai_assistant_enabled) && (
-                <TabsTrigger value="ai" data-tour="tab-ai">
-                  Ассистент
-                </TabsTrigger>
-              )}
+              {/* Вкладка видна ВСЕГДА.
+                  
+                  Раньше она появлялась только при salon.ai_assistant_enabled — то есть пропадала
+                  ровно у того, кто ассистента ещё не включил. Настроить его перед запуском было
+                  нельзя: чтобы увидеть настройки, надо было сначала включить вслепую. А после
+                  переноса выключателя в «Каналы» вкладка и вовсе исчезала у всех новых салонов. */}
+              <TabsTrigger value="ai" data-tour="tab-ai">
+                Ассистент
+              </TabsTrigger>
               <TabsTrigger value="chats">Переписки</TabsTrigger>
               <TabsTrigger value="site">Сайт</TabsTrigger>
               <TabsTrigger value="prepayment">Предоплата</TabsTrigger>
@@ -344,15 +349,13 @@ function SalonEdit() {
             <PrepaymentTab salonId={salonId} />
           </TabsContent>
 
-          {(isSuperAdmin || salon.ai_assistant_enabled) && (
-            <TabsContent value="ai">
-              <AiAssistantTab
-                salonId={salonId}
-                salonName={salon.name}
-                onOpenChannels={() => setActiveTab("channels")}
-              />
-            </TabsContent>
-          )}
+          <TabsContent value="ai">
+            <AiAssistantTab
+              salonId={salonId}
+              salonName={salon.name}
+              onOpenChannels={() => setActiveTab("channels")}
+            />
+          </TabsContent>
           {/* Приглашение сотрудников принадлежит владельцу салона. Серверная часть (rbac.functions)
               была написана целиком и умела всё, но экрана к ней не существовало: дать доступ
               администратору на ресепшене можно было только письмом в поддержку. */}
@@ -457,7 +460,7 @@ function SalonInfoTab({
     setSaving(false);
     if (error) {
       if (String(error.message).includes("salons_slug")) return toast.error("Такой slug уже занят");
-      return toast.error(error.message);
+      return toast.error(humanError(error));
     }
     toast.success("Сохранено. Старая ссылка больше не работает.");
     onSaved(data);
@@ -602,7 +605,7 @@ function SalonInfoTab({
                   const { error } = await supabase.storage
                     .from("salon-media")
                     .upload(path, file, { upsert: false });
-                  if (error) return toast.error(error.message);
+                  if (error) return toast.error(humanError(error));
                   const { data } = supabase.storage.from("salon-media").getPublicUrl(path);
                   setForm({ ...form, logo_url: data.publicUrl });
                   e.target.value = "";
@@ -763,7 +766,7 @@ function SalonScheduleCard({
       .eq("id", branch.id);
     if (branchErr) {
       setSaving(false);
-      return toast.error(branchErr.message);
+      return toast.error(humanError(branchErr));
     }
     // Keep salons.working_hours (a human-readable summary the WA assistant reads for
     // FAQ answers like "what are your hours") in sync with the real slot-blocking data.
@@ -772,7 +775,7 @@ function SalonScheduleCard({
       .update({ working_hours: formatWorkingHoursForAgent(hours) })
       .eq("id", salonId);
     setSaving(false);
-    if (salonErr) return toast.error(salonErr.message);
+    if (salonErr) return toast.error(humanError(salonErr));
     toast.success("График сохранён");
     setConflicts(null);
     setPendingSave(false);
@@ -927,7 +930,7 @@ function BranchesTab({ salonId }: { salonId: string }) {
                     )
                       return;
                     const { error } = await supabase.from("branches").delete().eq("id", b.id);
-                    if (error) return toast.error(error.message);
+                    if (error) return toast.error(humanError(error));
                     load();
                   }}
                 >
@@ -984,7 +987,7 @@ function BranchDialog({
     };
     if (form.id) {
       const { error } = await supabase.from("branches").update(payload).eq("id", form.id);
-      if (error) return toast.error(error.message);
+      if (error) return toast.error(humanError(error));
     } else {
       const { error } = await supabase
         .from("branches")
@@ -1346,9 +1349,8 @@ function MastersTab({ salonId }: { salonId: string }) {
                         : " (все прошлые/завершённые)."}
                     </p>
                     <p>
-                      <strong>Архивировать</strong> — мастер станет невидим клиентам и
-                      ИИ-администратору, но история записей и календарь сохранятся. Безопасный
-                      вариант.
+                      <strong>Архивировать</strong> — мастер станет невидим клиентам и ассистенту,
+                      но история записей и календарь сохранятся. Безопасный вариант.
                     </p>
                     <p>
                       <strong>Удалить полностью</strong> — уберём мастера, его услуги, расписание и{" "}
@@ -1449,14 +1451,14 @@ function MasterDialog({
     };
     if (id) {
       const { error } = await supabase.from("masters").update(payload).eq("id", id);
-      if (error) return toast.error(error.message);
+      if (error) return toast.error(humanError(error));
     } else {
       const { data, error } = await supabase
         .from("masters")
         .insert({ salon_id: salonId, ...payload })
         .select()
         .single();
-      if (error) return toast.error(error.message);
+      if (error) return toast.error(humanError(error));
       id = data.id;
     }
     await supabase.from("master_services").delete().eq("master_id", id);
@@ -1602,7 +1604,7 @@ function MasterDialog({
                     const { error } = await supabase.storage
                       .from("salon-media")
                       .upload(path, file, { upsert: false });
-                    if (error) return toast.error(error.message);
+                    if (error) return toast.error(humanError(error));
                     const { data } = supabase.storage.from("salon-media").getPublicUrl(path);
                     setForm({ ...form, photo_url: data.publicUrl });
                     e.target.value = "";
@@ -1911,7 +1913,7 @@ function ServicesTab({ salonId }: { salonId: string }) {
         sort_order: nextSort++,
       }));
       const { error } = await supabase.from("services").insert(rows as any);
-      if (error) return toast.error(error.message);
+      if (error) return toast.error(humanError(error));
       const mergedCatOrder = [...catOrder, ...templateCats.filter((c) => !catOrder.includes(c))];
       await persistCategoryOrder(mergedCatOrder);
       toast.success(`Добавлено услуг: ${toInsert.length}`);
@@ -1934,7 +1936,7 @@ function ServicesTab({ salonId }: { salonId: string }) {
       .from("salons")
       .update({ collapsed_categories: next as any })
       .eq("id", salonId);
-    if (error) toast.error(error.message);
+    if (error) toast.error(humanError(error));
   }
 
   const usedCats = Array.from(
@@ -1979,7 +1981,7 @@ function ServicesTab({ salonId }: { salonId: string }) {
     const ids = services.filter((s) => (s.category ?? "") === oldName).map((s) => s.id);
     if (ids.length) {
       const { error } = await supabase.from("services").update({ category: v }).in("id", ids);
-      if (error) return toast.error(error.message);
+      if (error) return toast.error(humanError(error));
     }
     setExtraCats(extraCats.map((c) => (c === oldName ? v : c)));
     await persistCategoryOrder(catOrder.map((c) => (c === oldName ? v : c)));
@@ -2007,7 +2009,7 @@ function ServicesTab({ salonId }: { salonId: string }) {
       .select("service_id")
       .in("service_id", ids)
       .limit(1000);
-    if (usedErr) return toast.error(usedErr.message);
+    if (usedErr) return toast.error(humanError(usedErr));
     const usedSet = new Set((usedRows ?? []).map((r: any) => r.service_id));
     const softIds = ids.filter((id) => usedSet.has(id));
     const hardIds = ids.filter((id) => !usedSet.has(id));
@@ -2718,14 +2720,14 @@ function ServiceDialog({
     let serviceId = editing.id;
     if (serviceId) {
       const { error } = await supabase.from("services").update(payload).eq("id", serviceId);
-      if (error) return toast.error(error.message);
+      if (error) return toast.error(humanError(error));
     } else {
       const { data, error } = await supabase
         .from("services")
         .insert({ salon_id: salonId, ...payload })
         .select("id")
         .single();
-      if (error) return toast.error(error.message);
+      if (error) return toast.error(humanError(error));
       serviceId = data.id;
     }
     // bidirectional master_services sync (single source of truth)
@@ -2736,7 +2738,7 @@ function ServiceDialog({
         service_id: serviceId,
       }));
       const { error } = await supabase.from("master_services").insert(rows);
-      if (error) return toast.error(error.message);
+      if (error) return toast.error(humanError(error));
     }
     toast.success("Сохранено");
     onSaved(category ?? undefined);
@@ -2979,7 +2981,7 @@ function AccessTab({ salonId }: { salonId: string }) {
       const data = await list({ data: { salonId } });
       setAdmins(data);
     } catch (e: any) {
-      toast.error(e.message);
+      toast.error(humanError(e));
     }
   }
   useEffect(() => {
@@ -2999,7 +3001,7 @@ function AccessTab({ salonId }: { salonId: string }) {
       setEmail("");
       load();
     } catch (e: any) {
-      toast.error(e.message);
+      toast.error(humanError(e));
     } finally {
       setBusy(false);
     }
@@ -3012,7 +3014,7 @@ function AccessTab({ salonId }: { salonId: string }) {
       toast.success("Доступ отозван");
       load();
     } catch (e: any) {
-      toast.error(e.message);
+      toast.error(humanError(e));
     }
   }
 
@@ -3140,7 +3142,7 @@ function AddonsTab({ salonId }: { salonId: string }) {
       duration_min: parseInt(duration) || 0,
       price: parseFloat(price) || 0,
     });
-    if (error) return toast.error(error.message);
+    if (error) return toast.error(humanError(error));
     setName("");
     setDuration("0");
     setPrice("0");
@@ -3149,14 +3151,14 @@ function AddonsTab({ salonId }: { salonId: string }) {
 
   const update = async (id: string, patch: any) => {
     const { error } = await supabase.from("service_addons").update(patch).eq("id", id);
-    if (error) return toast.error(error.message);
+    if (error) return toast.error(humanError(error));
     load();
   };
 
   const remove = async (id: string) => {
     if (!confirm("Удалить?")) return;
     const { error } = await supabase.from("service_addons").delete().eq("id", id);
-    if (error) return toast.error(error.message);
+    if (error) return toast.error(humanError(error));
     load();
   };
 
@@ -3295,7 +3297,7 @@ function FaqTab({ salonId }: { salonId: string }) {
       answer: a.trim(),
       sort_order: max + 1,
     } as any);
-    if (error) return toast.error(error.message);
+    if (error) return toast.error(humanError(error));
     setQ("");
     setA("");
     load();
@@ -3309,12 +3311,12 @@ function FaqTab({ salonId }: { salonId: string }) {
       .update(patch as any)
       .eq("id", id);
     setSavingId(null);
-    if (error) toast.error(error.message);
+    if (error) toast.error(humanError(error));
   }
 
   async function remove(id: string) {
     const { error } = await supabase.from("salon_faqs").delete().eq("id", id);
-    if (error) return toast.error(error.message);
+    if (error) return toast.error(humanError(error));
     setItems(items.filter((i) => i.id !== id));
   }
 

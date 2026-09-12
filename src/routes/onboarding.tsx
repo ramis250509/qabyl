@@ -16,6 +16,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
+import { humanError } from "@/lib/human-error";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
@@ -185,7 +186,7 @@ function BusinessStep({
       });
       onDone({ salonId: res.salonId, industry });
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось создать салон");
+      toast.error(humanError(e, "Не удалось создать салон"));
     } finally {
       setBusy(false);
     }
@@ -386,7 +387,7 @@ function ServicesStep({
       if (res.created > 0) toast.success(`Готово: услуг в прайсе — ${res.created}`);
       onDone();
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось сохранить прайс");
+      toast.error(humanError(e, "Не удалось сохранить прайс"));
     } finally {
       setBusy(false);
     }
@@ -538,7 +539,7 @@ function TeamStep({ salonId, onDone }: { salonId: string; onDone: () => void }) 
       });
       onDone();
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось добавить мастеров");
+      toast.error(humanError(e, "Не удалось добавить мастеров"));
     } finally {
       setBusy(false);
     }
@@ -806,7 +807,7 @@ function PlanStep({ salonId, onDone }: { salonId: string; onDone: () => void }) 
       toast.success(`Тариф ${p.name} выбран`);
       onDone();
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось выбрать тариф");
+      toast.error(humanError(e, "Не удалось выбрать тариф"));
     } finally {
       setBusyCode(null);
     }

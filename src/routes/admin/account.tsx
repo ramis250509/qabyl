@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
+import { humanError } from "@/lib/human-error";
 import { AtSign, KeyRound } from "lucide-react";
 import { updateMyLogin, updateMyPassword } from "@/lib/account.functions";
 import { FullScreenLoader } from "@/components/ui/loading-state";
@@ -49,7 +50,7 @@ function AccountPage() {
       setNewEmail("");
       setLoginPassword("");
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось изменить логин");
+      toast.error(humanError(e, "Не удалось изменить логин"));
     } finally {
       setLoginSaving(false);
     }
@@ -69,7 +70,7 @@ function AccountPage() {
       setNewPassword("");
       setConfirmPassword("");
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось изменить пароль");
+      toast.error(humanError(e, "Не удалось изменить пароль"));
     } finally {
       setPwSaving(false);
     }

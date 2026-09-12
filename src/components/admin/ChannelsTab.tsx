@@ -17,6 +17,7 @@
 import { useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
+import { humanError } from "@/lib/human-error";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -150,7 +151,7 @@ export function ChannelsTab({
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <h3 className="font-semibold">ИИ-ассистент</h3>
+              <h3 className="font-semibold">Ассистент</h3>
               <div className="flex items-center gap-2.5">
                 <Switch
                   checked={assistantOn}
@@ -267,7 +268,7 @@ function WhatsAppChannel({
     setAiBusy(false);
     if (error) {
       setAiOn(prev);
-      return toast.error(error.message);
+      return toast.error(humanError(error));
     }
     toast.success(
       v ? "Ассистент отвечает в WhatsApp" : "В WhatsApp теперь отвечаете вы — ассистент молчит",
@@ -283,7 +284,7 @@ function WhatsAppChannel({
         if (cancelled) return;
         setOwnerPhone(data?.owner_notify_phone ?? "");
       } catch (e: any) {
-        if (!cancelled) toast.error(e.message ?? "Не удалось загрузить настройки");
+        if (!cancelled) toast.error(humanError(e, "Не удалось загрузить настройки"));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -306,7 +307,7 @@ function WhatsAppChannel({
     setNotifyBusy(false);
     if (error) {
       setNotifyOn(prev);
-      return toast.error(error.message);
+      return toast.error(humanError(error));
     }
     toast.success(v ? "Уведомления клиентам включены" : "Уведомления клиентам выключены");
     if (data) onSalonSaved(data);
@@ -323,7 +324,7 @@ function WhatsAppChannel({
       });
       toast.success("Сохранено");
     } catch (e: any) {
-      toast.error(e.message ?? "Не удалось сохранить");
+      toast.error(humanError(e, "Не удалось сохранить"));
     } finally {
       setSaving(false);
     }
@@ -339,7 +340,7 @@ function WhatsAppChannel({
             <h3 className="font-semibold">Ассистент отвечает в WhatsApp</h3>
             <p className="mt-0.5 text-sm text-muted-foreground">
               Выключите, если на WhatsApp хотите отвечать сами. Входящие всё равно сохранятся в
-              «Переписках», записи и напоминания продолжат работать — молчать будет только ИИ.
+              «Переписках», а записи и напоминания продолжат работать как обычно.
             </p>
           </div>
           <Switch

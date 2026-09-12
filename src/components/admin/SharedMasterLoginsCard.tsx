@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
+import { humanError } from "@/lib/human-error";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -87,7 +88,7 @@ export function SharedMasterLoginsCard({
         setRows((await listSalon({ data: { salonId } })) as Row[]);
       }
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось загрузить логины");
+      toast.error(humanError(e, "Не удалось загрузить логины"));
       setRows([]);
     }
   }, [open, isMulti, branchId, salonId]);
@@ -109,7 +110,7 @@ export function SharedMasterLoginsCard({
       setEmail("");
       await load();
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось создать логин");
+      toast.error(humanError(e, "Не удалось создать логин"));
     } finally {
       setBusy(false);
     }
@@ -124,7 +125,7 @@ export function SharedMasterLoginsCard({
       toast.success("Доступ отозван");
       await load();
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось отозвать доступ");
+      toast.error(humanError(e, "Не удалось отозвать доступ"));
     }
   }
 

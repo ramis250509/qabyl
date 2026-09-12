@@ -11,35 +11,58 @@ function fmtDate(d?: string | null): string {
   return d ? new Date(d).toLocaleDateString("ru-RU", { day: "numeric", month: "long" }) : "";
 }
 
+/**
+ * @param isOwner Владелец видит, что делать; сотрудник — что происходит.
+ *
+ * Раньше баннер показывали только владельцу. Для администратора на ресепшене это означало, что
+ * однажды утром онлайн-запись просто перестаёт работать без единого слова на экране, и он звонит
+ * владельцу выяснять, что сломалось. Предупреждать надо того, кто столкнётся с последствиями.
+ */
 export function billingBannerText(
   s: BillingState | null,
+  isOwner = true,
 ): { tone: "warn" | "error"; text: string } | null {
   if (!s?.has_subscription || s.exempt || s.blocked) return null;
   if (s.status === "past_due") {
     return {
       tone: "error",
-      text: `Оплата не поступила. Оплатите до ${fmtDate(s.grace_until)} — иначе онлайн-запись и ассистент остановятся.`,
+      text: isOwner
+        ? `Оплата не поступила. Оплатите до ${fmtDate(s.grace_until)} — иначе онлайн-запись и ассистент остановятся.`
+        : `Салон не оплатил Qabyl. Если не оплатить до ${fmtDate(s.grace_until)}, онлайн-запись и ассистент остановятся — скажите владельцу.`,
     };
   }
   if (s.assistant_paused) {
     return {
       tone: "error",
-      text: "Сообщения тарифа закончились — ассистент не отвечает клиентам. Докупите пакет или смените тариф.",
+      text: isOwner
+        ? "Сообщения тарифа закончились — ассистент не отвечает клиентам. Докупите пакет или смените тариф."
+        : "Сообщения тарифа закончились — ассистент не отвечает клиентам. Отвечайте вручную и скажите владельцу.",
     };
   }
   if (s.status === "trialing" && s.trial_ends_at) {
     const days = Math.ceil((new Date(s.trial_ends_at).getTime() - Date.now()) / 86_400_000);
     if (days <= (s.trial_warn_days ?? 3)) {
+      if (!isOwner) {
+        return {
+          tone: "warn",
+          text:
+            days <= 0
+              ? "Бесплатный период салона закончился. Пока владелец не оплатит, запись может остановиться."
+              : `Бесплатный период салона заканчивается через ${days} ${plural(days, "день", "дня", "дней")}.`,
+        };
+      }
       return {
         tone: "warn",
         text:
           days <= 0
-            ? "Пробный период закончился. Оплатите тариф, чтобы всё продолжило работать."
-            : `Пробный период закончится через ${days} ${plural(days, "день", "дня", "дней")}. Оплатите тариф, чтобы не было перерыва.`,
+            ? "Бесплатный период закончился. Оплатите тариф, чтобы всё продолжило работать."
+            : `Бесплатно осталось ${days} ${plural(days, "день", "дня", "дней")}. Оплатите тариф, чтобы не было перерыва.`,
       };
     }
   }
-  if ((s.usage_pct ?? 0) >= (s.usage_warn_pct ?? 80)) {
+  // Сотруднику про расход сообщений не говорим: он на это никак не влияет, а строка наверху
+  // экрана каждый день — это шум, который через неделю перестают читать вместе с важным.
+  if (isOwner && (s.usage_pct ?? 0) >= (s.usage_warn_pct ?? 80)) {
     return {
       tone: "warn",
       text: `Израсходовано ${s.usage_pct}% сообщений ассистента в этом месяце.`,
@@ -48,8 +71,14 @@ export function billingBannerText(
   return null;
 }
 
-export function BillingBanner({ state }: { state: BillingState | null }) {
-  const b = billingBannerText(state);
+export function BillingBanner({
+  state,
+  isOwner = true,
+}: {
+  state: BillingState | null;
+  isOwner?: boolean;
+}) {
+  const b = billingBannerText(state, isOwner);
   if (!b) return null;
   return (
     <div
@@ -62,9 +91,11 @@ export function BillingBanner({ state }: { state: BillingState | null }) {
     >
       <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />
       <span className="flex-1 min-w-0">{b.text}</span>
-      <Link to="/admin/billing" className="font-medium underline underline-offset-2">
-        Тариф и оплата
-      </Link>
+      {isOwner && (
+        <Link to="/admin/billing" className="font-medium underline underline-offset-2">
+          Оплатить
+        </Link>
+      )}
     </div>
   );
 }
@@ -84,7 +115,9 @@ export function BillingPaywall({ isOwner }: { isOwner: boolean }) {
           </p>
         ) : (
           <p className="text-muted-foreground">
-            Подписка салона на Qabyl не оплачена. Обратитесь к владельцу салона.
+            Владелец салона пока не продлил Qabyl. Записи и клиенты на месте, ничего не пропало —
+            как только оплата пройдёт, кабинет откроется сам. Скажите владельцу, что запись
+            остановилась.
           </p>
         )}
         {isOwner && (

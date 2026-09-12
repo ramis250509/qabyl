@@ -29,8 +29,10 @@ export const Route = createFileRoute("/auth")({
   head: () => ({ meta: [{ title: "Регистрация — Qabyl" }] }),
   // `?mode=login` — для ссылки «Войти» с посадочной и из писем. Поле возвращается только когда
   // оно есть: обязательный параметр потребовал бы дописывать его в каждую существующую ссылку.
-  validateSearch: (search: Record<string, unknown>): { mode?: "login" } =>
-    search.mode === "login" ? { mode: "login" } : {},
+  validateSearch: (search: Record<string, unknown>): { mode?: "login" | "invite" } =>
+    search.mode === "login" || search.mode === "invite"
+      ? { mode: search.mode as "login" | "invite" }
+      : {},
   component: AuthPage,
 });
 
@@ -67,7 +69,7 @@ function rememberVisitor() {
   }
 }
 
-type Mode = "login" | "signup" | "forgot" | "reset" | "check-inbox";
+type Mode = "login" | "signup" | "forgot" | "reset" | "check-inbox" | "invite";
 
 /** Понятная причина вместо английского текста Supabase. */
 function humanAuthError(message: string): string {
@@ -87,9 +89,10 @@ function humanAuthError(message: string): string {
 function AuthPage() {
   const navigate = useNavigate();
   const { mode: modeFromUrl } = Route.useSearch();
-  const [mode, setMode] = useState<Mode>(() =>
-    modeFromUrl === "login" || isReturningVisitor() ? "login" : "signup",
-  );
+  const [mode, setMode] = useState<Mode>(() => {
+    if (modeFromUrl === "invite") return "invite";
+    return modeFromUrl === "login" || isReturningVisitor() ? "login" : "signup";
+  });
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -105,6 +108,15 @@ function AuthPage() {
     const hash = typeof window !== "undefined" ? window.location.hash : "";
     if (hash.includes("type=recovery")) {
       setMode("reset");
+      setChecking(false);
+      return;
+    }
+    // Приглашение сотрудника. Отличить его от обычного входа можно только по хешу: сессия в
+    // обоих случаях уже валидная. Без этой ветки человека с готовой сессией немедленно уносило
+    // бы в /admin — с пустым паролем, который он никогда не задавал и с которым не сможет
+    // войти во второй раз.
+    if (hash.includes("type=invite") || modeFromUrl === "invite") {
+      setMode("invite");
       setChecking(false);
       return;
     }
@@ -158,10 +170,11 @@ function AuthPage() {
         return;
       }
 
-      if (mode === "reset") {
+      if (mode === "reset" || mode === "invite") {
         const { error } = await supabase.auth.updateUser({ password });
         if (error) throw error;
-        toast.success("Пароль изменён");
+        rememberVisitor();
+        toast.success(mode === "invite" ? "Готово, добро пожаловать" : "Пароль изменён");
         navigate({ to: "/admin", replace: true });
         return;
       }
@@ -242,9 +255,15 @@ function AuthPage() {
       subtitle: "Придумайте пароль, с которым будете заходить",
       submit: "Сохранить пароль",
     },
+    invite: {
+      title: "Вас добавили в салон",
+      subtitle: "Придумайте пароль — и заходите. Логин: ваша почта.",
+      submit: "Войти в кабинет",
+    },
   }[mode];
 
-  const needsEmail = mode !== "reset";
+  // В приглашении почта уже известна из ссылки, спрашивать её второй раз незачем.
+  const needsEmail = mode !== "reset" && mode !== "invite";
   const needsPassword = mode !== "forgot";
 
   return (
@@ -312,7 +331,7 @@ function AuthPage() {
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
-              {(mode === "signup" || mode === "reset") && (
+              {(mode === "signup" || mode === "reset" || mode === "invite") && (
                 <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <Check
                     className={`h-3.5 w-3.5 ${password.length >= 8 ? "text-success" : "text-muted-foreground/40"}`}

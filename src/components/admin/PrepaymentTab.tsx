@@ -13,6 +13,7 @@
 import { useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
+import { humanError } from "@/lib/human-error";
 import { SkeletonBlock } from "@/components/ui/status";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -120,7 +121,7 @@ export function PrepaymentTab({ salonId }: { salonId: string }) {
           qrUrl: row.qr_url ?? null,
         });
       } catch (e: any) {
-        if (!cancelled) toast.error(e.message ?? "Не удалось загрузить настройки предоплаты");
+        if (!cancelled) toast.error(humanError(e, "Не удалось загрузить настройки предоплаты"));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -167,7 +168,7 @@ export function PrepaymentTab({ salonId }: { salonId: string }) {
       if (oldPath) await supabase.storage.from("payment-qr").remove([oldPath]);
       toast.success("QR загружен — не забудьте сохранить настройки");
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось загрузить QR");
+      toast.error(humanError(e, "Не удалось загрузить QR"));
     } finally {
       setQrBusy(false);
     }
@@ -228,7 +229,7 @@ export function PrepaymentTab({ salonId }: { salonId: string }) {
       });
       toast.success("Сохранено");
     } catch (e: any) {
-      toast.error(e.message ?? "Не удалось сохранить");
+      toast.error(humanError(e, "Не удалось сохранить"));
     } finally {
       setSaving(false);
     }
@@ -255,7 +256,7 @@ export function PrepaymentTab({ salonId }: { salonId: string }) {
               <h3 className="text-lg font-medium">Предоплата</h3>
             </div>
             <p className="max-w-2xl text-sm text-muted-foreground">
-              Когда включено, ИИ-Админ не подтверждает запись сразу: он удерживает время, называет
+              Когда включено, ассистент не подтверждает запись сразу: он удерживает время, называет
               сумму и реквизиты и просит прислать скриншот чека прямо в переписку. Чек проверяется
               автоматически — сумма, получатель, время перевода, повторное использование. Если
               оплаты нет до конца удержания, слот освобождается сам.

@@ -23,6 +23,12 @@ export function useAuth() {
   const [rolesLoading, setRolesLoading] = useState(true);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [isSalonAdmin, setIsSalonAdmin] = useState(false);
+  // Роль «Администратор» (manager) — человек на ресепшене: календарь, записи, переписки, без
+  // настроек, цен и статистики. Она была заведена в базе и в политиках RLS, но здесь её не
+  // читали: такой сотрудник получал все флаги false, кабинет считал его человеком без роли и
+  // отправлял в мастер создания салона — то есть предлагал завести второй салон вместо работы
+  // в том, куда его позвали.
+  const [isManager, setIsManager] = useState(false);
   const [isMaster, setIsMaster] = useState(false);
   const [salonId, setSalonId] = useState<string | null>(null);
   const [branchId, setBranchId] = useState<string | null>(null);
@@ -69,11 +75,13 @@ export function useAuth() {
       const roles = data ?? [];
       const sa = roles.some((r: any) => r.role === "super_admin");
       const salonRole = roles.find((r: any) => r.role === "salon_admin");
+      const managerRole = roles.find((r: any) => r.role === "manager");
       const masterRole = roles.find((r: any) => r.role === "master");
       setIsSuperAdmin(sa);
       setIsSalonAdmin(!!salonRole);
+      setIsManager(!!managerRole);
       setIsMaster(!!masterRole);
-      setSalonId(salonRole?.salon_id ?? masterRole?.salon_id ?? null);
+      setSalonId(salonRole?.salon_id ?? managerRole?.salon_id ?? masterRole?.salon_id ?? null);
       setBranchId(masterRole?.branch_id ?? null);
       setRolesLoading(false);
     }
@@ -81,6 +89,7 @@ export function useAuth() {
     function clearRoles() {
       setIsSuperAdmin(false);
       setIsSalonAdmin(false);
+      setIsManager(false);
       setIsMaster(false);
       setSalonId(null);
       setBranchId(null);
@@ -154,5 +163,15 @@ export function useAuth() {
     };
   }, []);
 
-  return { user, loading, rolesLoading, isSuperAdmin, isSalonAdmin, isMaster, salonId, branchId };
+  return {
+    user,
+    loading,
+    rolesLoading,
+    isSuperAdmin,
+    isSalonAdmin,
+    isManager,
+    isMaster,
+    salonId,
+    branchId,
+  };
 }

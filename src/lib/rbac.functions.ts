@@ -12,6 +12,34 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
 type AllowedRole = "salon_admin" | "manager" | "master";
+
+/**
+ * Куда Supabase вернёт человека по ссылке из письма-приглашения.
+ *
+ * ЧТО БЫЛО СЛОМАНО. inviteUserByEmail вызывался без redirectTo, и Supabase подставлял Site URL
+ * проекта — то есть посадочную страницу. Сотрудник получал письмо «вас пригласили», нажимал
+ * ссылку и попадал на рекламную страницу Qabyl, где ему предлагали зарегистрироваться заново.
+ * Пароль он при этом так и не задавал, а значит войти не мог в принципе. Приглашение сотрудников
+ * не работало ни разу.
+ *
+ * ПОЧЕМУ АДРЕС ПРОВЕРЯЕТСЯ ПО СПИСКУ. Его присылает браузер, а это значит — кто угодно. Без
+ * проверки открытый редирект: письмо уходит с нашего домена и уводит человека на чужой сайт,
+ * где у него спросят пароль. Supabase проверяет адрес и со своей стороны, но полагаться на
+ * настройку в чужой панели там, где можно проверить у себя, не стоит.
+ */
+const ALLOWED_ORIGINS = [
+  "https://qabyl.com",
+  "https://www.qabyl.com",
+  "http://localhost:8080",
+  "http://localhost:3000",
+];
+
+function inviteRedirectTo(origin: string | null | undefined): string {
+  const base = origin && ALLOWED_ORIGINS.includes(origin) ? origin : "https://qabyl.com";
+  // `mode=invite` включает на экране входа вид «придумайте пароль» с нужными словами:
+  // человека не регистрируют заново, его заводят в уже существующий салон.
+  return `${base}/auth?mode=invite`;
+}
 const ROLE_LABELS: Record<AllowedRole, string> = {
   salon_admin: "Владелец / главный администратор",
   manager: "Администратор / регистратор",
@@ -70,6 +98,8 @@ export const inviteEmployee = createServerFn({ method: "POST" })
         branchId: z.string().uuid().nullable().optional(),
         // Optional: pre-link to an existing masters row (must belong to the salon).
         masterId: z.string().uuid().nullable().optional(),
+        /** Адрес кабинета, из которого зовут. Нужен, чтобы письмо вело в него, а не на главную. */
+        origin: z.string().max(200).nullable().optional(),
       })
       .refine((v) => v.role !== "master" || !!v.branchId, {
         message: "branchId required for master role",
@@ -85,7 +115,9 @@ export const inviteEmployee = createServerFn({ method: "POST" })
     // 1) Ensure the auth user exists — invite if new, look up if existing.
     let userId: string | null = null;
     let invited = false;
-    const inviteResult = await supabaseAdmin.auth.admin.inviteUserByEmail(data.email);
+    const inviteResult = await supabaseAdmin.auth.admin.inviteUserByEmail(data.email, {
+      redirectTo: inviteRedirectTo(data.origin),
+    });
     if (inviteResult.error) {
       // "already registered" or similar — fall back to a lookup.
       let existing: { id: string; email?: string } | undefined;
@@ -326,7 +358,17 @@ export const setStaffIsolation = createServerFn({ method: "POST" })
       .select("staff_isolation")
       .eq("id", data.salonId)
       .maybeSingle();
-    const { error } = await supabaseAdmin
+
+    // ЗАПИСЬ ИДЁТ КЛИЕНТОМ ПОЛЬЗОВАТЕЛЯ, А НЕ service-role — и это не мелочь.
+    //
+    // На salons висит триггер guard_salon_staff_isolation: он требует, чтобы auth.uid() был
+    // владельцем салона. Под service-role auth.uid() = NULL, поэтому триггер отказывал ВСЕМ,
+    // включая владельца, и переключатель не работал ни разу за всё время. Наружу это выходило
+    // английской строкой поверх русского интерфейса.
+    //
+    // Проверка прав при этом не ослабла, а усилилась: assertCanManageEmployees выше и триггер в
+    // базе теперь проверяют одно и то же с двух сторон.
+    const { error } = await (context.supabase as any)
       .from("salons")
       .update({ staff_isolation: data.enabled })
       .eq("id", data.salonId);

@@ -37,6 +37,7 @@ import {
   Check,
 } from "lucide-react";
 import { toast } from "sonner";
+import { humanError } from "@/lib/human-error";
 import { useAuth } from "@/lib/auth-client";
 import { useAdminFilters } from "@/hooks/use-branch-filter";
 import { BranchFilterBar } from "@/components/admin/BranchFilterBar";
@@ -368,7 +369,7 @@ function CalendarPage() {
       .from("appointments")
       .update({ status: "cancelled" })
       .eq("id", id);
-    if (error) return toast.error(error.message);
+    if (error) return toast.error(humanError(error));
     toast.success("Запись отменена");
     setSelected(null);
     loadAppointments();
@@ -379,7 +380,7 @@ function CalendarPage() {
   // the change trigger only messages on cancel/reschedule, so attendance stays internal.
   async function markStatus(id: string, status: "no_show" | "completed" | "confirmed") {
     const { error } = await supabase.from("appointments").update({ status }).eq("id", id);
-    if (error) return toast.error(error.message);
+    if (error) return toast.error(humanError(error));
     toast.success(
       status === "no_show"
         ? "Отмечено: клиент не пришёл"
@@ -421,7 +422,7 @@ function CalendarPage() {
       .from("appointments")
       .update({ status: "confirmed" })
       .eq("id", appt.id);
-    if (error) return toast.error(error.message);
+    if (error) return toast.error(humanError(error));
     toast.success("Запись восстановлена");
     setRestoreTarget(null);
     setSelected(null);

@@ -10,12 +10,17 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Upload, Trash2, Image as ImageIcon, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
+import { humanError } from "@/lib/human-error";
 
 const TEMPLATES = [
   { id: "minimal", name: "Минимал", desc: "Белый фон, много воздуха, тонкая типографика" },
   { id: "premium", name: "Премиум", desc: "Тёмный фон, золотые акценты, serif-заголовки" },
   { id: "vivid", name: "Яркий", desc: "Градиенты на бренд-цветах, жирный шрифт, тени" },
-  { id: "custom", name: "Свой HTML", desc: "Полный контроль над оформлением — вставьте собственный HTML-код" },
+  {
+    id: "custom",
+    name: "Свой HTML",
+    desc: "Полный контроль над оформлением — вставьте собственный HTML-код",
+  },
 ];
 
 export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => void }) {
@@ -53,7 +58,7 @@ export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => v
       }));
       toast.success("Текст сайта сгенерирован под вашу нишу — отредактируйте под свой салон");
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось сгенерировать текст");
+      toast.error(humanError(e, "Не удалось сгенерировать текст"));
     } finally {
       setGenerating(false);
     }
@@ -63,15 +68,21 @@ export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => v
     setUploading(true);
     const ext = file.name.split(".").pop();
     const path = `${salon.id}/${kind}/${Date.now()}.${ext}`;
-    const { error } = await supabase.storage.from("salon-media").upload(path, file, { upsert: false });
+    const { error } = await supabase.storage
+      .from("salon-media")
+      .upload(path, file, { upsert: false });
     setUploading(false);
-    if (error) { toast.error(error.message); return null; }
+    if (error) {
+      toast.error(humanError(error));
+      return null;
+    }
     const { data } = supabase.storage.from("salon-media").getPublicUrl(path);
     return data.publicUrl;
   }
 
   async function onHeroUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]; if (!file) return;
+    const file = e.target.files?.[0];
+    if (!file) return;
     const url = await uploadFile(file, "hero");
     if (url) setForm({ ...form, hero_image_url: url });
   }
@@ -93,9 +104,14 @@ export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => v
 
   async function save() {
     setSaving(true);
-    const { data, error } = await supabase.from("salons").update(form).eq("id", salon.id).select().single();
+    const { data, error } = await supabase
+      .from("salons")
+      .update(form)
+      .eq("id", salon.id)
+      .select()
+      .single();
     setSaving(false);
-    if (error) return toast.error(error.message);
+    if (error) return toast.error(humanError(error));
     toast.success("Сохранено");
     onSaved(data);
   }
@@ -106,16 +122,26 @@ export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => v
         <div className="flex items-center justify-between">
           <div>
             <h3 className="font-semibold">Показывать сайт на домене</h3>
-            <p className="text-sm text-muted-foreground">Если выключено — на домене сразу откроется форма записи (как раньше).</p>
+            <p className="text-sm text-muted-foreground">
+              Если выключено — на домене сразу откроется форма записи (как раньше).
+            </p>
           </div>
-          <Switch checked={form.site_enabled} onCheckedChange={(v) => setForm({ ...form, site_enabled: v })} />
+          <Switch
+            checked={form.site_enabled}
+            onCheckedChange={(v) => setForm({ ...form, site_enabled: v })}
+          />
         </div>
         <div className="flex items-center justify-between pt-4 border-t">
           <div>
             <h3 className="font-semibold">Мультиязычность сайта (RU / KY / EN)</h3>
-            <p className="text-sm text-muted-foreground">Когда выключено — сайт показывается только на русском, переключатель языков скрыт.</p>
+            <p className="text-sm text-muted-foreground">
+              Когда выключено — сайт показывается только на русском, переключатель языков скрыт.
+            </p>
           </div>
-          <Switch checked={form.multilang_enabled} onCheckedChange={(v) => setForm({ ...form, multilang_enabled: v })} />
+          <Switch
+            checked={form.multilang_enabled}
+            onCheckedChange={(v) => setForm({ ...form, multilang_enabled: v })}
+          />
         </div>
       </Card>
 
@@ -146,10 +172,33 @@ export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => v
             />
             <div className="text-xs text-muted-foreground space-y-1">
               <p className="font-medium">Доступные плейсхолдеры:</p>
-              <p><code className="bg-muted px-1 rounded">{"{{hero_title}}"}</code> · <code className="bg-muted px-1 rounded">{"{{hero_subtitle}}"}</code> · <code className="bg-muted px-1 rounded">{"{{hero_image}}"}</code> · <code className="bg-muted px-1 rounded">{"{{salon_name}}"}</code> · <code className="bg-muted px-1 rounded">{"{{about}}"}</code> · <code className="bg-muted px-1 rounded">{"{{phone}}"}</code> · <code className="bg-muted px-1 rounded">{"{{address}}"}</code></p>
-              <p><code className="bg-muted px-1 rounded">{"{{booking_button}}"}</code> · <code className="bg-muted px-1 rounded">{"{{services}}"}</code> · <code className="bg-muted px-1 rounded">{"{{masters}}"}</code> · <code className="bg-muted px-1 rounded">{"{{gallery}}"}</code> · <code className="bg-muted px-1 rounded">{"{{reviews}}"}</code> · <code className="bg-muted px-1 rounded">{"{{contacts}}"}</code></p>
-              <p>URL соцсетей: <code className="bg-muted px-1 rounded">{"{{instagram}}"}</code> · <code className="bg-muted px-1 rounded">{"{{tiktok}}"}</code> · <code className="bg-muted px-1 rounded">{"{{whatsapp}}"}</code> · <code className="bg-muted px-1 rounded">{"{{telegram}}"}</code></p>
-              <p className="pt-1">Скрипты вырезаются автоматически (для безопасности). Стили (CSS) и любая разметка — работают.</p>
+              <p>
+                <code className="bg-muted px-1 rounded">{"{{hero_title}}"}</code> ·{" "}
+                <code className="bg-muted px-1 rounded">{"{{hero_subtitle}}"}</code> ·{" "}
+                <code className="bg-muted px-1 rounded">{"{{hero_image}}"}</code> ·{" "}
+                <code className="bg-muted px-1 rounded">{"{{salon_name}}"}</code> ·{" "}
+                <code className="bg-muted px-1 rounded">{"{{about}}"}</code> ·{" "}
+                <code className="bg-muted px-1 rounded">{"{{phone}}"}</code> ·{" "}
+                <code className="bg-muted px-1 rounded">{"{{address}}"}</code>
+              </p>
+              <p>
+                <code className="bg-muted px-1 rounded">{"{{booking_button}}"}</code> ·{" "}
+                <code className="bg-muted px-1 rounded">{"{{services}}"}</code> ·{" "}
+                <code className="bg-muted px-1 rounded">{"{{masters}}"}</code> ·{" "}
+                <code className="bg-muted px-1 rounded">{"{{gallery}}"}</code> ·{" "}
+                <code className="bg-muted px-1 rounded">{"{{reviews}}"}</code> ·{" "}
+                <code className="bg-muted px-1 rounded">{"{{contacts}}"}</code>
+              </p>
+              <p>
+                URL соцсетей: <code className="bg-muted px-1 rounded">{"{{instagram}}"}</code> ·{" "}
+                <code className="bg-muted px-1 rounded">{"{{tiktok}}"}</code> ·{" "}
+                <code className="bg-muted px-1 rounded">{"{{whatsapp}}"}</code> ·{" "}
+                <code className="bg-muted px-1 rounded">{"{{telegram}}"}</code>
+              </p>
+              <p className="pt-1">
+                Скрипты вырезаются автоматически (для безопасности). Стили (CSS) и любая разметка —
+                работают.
+              </p>
             </div>
           </div>
         )}
@@ -177,11 +226,19 @@ export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => v
         </div>
         <div>
           <Label>Заголовок</Label>
-          <Input value={form.hero_title} onChange={(e) => setForm({ ...form, hero_title: e.target.value })} placeholder={salon.name} />
+          <Input
+            value={form.hero_title}
+            onChange={(e) => setForm({ ...form, hero_title: e.target.value })}
+            placeholder={salon.name}
+          />
         </div>
         <div>
           <Label>Подзаголовок</Label>
-          <Textarea value={form.hero_subtitle} onChange={(e) => setForm({ ...form, hero_subtitle: e.target.value })} placeholder="Короткое описание салона в 1-2 предложениях" />
+          <Textarea
+            value={form.hero_subtitle}
+            onChange={(e) => setForm({ ...form, hero_subtitle: e.target.value })}
+            placeholder="Короткое описание салона в 1-2 предложениях"
+          />
         </div>
         <div>
           <Label>Фоновое фото</Label>
@@ -189,14 +246,34 @@ export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => v
             {form.hero_image_url ? (
               <img src={form.hero_image_url} className="h-20 w-32 object-cover rounded-md border" />
             ) : (
-              <div className="h-20 w-32 rounded-md border flex items-center justify-center bg-muted"><ImageIcon className="h-6 w-6 text-muted-foreground" /></div>
+              <div className="h-20 w-32 rounded-md border flex items-center justify-center bg-muted">
+                <ImageIcon className="h-6 w-6 text-muted-foreground" />
+              </div>
             )}
             <div className="space-y-2">
-              <input type="file" accept="image/*" onChange={onHeroUpload} className="hidden" id="hero-upload" />
-              <label htmlFor="hero-upload" className="inline-flex items-center gap-1 px-3 py-1.5 text-sm border rounded-md cursor-pointer hover:bg-muted">
-                <Upload className="h-4 w-4" />{uploading ? "..." : "Загрузить"}
+              <input
+                type="file"
+                accept="image/*"
+                onChange={onHeroUpload}
+                className="hidden"
+                id="hero-upload"
+              />
+              <label
+                htmlFor="hero-upload"
+                className="inline-flex items-center gap-1 px-3 py-1.5 text-sm border rounded-md cursor-pointer hover:bg-muted"
+              >
+                <Upload className="h-4 w-4" />
+                {uploading ? "..." : "Загрузить"}
               </label>
-              {form.hero_image_url && <Button size="sm" variant="ghost" onClick={() => setForm({ ...form, hero_image_url: "" })}>Удалить</Button>}
+              {form.hero_image_url && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setForm({ ...form, hero_image_url: "" })}
+                >
+                  Удалить
+                </Button>
+              )}
             </div>
           </div>
         </div>
@@ -227,7 +304,13 @@ export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => v
             </div>
           ))}
           <label className="aspect-square border-2 border-dashed rounded-md flex items-center justify-center cursor-pointer hover:bg-muted">
-            <input type="file" accept="image/*" multiple onChange={onGalleryUpload} className="hidden" />
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={onGalleryUpload}
+              className="hidden"
+            />
             <Upload className="h-5 w-5 text-muted-foreground" />
           </label>
         </div>
@@ -237,22 +320,53 @@ export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => v
       <Card className="p-6 space-y-3">
         <h3 className="font-semibold">Соцсети</h3>
         <div className="grid sm:grid-cols-2 gap-3">
-          <div><Label>Instagram</Label><Input value={form.instagram_url} onChange={(e) => setForm({ ...form, instagram_url: e.target.value })} placeholder="https://instagram.com/..." /></div>
-          <div><Label>TikTok</Label><Input value={form.tiktok_url} onChange={(e) => setForm({ ...form, tiktok_url: e.target.value })} placeholder="https://tiktok.com/@..." /></div>
-          <div><Label>WhatsApp</Label><Input value={form.whatsapp_url} onChange={(e) => setForm({ ...form, whatsapp_url: e.target.value })} placeholder="https://wa.me/7..." /></div>
-          <div><Label>Telegram</Label><Input value={form.telegram_url} onChange={(e) => setForm({ ...form, telegram_url: e.target.value })} placeholder="https://t.me/..." /></div>
+          <div>
+            <Label>Instagram</Label>
+            <Input
+              value={form.instagram_url}
+              onChange={(e) => setForm({ ...form, instagram_url: e.target.value })}
+              placeholder="https://instagram.com/..."
+            />
+          </div>
+          <div>
+            <Label>TikTok</Label>
+            <Input
+              value={form.tiktok_url}
+              onChange={(e) => setForm({ ...form, tiktok_url: e.target.value })}
+              placeholder="https://tiktok.com/@..."
+            />
+          </div>
+          <div>
+            <Label>WhatsApp</Label>
+            <Input
+              value={form.whatsapp_url}
+              onChange={(e) => setForm({ ...form, whatsapp_url: e.target.value })}
+              placeholder="https://wa.me/7..."
+            />
+          </div>
+          <div>
+            <Label>Telegram</Label>
+            <Input
+              value={form.telegram_url}
+              onChange={(e) => setForm({ ...form, telegram_url: e.target.value })}
+              placeholder="https://t.me/..."
+            />
+          </div>
         </div>
       </Card>
 
       <div className="flex gap-3 items-center">
-        <Button onClick={save} disabled={saving}>{saving ? "..." : "Сохранить"}</Button>
+        <Button onClick={save} disabled={saving}>
+          {saving ? "..." : "Сохранить"}
+        </Button>
         <a
           href={`/preview/salon/${salon.id}`}
           target="_blank"
           rel="noreferrer"
           className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
         >
-          <ExternalLink className="h-4 w-4" />Открыть превью сайта
+          <ExternalLink className="h-4 w-4" />
+          Открыть превью сайта
         </a>
       </div>
     </div>

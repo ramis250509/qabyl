@@ -8,6 +8,7 @@
 import { useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
+import { humanError } from "@/lib/human-error";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -216,7 +217,7 @@ function CommentTriggersCard({ salonId }: { salonId: string }) {
       await reload();
       toast.success("Сохранено");
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось сохранить");
+      toast.error(humanError(e, "Не удалось сохранить"));
     } finally {
       setBusy(false);
     }
@@ -239,7 +240,7 @@ function CommentTriggersCard({ salonId }: { salonId: string }) {
         },
       });
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось изменить");
+      toast.error(humanError(e, "Не удалось изменить"));
       await reload();
     }
   }
@@ -411,7 +412,7 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
     try {
       setDiag(await loadDiag({ data: { salonId } }));
     } catch (e: any) {
-      toast.error(e.message ?? "Не удалось получить диагностику");
+      toast.error(humanError(e, "Не удалось получить диагностику"));
     } finally {
       setDiagBusy(false);
     }
@@ -438,7 +439,7 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
           /* diagnostics are advisory — never block the settings form on them */
         }
       } catch (e: any) {
-        if (!cancelled) toast.error(e.message ?? "Не удалось загрузить настройки Instagram");
+        if (!cancelled) toast.error(humanError(e, "Не удалось загрузить настройки Instagram"));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -506,7 +507,7 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
       await applyTestResult(await test({ data: { salonId } }));
       toast.success("Сохранено");
     } catch (e: any) {
-      toast.error(e.message ?? "Не удалось сохранить");
+      toast.error(humanError(e, "Не удалось сохранить"));
       setTestState({ kind: "idle" });
     } finally {
       setSaving(false);
@@ -528,10 +529,10 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
     setEnabledState(next);
     try {
       await setEnabled({ data: { salonId, enabled: next } });
-      toast.success(next ? "ИИ-Админ отвечает в Instagram Direct" : "Instagram отключён");
+      toast.success(next ? "Ассистент отвечает в Instagram" : "В Instagram теперь отвечаете вы");
     } catch (e: any) {
       setEnabledState(prev);
-      toast.error(e.message ?? "Не удалось переключить");
+      toast.error(humanError(e, "Не удалось переключить"));
     } finally {
       setTogglingEnabled(false);
     }
@@ -556,7 +557,7 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
             </p>
             <p className="text-xs text-muted-foreground mt-2">
               Переписка Instagram через официальный API Meta — бесплатна. Платить нужно только за
-              работу самого ИИ, как и в WhatsApp.
+              ответы ассистента — так же, как в WhatsApp.
             </p>
           </div>
           <Switch

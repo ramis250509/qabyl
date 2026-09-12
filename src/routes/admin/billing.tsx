@@ -6,6 +6,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { humanError } from "@/lib/human-error";
 import { CreditCard, Loader2, MessageSquare, ShieldCheck } from "lucide-react";
 import { useAuth } from "@/lib/auth-client";
 import { Card } from "@/components/ui/card";
@@ -159,7 +160,7 @@ function BillingPage() {
       if (okText) toast.success(okText);
       await load();
     } catch (e: any) {
-      toast.error(e?.message ?? "Не получилось");
+      toast.error(humanError(e, "Не получилось"));
     } finally {
       setBusy(null);
     }
