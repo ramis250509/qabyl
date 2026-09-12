@@ -101,6 +101,41 @@ export const Route = createFileRoute("/api/public/wacloud")({
         }
 
         const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+        // Сначала спрашиваем salon_channels: там у канала есть не только салон, но и точка.
+        // Для сети это единственный способ понять, в какой филиал писать клиенту, который
+        // написал на номер конкретной точки.
+        const { routeByExternalId } = await import("@/lib/channel-routing.server");
+        const routed = await routeByExternalId(supabaseAdmin as any, "whatsapp", phoneNumberId);
+        if (routed) {
+          const [{ data: secrets }, { data: salon }, { data: assistant }] = await Promise.all([
+            supabaseAdmin.from("salon_secrets").select("*").eq("salon_id", routed.salonId).maybeSingle(),
+            supabaseAdmin
+              .from("salons")
+              .select(
+                "id, name, timezone, ai_assistant_enabled, whatsapp_ai_enabled, wa_provider, working_hours, address, slug, custom_domain",
+              )
+              .eq("id", routed.salonId)
+              .maybeSingle(),
+            supabaseAdmin
+              .from("salon_ai_assistant")
+              .select("*")
+              .eq("salon_id", routed.salonId)
+              .maybeSingle(),
+          ]);
+          return await processWaCloudPayload({
+            salonId: routed.salonId,
+            rawBody,
+            secrets,
+            // Канал можно выключить отдельно от салона: у сети бывает нужно оставить живого
+            // администратора на одной точке и ассистента на остальных.
+            salon: routed.aiEnabled ? salon : { ...(salon as any), ai_assistant_enabled: false },
+            assistant,
+            branchId: routed.branchId,
+            rid,
+          });
+        }
+
         // limit(2), а не maybeSingle(): на колонке нет уникального индекса, и один номер можно
         // привязать к двум салонам. maybeSingle() в этом случае бросает исключение, вебхук
         // отвечает 500, Meta начинает пересылать пачку по кругу — и всё это без единой строки о

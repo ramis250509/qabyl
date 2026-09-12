@@ -27,17 +27,24 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { EmptyState, SkeletonBlock, StatusBadge } from "@/components/ui/status";
-import { Send, Trash2, UserPlus, Users } from "lucide-react";
+import { Copy, KeyRound, Send, Trash2, UserPlus, Users } from "lucide-react";
 import {
   inviteEmployee,
   listSalonEmployees,
   resendEmployeeInvite,
+  resetEmployeePassword,
   revokeEmployeeAccess,
   setStaffIsolation,
 } from "@/lib/rbac.functions";
 import { useAuth } from "@/lib/auth-client";
 import { useSalonShape } from "@/hooks/use-salon-shape";
-import { SharedMasterLoginsCard } from "@/components/admin/SharedMasterLoginsCard";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 type Employee = Awaited<ReturnType<typeof listSalonEmployees>>[number];
 type Role = "salon_admin" | "manager" | "master";
@@ -78,6 +85,7 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
   const invite = useServerFn(inviteEmployee);
   const revoke = useServerFn(revokeEmployeeAccess);
   const resend = useServerFn(resendEmployeeInvite);
+  const resetPassword = useServerFn(resetEmployeePassword);
   const setIsolation = useServerFn(setStaffIsolation);
 
   // Филиалы читаются общим хуком: он же решает, произносит ли интерфейс слово «филиал».
@@ -92,6 +100,11 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
   // Кого мы только что позвали и ушло ли письмо. Держим на экране, а не в исчезающем тосте:
   // «письма не будет» — это указание к действию, а не уведомление.
   const [lastInvite, setLastInvite] = useState<{ email: string; emailSent: boolean } | null>(null);
+  // Как выдаём доступ. «Пароль» — не запасной путь, а основной для половины салонов: у мастера
+  // часто нет почты, которой он пользуется, а почтовая служба вдобавок упирается в предел писем.
+  const [method, setMethod] = useState<"email" | "password">("email");
+  // Показывается один раз и нигде не хранится — ни у нас, ни в базе.
+  const [creds, setCreds] = useState<{ email: string; password: string } | null>(null);
   const [resending, setResending] = useState<string | null>(null);
   const [branchId, setBranchId] = useState<string>("");
 
@@ -140,17 +153,24 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
           email: value,
           role,
           branchId: role === "master" ? branchId : null,
+          method,
           // Без этого Supabase уводит по ссылке из письма на Site URL проекта — то есть на
           // рекламную страницу Qabyl, где сотруднику предлагают зарегистрироваться заново.
           origin: typeof window !== "undefined" ? window.location.origin : null,
         },
       });
-      setLastInvite({ email: value, emailSent: res.emailSent });
-      toast.success(
-        res.emailSent
-          ? `Письмо отправлено на ${value}`
-          : `Доступ выдан, но письмо не отправляли — читайте ниже`,
-      );
+      if (res.password) {
+        setCreds({ email: value, password: res.password });
+        setLastInvite(null);
+        toast.success("Доступ создан — передайте логин и пароль");
+      } else {
+        setLastInvite({ email: value, emailSent: res.emailSent });
+        toast.success(
+          res.emailSent
+            ? `Письмо отправлено на ${value}`
+            : "Доступ выдан, но письмо не отправляли — читайте ниже",
+        );
+      }
       setEmail("");
       await load();
     } catch (e: any) {
@@ -173,6 +193,24 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
       toast.success(`Ссылка для входа отправлена на ${row.email}`);
     } catch (e: any) {
       toast.error(humanError(e, "Не удалось отправить письмо"));
+    } finally {
+      setResending(null);
+    }
+  }
+
+  async function onResetPassword(row: Employee) {
+    if (
+      !confirm(
+        `Выдать новый пароль для ${row.email}? Старый перестанет работать сразу — предупредите человека.`,
+      )
+    )
+      return;
+    setResending(row.userId);
+    try {
+      const res = await resetPassword({ data: { salonId, userId: row.userId } });
+      setCreds({ email: row.email, password: res.password });
+    } catch (e: any) {
+      toast.error(humanError(e, "Не удалось выдать новый пароль"));
     } finally {
       setResending(null);
     }
@@ -214,14 +252,47 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
         <div>
           <h2 className="font-semibold">Пригласить сотрудника</h2>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            Сотрудник получит письмо, придумает пароль и сразу попадёт в кабинет. Пароль знает
-            только он. Если почты нет — ниже есть второй способ.
+            {method === "email"
+              ? "Сотрудник получит письмо, придумает пароль и сразу попадёт в кабинет."
+              : "Мы сразу заведём доступ и покажем пароль из 8 цифр — его можно продиктовать."}
           </p>
+        </div>
+
+        {/* Два способа рядом, а не «основной и спрятанный».
+
+            Раньше выдача пароля жила отдельной свёрнутой карточкой внизу вкладки, под
+            заголовком «У мастера нет почты». Находил её только тот, кто уже знал, что она там
+            есть, — а в салонах региона это самый частый путь, а не исключение. */}
+        <div role="radiogroup" aria-label="Как выдать доступ" className="grid gap-2 sm:grid-cols-2">
+          {(
+            [
+              { key: "email", label: "Отправить письмо", hint: "Пароль придумает сам" },
+              { key: "password", label: "Выдать пароль", hint: "8 цифр, скажете голосом" },
+            ] as const
+          ).map((m) => (
+            <button
+              key={m.key}
+              type="button"
+              role="radio"
+              aria-checked={method === m.key}
+              onClick={() => setMethod(m.key)}
+              className={`qb-press rounded-lg border p-3 text-left ${
+                method === m.key
+                  ? "border-primary bg-primary/5 ring-1 ring-primary"
+                  : "hover:border-primary/40 hover:bg-muted/40"
+              }`}
+            >
+              <span className="block text-sm font-medium">{m.label}</span>
+              <span className="mt-0.5 block text-xs text-muted-foreground">{m.hint}</span>
+            </button>
+          ))}
         </div>
 
         <div className="grid gap-3 sm:grid-cols-[1fr_11rem]">
           <div className="space-y-1.5">
-            <Label htmlFor="employee-email">Email</Label>
+            <Label htmlFor="employee-email">
+              {method === "email" ? "Email сотрудника" : "Логин (любой адрес)"}
+            </Label>
             <Input
               id="employee-email"
               type="email"
@@ -230,6 +301,11 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
               placeholder="master@salon.com"
               onKeyDown={(e) => e.key === "Enter" && onInvite()}
             />
+            {method === "password" && (
+              <p className="text-xs text-muted-foreground">
+                Письма туда не ходят — адрес нужен только как имя для входа.
+              </p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label>Роль</Label>
@@ -272,7 +348,7 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
 
         <Button onClick={onInvite} disabled={busy} size="lg" className="w-full sm:w-auto">
           <UserPlus className="mr-1.5 h-4 w-4" />
-          {busy ? "Отправляем…" : "Пригласить"}
+          {busy ? "Создаём…" : method === "email" ? "Отправить письмо" : "Создать доступ"}
         </Button>
 
         {/* Самое важное сообщение этого экрана.
@@ -355,6 +431,18 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
                           {resending === r.userId ? "Отправляем…" : "Отправить ссылку"}
                         </Button>
                       )}
+                      {/* Пароль показывается один раз, и «забыл» — норма, а не исключение.
+                          Без этой кнопки выход был один: отозвать доступ и завести заново,
+                          потеряв привязку к профилю мастера. */}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onResetPassword(r)}
+                        disabled={resending === r.userId}
+                      >
+                        <KeyRound className="mr-1.5 h-3.5 w-3.5" />
+                        Новый пароль
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -393,8 +481,59 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
         </Card>
       )}
 
-      {/* Переехало из «Салон → Филиалы»: все доступы теперь в одном месте. */}
-      <SharedMasterLoginsCard salonId={salonId} branches={branches} isMulti={isMulti} />
+      {/* Карточка «У мастера нет почты» отсюда убрана: она делала ровно то же самое, что
+          теперь делает способ «Выдать пароль» в форме выше, только хуже — один логин на всех
+          вместо отдельного на человека, и спрятанный так, что находил его не каждый. */}
+
+      <Dialog open={!!creds} onOpenChange={(o) => !o && setCreds(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <KeyRound className="h-4 w-4" />
+              Доступ готов
+            </DialogTitle>
+            <DialogDescription>
+              Передайте сотруднику — можно продиктовать или отправить голосовым. Пароль показывается
+              один раз; если потеряется, выдайте новый кнопкой в списке.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <CredRow label="Логин" value={creds?.email ?? ""} />
+            <CredRow label="Пароль" value={creds?.password ?? ""} big />
+            <Button className="w-full" onClick={() => setCreds(null)}>
+              Записала, готово
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+/** Строка «логин / пароль» с копированием в один тап. */
+function CredRow({ label, value, big }: { label: string; value: string; big?: boolean }) {
+  return (
+    <div className="space-y-1.5">
+      <Label>{label}</Label>
+      <div className="flex gap-2">
+        <Input
+          value={value}
+          readOnly
+          className={big ? "font-mono text-lg tracking-[0.2em]" : undefined}
+        />
+        <Button
+          variant="outline"
+          size="icon"
+          className="shrink-0"
+          aria-label={`Скопировать ${label.toLowerCase()}`}
+          onClick={() => {
+            navigator.clipboard.writeText(value);
+            toast.success("Скопировано");
+          }}
+        >
+          <Copy className="h-4 w-4" />
+        </Button>
+      </div>
     </div>
   );
 }

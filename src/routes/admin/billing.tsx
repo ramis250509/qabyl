@@ -381,26 +381,26 @@ function BillingPage() {
             видны в переписках.
           </p>
         )}
-        {!s.exempt && currentPlan && (
-          <div className="flex flex-col sm:flex-row sm:items-center gap-3 pt-1">
-            <label className="flex items-center gap-3 flex-1 text-sm cursor-pointer">
-              <Switch
-                checked={s.auto_topup ?? false}
-                disabled={busy !== null}
-                onCheckedChange={(v) =>
-                  run(
-                    "topup",
-                    () => setBillingAutoTopup({ data: { salonId: salonId!, enabled: v } }),
-                    v ? "Автодокупка включена" : "Автодокупка выключена",
-                  )
-                }
-              />
-              <span>
-                Докупать {formatNumber(currentPlan.pack_messages)} сообщений за{" "}
-                {formatNumber(currentPlan.pack_price_kgs)} сом автоматически, когда закончатся
+        {/* Докупка пакета — честно про то, как это работает сегодня.
+
+            Здесь стоял переключатель «Докупать 500 сообщений автоматически, когда закончатся».
+            Списывать не с чего: карт мы не храним и шлюза нет. То есть переключатель обещал
+            то, чего не произойдёт, и владелец, включивший его, спокойно ждал бы — пока
+            ассистент молчит.
+
+            Автодокупка вернётся вместе со шлюзом; до тех пор — перевод и кнопка. */}
+        {!s.exempt && currentPlan && !unlimited && (
+          <div className="space-y-2 rounded-lg border bg-muted/40 p-3">
+            <p className="text-sm">
+              Когда сообщения закончатся, ассистент перестанет отвечать до конца месяца. Можно
+              докупить пакет:{" "}
+              <span className="font-medium">
+                +{formatNumber(currentPlan.pack_messages)} сообщений за{" "}
+                {formatNumber(currentPlan.pack_price_kgs)} сом
               </span>
-            </label>
-            {data.paymentsEnabled && (
+              .
+            </p>
+            {data.paymentsEnabled ? (
               <Button
                 variant="outline"
                 disabled={busy !== null}
@@ -412,9 +412,14 @@ function BillingPage() {
                   )
                 }
               >
-                {busy === "pack" && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                {busy === "pack" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Докупить сейчас
               </Button>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Переведите эту сумму так же, как тариф — реквизиты выше, — и напишите в комментарии
+                «пакет». Добавим сообщения в течение пары часов.
+              </p>
             )}
           </div>
         )}

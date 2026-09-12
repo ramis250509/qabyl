@@ -403,7 +403,7 @@ function ServicesStep({
         </p>
       </div>
 
-      <div className="max-h-[52vh] space-y-6 overflow-y-auto rounded-xl border p-3 sm:p-4">
+      <div className="max-h-[60vh] space-y-6 overflow-y-auto rounded-xl border p-2 sm:max-h-[52vh] sm:p-4">
         {categories.length === 0 ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
             Прайс пуст. Добавьте первую услугу — или пропустите шаг и заполните позже.
@@ -425,54 +425,65 @@ function ServicesStep({
                 </div>
                 <div className="space-y-1.5">
                   {items.map((r) => (
+                    // Название, цена, время и крестик в одну строку помещаются только на
+                    // широком экране. На 400px четыре элемента фиксированной ширины съедали
+                    // всё место, и на название оставалось два символа: в списке стояли «М.»,
+                    // «На», «Ск» — прайс, по которому нельзя понять, что в нём.
+                    //
+                    // Поэтому на телефоне: название отдельной строкой во всю ширину, под ним
+                    // цена и время. На sm и шире — прежняя строка, десктоп не тронут.
                     <div
                       key={r.key}
-                      className="flex items-center gap-2 rounded-lg border bg-card px-2 py-1.5"
+                      className="rounded-lg border bg-card p-2 sm:flex sm:items-center sm:gap-2 sm:py-1.5"
                     >
-                      <Input
-                        id={`svc-name-${r.key}`}
-                        value={r.name}
-                        onChange={(e) => patch(r.key, { name: e.target.value })}
-                        placeholder="Название услуги"
-                        aria-label="Название услуги"
-                        className="h-9 min-w-0 flex-1 border-0 bg-transparent px-1.5 shadow-none focus-visible:bg-muted/60"
-                      />
-                      <div className="flex shrink-0 items-center gap-1">
+                      <div className="flex items-center gap-1 sm:flex-1">
                         <Input
-                          value={r.price}
-                          onChange={(e) =>
-                            patch(r.key, { price: e.target.value.replace(/[^\d]/g, "") })
-                          }
-                          inputMode="numeric"
-                          placeholder="0"
-                          aria-label={`Цена: ${r.name || "услуга"}`}
-                          className="h-9 w-[4.5rem] px-1.5 text-right tabular-nums"
+                          id={`svc-name-${r.key}`}
+                          value={r.name}
+                          onChange={(e) => patch(r.key, { name: e.target.value })}
+                          placeholder="Название услуги"
+                          aria-label="Название услуги"
+                          className="h-10 min-w-0 flex-1 border-0 bg-transparent px-1.5 text-sm font-medium shadow-none focus-visible:bg-muted/60 sm:h-9 sm:font-normal"
                         />
-                        <span className="w-8 text-xs text-muted-foreground">сом</span>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => remove(r.key)}
+                          aria-label={`Удалить ${r.name || "услугу"}`}
+                          className="h-9 w-9 shrink-0 text-muted-foreground hover:text-danger sm:order-last sm:h-8 sm:w-8"
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
                       </div>
-                      <div className="flex shrink-0 items-center gap-1">
-                        <Input
-                          value={r.duration}
-                          onChange={(e) =>
-                            patch(r.key, { duration: e.target.value.replace(/[^\d]/g, "") })
-                          }
-                          inputMode="numeric"
-                          placeholder="60"
-                          aria-label={`Длительность: ${r.name || "услуга"}`}
-                          className="h-9 w-14 px-1.5 text-right tabular-nums"
-                        />
-                        <span className="w-8 text-xs text-muted-foreground">мин</span>
+                      <div className="mt-1 flex items-center gap-2 sm:mt-0 sm:gap-1">
+                        <div className="flex min-w-0 flex-1 items-center gap-1 sm:flex-none">
+                          <Input
+                            value={r.price}
+                            onChange={(e) =>
+                              patch(r.key, { price: e.target.value.replace(/[^\d]/g, "") })
+                            }
+                            inputMode="numeric"
+                            placeholder="0"
+                            aria-label={`Цена: ${r.name || "услуга"}`}
+                            className="h-10 w-full px-2 text-right tabular-nums sm:h-9 sm:w-[4.5rem] sm:px-1.5"
+                          />
+                          <span className="w-8 shrink-0 text-xs text-muted-foreground">сом</span>
+                        </div>
+                        <div className="flex min-w-0 flex-1 items-center gap-1 sm:flex-none">
+                          <Input
+                            value={r.duration}
+                            onChange={(e) =>
+                              patch(r.key, { duration: e.target.value.replace(/[^\d]/g, "") })
+                            }
+                            inputMode="numeric"
+                            placeholder="60"
+                            aria-label={`Длительность: ${r.name || "услуга"}`}
+                            className="h-10 w-full px-2 text-right tabular-nums sm:h-9 sm:w-14 sm:px-1.5"
+                          />
+                          <span className="w-8 shrink-0 text-xs text-muted-foreground">мин</span>
+                        </div>
                       </div>
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="ghost"
-                        onClick={() => remove(r.key)}
-                        aria-label={`Удалить ${r.name || "услугу"}`}
-                        className="h-8 w-8 shrink-0 text-muted-foreground hover:text-danger"
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
                     </div>
                   ))}
                   <button

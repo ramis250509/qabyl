@@ -624,57 +624,12 @@ export function WhatsAppCard({ salonId }: { salonId: string }) {
       </Card>
 
       {/* ---- Уведомления клиентам. */}
-      <Card className="space-y-4 p-4 sm:p-6">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="font-semibold">Тексты уведомлений</h3>
-            <p className="mt-0.5 max-w-xl text-sm text-muted-foreground">
-              WhatsApp разрешает писать клиенту свободно только сутки после его сообщения. Дальше
-              проходят лишь заранее проверенные тексты — их Meta смотрит один раз, а потом они
-              работают всегда. Qabyl отправляет их на проверку сам.
-            </p>
-          </div>
-          <Button
-            onClick={onCreateTemplates}
-            disabled={!status.connected || busy !== null}
-            size="sm"
-            variant="outline"
-            title={status.connected ? undefined : "Сначала подключите WhatsApp"}
-          >
-            {busy === "templates" ? "Отправляем…" : "Отправить на проверку"}
-          </Button>
-        </div>
+      {/* Карточка «Тексты уведомлений» убрана из кабинета салона.
 
-        {!status.connected ? (
-          <EmptyState
-            icon={MessageCircle}
-            title="Пока подключать нечего"
-            body="Тексты уведомлений создаются на вашем аккаунте WhatsApp. Сначала подключите его — займёт минуту."
-          />
-        ) : (
-          <ul className="qb-stagger divide-y">
-            {cfg.template_kinds.map((kind) => {
-              const tpl = cfg.templates[kind];
-              const t = templateTone(tpl?.status);
-              return (
-                <li key={kind} className="flex items-center justify-between gap-3 py-2.5">
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm">{KIND_LABELS[kind] ?? kind}</span>
-                    {tpl?.reason && (
-                      <span className="mt-0.5 block text-xs text-danger">
-                        Причина отказа: {tpl.reason}
-                      </span>
-                    )}
-                  </span>
-                  <StatusBadge tone={tpl ? t.tone : "idle"}>
-                    {tpl ? t.label : "не создано"}
-                  </StatusBadge>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </Card>
+          Шаблоны подтверждения, напоминания, переноса и отмены — наши, они одинаковы для всех
+          салонов, и Qabyl отправляет их на проверку в Meta сам при подключении канала. Владельцу
+          здесь решать нечего: до подключения карточка честно писала «пока подключать нечего», а
+          после подключения повторяла работу, которая уже сделана. */}
 
       <DiagnosticsBlock salonId={salonId} connected={status.connected} />
 

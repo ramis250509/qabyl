@@ -2,7 +2,6 @@ import { useMemo, useRef, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Copy, ExternalLink, Download, Share2, QrCode } from "lucide-react";
 import { toast } from "sonner";
 
@@ -15,7 +14,8 @@ export function SalonShareCard({ slug, name }: { slug: string; name?: string }) 
     return `${window.location.origin}/book/${slug}`;
   }, [slug]);
 
-  const canShare = typeof navigator !== "undefined" && typeof (navigator as any).share === "function";
+  const canShare =
+    typeof navigator !== "undefined" && typeof (navigator as any).share === "function";
 
   async function copy() {
     try {
@@ -57,48 +57,85 @@ export function SalonShareCard({ slug, name }: { slug: string; name?: string }) 
   if (!slug) return null;
 
   return (
-    <Card className="p-4 sm:p-5 space-y-3 border-primary/30 bg-primary/5">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <h2 className="font-semibold text-base sm:text-lg">Публичная ссылка для клиентов</h2>
-          <p className="text-sm text-muted-foreground">Отправьте её клиенту — регистрация не нужна.</p>
-        </div>
-        <Button variant="outline" size="sm" onClick={() => setShowQr((v) => !v)}>
-          <QrCode className="h-4 w-4 mr-1" />
-          {showQr ? "Скрыть QR" : "Показать QR"}
+    // Одна строка вместо блока на треть экрана.
+    //
+    // Было: заголовок, подпись, кнопка QR, поле с адресом и три кнопки — на телефоне это
+    // полэкрана над вкладками, которые и есть содержимое страницы. При этом ссылку копируют
+    // один раз и потом не вспоминают. Оставлено то, ради чего сюда смотрят: сам адрес и
+    // «Копировать». Остальное — иконками, QR раскрывается по нажатию.
+    <div className="space-y-2">
+      <div className="flex items-center gap-1.5 rounded-lg border bg-muted/40 p-1.5">
+        <code
+          className="min-w-0 flex-1 cursor-pointer truncate px-2 text-xs text-muted-foreground sm:text-sm"
+          onClick={copy}
+          title={url}
+        >
+          {url.replace(/^https?:\/\//, "")}
+        </code>
+        <Button onClick={copy} size="sm" className="shrink-0">
+          <Copy className="h-3.5 w-3.5 sm:mr-1" />
+          <span className="hidden sm:inline">Копировать</span>
         </Button>
-      </div>
-
-      <div className="flex gap-2 flex-wrap">
-        <Input value={url} readOnly className="flex-1 min-w-[200px] bg-background" onFocus={(e) => e.currentTarget.select()} />
-        <Button onClick={copy} variant="default" size="sm">
-          <Copy className="h-4 w-4 mr-1" />Копировать
+        <Button
+          onClick={() => setShowQr((v) => !v)}
+          variant="ghost"
+          size="icon"
+          className="h-9 w-9 shrink-0"
+          aria-label={showQr ? "Скрыть QR-код" : "Показать QR-код"}
+        >
+          <QrCode className="h-4 w-4" />
         </Button>
-        <Button onClick={open} variant="outline" size="sm">
-          <ExternalLink className="h-4 w-4 mr-1" />Открыть
+        <Button
+          onClick={open}
+          variant="ghost"
+          size="icon"
+          className="h-9 w-9 shrink-0"
+          aria-label="Открыть страницу записи"
+        >
+          <ExternalLink className="h-4 w-4" />
         </Button>
         {canShare && (
-          <Button onClick={share} variant="outline" size="sm">
-            <Share2 className="h-4 w-4 mr-1" />Поделиться
+          <Button
+            onClick={share}
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 shrink-0"
+            aria-label="Поделиться ссылкой"
+          >
+            <Share2 className="h-4 w-4" />
           </Button>
         )}
       </div>
+      {showQr && <QrBlock url={url} qrWrapRef={qrWrapRef} onDownload={downloadQr} />}
+    </div>
+  );
+}
 
-      {showQr && (
-        <div className="flex flex-col sm:flex-row items-center gap-4 pt-2 border-t">
-          <div ref={qrWrapRef} className="bg-white p-3 rounded-md border">
-            <QRCodeCanvas value={url} size={180} level="M" includeMargin={false} />
-          </div>
-          <div className="space-y-2 text-center sm:text-left">
-            <p className="text-sm text-muted-foreground max-w-xs">
-              Распечатайте QR-код и разместите в салоне — клиенты смогут отсканировать камерой телефона и сразу записаться.
-            </p>
-            <Button onClick={downloadQr} variant="outline" size="sm">
-              <Download className="h-4 w-4 mr-1" />Скачать PNG
-            </Button>
-          </div>
-        </div>
-      )}
+/** QR раскрывается отдельным блоком — печатают его редко, а места он занимает много. */
+function QrBlock({
+  url,
+  qrWrapRef,
+  onDownload,
+}: {
+  url: string;
+  qrWrapRef: React.RefObject<HTMLDivElement | null>;
+  onDownload: () => void;
+}) {
+  return (
+    <Card className="flex flex-col items-center gap-4 p-4 sm:flex-row sm:p-5">
+      <div ref={qrWrapRef} className="rounded-md border bg-white p-3">
+        <QRCodeCanvas value={url} size={160} level="M" includeMargin={false} />
+      </div>
+      <div className="space-y-2 text-center sm:text-left">
+        <p className="max-w-xs text-sm text-muted-foreground">
+          Распечатайте и повесьте в салоне — клиент наведёт камеру и сразу окажется на странице
+          записи.
+        </p>
+        <Button onClick={onDownload} variant="outline" size="sm">
+          <Download className="mr-1 h-4 w-4" />
+          Скачать PNG
+        </Button>
+      </div>
     </Card>
   );
 }

@@ -46,9 +46,21 @@ const ROLE_LABELS: Record<AllowedRole, string> = {
   master: "Врач / мастер",
 };
 
-// Any of these can grant/revoke access for a given salon. Super admin always;
-// salon_admin only within their own salon. Managers cannot promote themselves.
-async function assertCanManageEmployees(userId: string, salonId: string) {
+/**
+ * Кто и что может делать с доступами салона.
+ *
+ * ЧТО ИЗМЕНИЛОСЬ. Раньше функция отвечала «да/нет», и «да» означало владельца или платформу.
+ * Администратор на ресепшене не мог завести доступ даже мастеру — а именно он и занимается
+ * этим в реальном салоне: владелица приходит к вечеру, а мастера выходят с утра.
+ *
+ * Теперь возвращается УРОВЕНЬ, и он решает, какую роль можно выдать:
+ *   owner   — владелец салона или платформа: любые роли, включая совладельца;
+ *   manager — администратор: только мастера. Назначить совладельца или второго администратора
+ *             он не может — иначе роль с ограниченными правами умеет выдавать себе любые.
+ */
+type ActorLevel = "owner" | "manager";
+
+async function actorLevel(userId: string, salonId: string): Promise<ActorLevel> {
   const mod = await import("@/integrations/supabase/client.server");
   const supabaseAdmin = mod.supabaseAdmin as any;
   const { data: roles, error } = await supabaseAdmin
@@ -56,10 +68,34 @@ async function assertCanManageEmployees(userId: string, salonId: string) {
     .select("role, salon_id")
     .eq("user_id", userId);
   if (error) throw new Error(error.message);
-  const ok = (roles ?? []).some(
+  const list = roles ?? [];
+  const owner = list.some(
     (r: any) => r.role === "super_admin" || (r.role === "salon_admin" && r.salon_id === salonId),
   );
-  if (!ok) throw new Error("Forbidden: owner or super_admin only");
+  if (owner) return "owner";
+  const manager = list.some((r: any) => r.role === "manager" && r.salon_id === salonId);
+  if (manager) return "manager";
+  throw new Error("Доступами салона управляет владелец или администратор");
+}
+
+async function assertCanManageEmployees(userId: string, salonId: string) {
+  await actorLevel(userId, salonId);
+}
+
+/**
+ * Пароль, который можно продиктовать голосом.
+ *
+ * Восемь цифр. Не буквы и не символы: пароль передают вслух или в голосовом сообщении, и на
+ * «заглавная эл, потом единица» уходит больше времени, чем на всю остальную настройку. Восемь
+ * цифр — это 100 миллионов вариантов, чего с лихвой хватает для входа, который защищён ещё и
+ * почтой, и который владелец в любой момент отзывает одной кнопкой.
+ *
+ * Генерация через crypto: Math.random для паролей не годится — он предсказуем.
+ */
+function generateNumericPassword(): string {
+  const bytes = new Uint32Array(8);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (n) => String(n % 10)).join("");
 }
 
 async function audit(params: {
@@ -112,13 +148,30 @@ async function findUserByEmail(supabaseAdmin: any, email: string): Promise<{ id:
  * а не на работу, и молча упирается в потолок. Владельцу в этот момент нужно не название ошибки,
  * а понимание, что делать прямо сейчас: у него есть логин с паролем вручную.
  */
+function humanAuthText(raw: string): string {
+  const m = (raw || "").toLowerCase();
+  if (m.includes("already been registered") || m.includes("already registered")) {
+    return "Аккаунт с такой почтой уже есть — он входит своей почтой и своим паролем.";
+  }
+  if (m.includes("password")) return "Не удалось задать пароль — попробуйте ещё раз.";
+  if (m.includes("email")) return "Проверьте, правильно ли написан адрес.";
+  return raw;
+}
+
 function mailErrorText(raw: string): string {
   const m = (raw || "").toLowerCase();
+  // Supabase не даёт слать одному адресу чаще, чем раз в N секунд (Minimum interval per user,
+  // по умолчанию 60). Нажать «Отправить ссылку» дважды подряд — самое естественное действие
+  // человека, который не увидел письма, и упираться в это он будет постоянно.
+  const secs = /after (\d+) seconds?/.exec(m)?.[1];
+  if (secs || m.includes("for security purposes")) {
+    return `Письмо этому адресу уже отправлено. Следующее можно через ${secs ?? "минуту"}${secs ? " сек." : ""} — или выдайте пароль прямо сейчас, способ «Выдать пароль» в форме выше.`;
+  }
   if (m.includes("rate limit") || m.includes("too many") || m.includes("429")) {
-    return "Достигнут предел писем за час. Отправьте приглашение позже — или выдайте доступ прямо сейчас через «У сотрудника нет почты» ниже.";
+    return "Достигнут предел писем за час. Отправьте позже — или выдайте пароль прямо сейчас, способ «Выдать пароль» в форме выше.";
   }
   if (m.includes("smtp") || m.includes("send") || m.includes("mail")) {
-    return "Письмо не отправилось — почтовая служба недоступна. Выдайте доступ через «У сотрудника нет почты» ниже, а мы разберёмся с отправкой.";
+    return "Письмо не отправилось — почтовая служба недоступна. Выдайте пароль прямо сейчас (способ «Выдать пароль» в форме выше), а мы разберёмся с отправкой.";
   }
   if (m.includes("invalid") && m.includes("email")) return "Проверьте, правильно ли написан адрес.";
   return `Письмо не отправилось: ${raw}`;
@@ -140,6 +193,16 @@ export const inviteEmployee = createServerFn({ method: "POST" })
         masterId: z.string().uuid().nullable().optional(),
         /** Адрес кабинета, из которого зовут. Нужен, чтобы письмо вело в него, а не на главную. */
         origin: z.string().max(200).nullable().optional(),
+        /**
+         * Как выдать доступ.
+         *   email    — письмо со ссылкой, человек сам придумывает пароль;
+         *   password — заводим аккаунт сразу и показываем пароль один раз.
+         *
+         * Второй способ нужен не как запасной, а как основной для половины салонов: у мастера
+         * часто нет почты, которой он пользуется, а встроенная почтовая служба вдобавок
+         * упирается в предел писем в час. Пароль работает всегда и сразу.
+         */
+        method: z.enum(["email", "password"]).default("email"),
       })
       .refine((v) => v.role !== "master" || !!v.branchId, {
         message: "branchId required for master role",
@@ -148,7 +211,12 @@ export const inviteEmployee = createServerFn({ method: "POST" })
       .parse(input),
   )
   .handler(async ({ data, context }) => {
-    await assertCanManageEmployees(context.userId, data.salonId);
+    const level = await actorLevel(context.userId, data.salonId);
+    // Администратор заводит только мастеров. Дать ему право назначать совладельцев значит
+    // сделать ограничение его роли необязательным: достаточно назначить совладельцем себя.
+    if (level === "manager" && data.role !== "master") {
+      throw new Error("Администратор может добавлять только мастеров");
+    }
     const mod = await import("@/integrations/supabase/client.server");
     const supabaseAdmin = mod.supabaseAdmin as any;
 
@@ -165,12 +233,25 @@ export const inviteEmployee = createServerFn({ method: "POST" })
     // салон, или владелец нажал «Пригласить» дважды. Дальше по коду `outcome` доезжает до экрана,
     // и тот говорит разными словами про «письмо ушло» и «письма не было».
     let userId: string | null = null;
-    let outcome: "invited" | "already_registered" | "role_added" = "invited";
+    let outcome: "invited" | "already_registered" | "password" = "invited";
+    let password: string | null = null;
 
     const existing = await findUserByEmail(supabaseAdmin, data.email);
     if (existing) {
       userId = existing.id;
       outcome = "already_registered";
+    } else if (data.method === "password") {
+      password = generateNumericPassword();
+      // email_confirm: true — подтверждать почту нечем и незачем: адрес мог быть выдуман
+      // владельцем как имя для входа, письма туда не ходят.
+      const created = await supabaseAdmin.auth.admin.createUser({
+        email: data.email,
+        password,
+        email_confirm: true,
+      });
+      if (created.error) throw new Error(humanAuthText(created.error.message));
+      userId = created.data.user!.id;
+      outcome = "password";
     } else {
       const inviteResult = await supabaseAdmin.auth.admin.inviteUserByEmail(data.email, {
         redirectTo: inviteRedirectTo(data.origin),
@@ -236,8 +317,55 @@ export const inviteEmployee = createServerFn({ method: "POST" })
       emailSent: outcome === "invited",
       outcome,
       invited: outcome === "invited",
+      /** Показывается ровно один раз и нигде не сохраняется. */
+      password,
       roleLabel: ROLE_LABELS[data.role],
     };
+  });
+
+/**
+ * Выдать сотруднику новый пароль.
+ *
+ * ЗАЧЕМ. Пароль показывается один раз, и «забыл» — это норма, а не исключение. Без этой кнопки
+ * единственный выход был отозвать доступ и завести человека заново, потеряв привязку к профилю
+ * мастера. Работает и для тех, кого заводили письмом: администратору всё равно, как аккаунт
+ * появился, ему нужно, чтобы человек вошёл.
+ */
+export const resetEmployeePassword = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) =>
+    z.object({ salonId: z.string().uuid(), userId: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const level = await actorLevel(context.userId, data.salonId);
+    const mod = await import("@/integrations/supabase/client.server");
+    const supabaseAdmin = mod.supabaseAdmin as any;
+
+    const { data: roles } = await supabaseAdmin
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", data.userId)
+      .eq("salon_id", data.salonId);
+    const list = (roles ?? []).map((r: any) => r.role as string);
+    if (!list.length) throw new Error("У этого человека нет доступа к салону");
+    // Администратор меняет пароль только мастерам — иначе он сменит пароль владельцу и войдёт
+    // под ним.
+    if (level === "manager" && !list.every((r: string) => r === "master")) {
+      throw new Error("Администратор может менять пароль только мастерам");
+    }
+
+    const password = generateNumericPassword();
+    const { error } = await supabaseAdmin.auth.admin.updateUserById(data.userId, { password });
+    if (error) throw new Error(humanAuthText(error.message));
+
+    await audit({
+      salonId: data.salonId,
+      actorId: context.userId,
+      action: "reset_password",
+      subjectUser: data.userId,
+    });
+
+    return { ok: true, password };
   });
 
 /**

@@ -174,7 +174,19 @@ export const Route = createFileRoute("/api/public/wacloud/$salonId")({
           return new Response("Forbidden", { status: 403 });
         }
 
-        return await processWaCloudPayload({ salonId, rawBody, secrets, salon, assistant, rid });
+        // Салон известен из адреса; у канала спрашиваем только одно — закреплён ли он за точкой.
+        const { branchForSalonChannel } = await import("@/lib/channel-routing.server");
+        const branchId = await branchForSalonChannel(supabaseAdmin as any, salonId, "whatsapp");
+
+        return await processWaCloudPayload({
+          salonId,
+          rawBody,
+          secrets,
+          salon,
+          assistant,
+          branchId,
+          rid,
+        });
       },
     },
   },
@@ -289,6 +301,8 @@ async function ingestEvent(opts: {
    * администратора это должно быть видно как отдельный канал, а не как облако.
    */
   channel?: string;
+  /** Точка канала. Проставляется новому диалогу, чтобы ассистент не спрашивал «в какой филиал». */
+  branchId?: string | null;
   errLog: (m: string, ...r: unknown[]) => void;
 }): Promise<string | null> {
   const { db, salonId, ev, tx, errLog } = opts;
@@ -370,7 +384,10 @@ async function ingestEvent(opts: {
           ? {
               status: "active",
               appointment_id: null,
-              selected_branch_id: null,
+              // Канал, закреплённый за точкой, отвечает на этот вопрос заранее: клиент написал
+              // на номер конкретного филиала, спрашивать его «в какой филиал?» — значит делать
+              // вид, что мы не знаем того, что знаем.
+              selected_branch_id: opts.branchId ?? null,
               session_started_at: nowIso,
               state: "idle",
               state_data: {},
@@ -527,6 +544,8 @@ async function runAgentTurn(opts: {
   errLog: (m: string, ...r: unknown[]) => void;
   record: (m: string, c?: Record<string, unknown>) => Promise<void>;
   ms: () => number;
+  /** Точка канала: если канал принадлежит филиалу, остальные для этого разговора не существуют. */
+  channelBranchId?: string | null;
 }): Promise<void> {
   const {
     db,
@@ -580,7 +599,11 @@ async function runAgentTurn(opts: {
     // Super-admin pinned the assistant to one branch — same choke point as the other two routes:
     // replacing the branch list makes every other branch's masters, slots and appointments
     // unreachable without touching the engine.
-    const pinnedBranchId = (assistant as any)?.assistant_branch_id as string | null | undefined;
+    // Точка канала сильнее настройки ассистента: клиент написал на номер конкретного филиала,
+    // и предлагать ему записаться в другой — значит отправить его не туда, куда он пришёл.
+    const pinnedBranchId =
+      opts.channelBranchId ??
+      ((assistant as any)?.assistant_branch_id as string | null | undefined);
     if (pinnedBranchId) {
       const pinned = branches.find((b) => b.id === pinnedBranchId);
       if (pinned) {
@@ -985,6 +1008,14 @@ export async function processWaCloudPayload(opts: {
    * другие, поэтому канал свой.
    */
   channel?: string;
+  /**
+   * Точка, за которой закреплён канал. NULL — канал общий на сеть, ассистент спросит клиента.
+   *
+   * Приходит из salon_channels (см. channel-routing.server.ts). Дальше работает тем же
+   * механизмом, что и закрепление ассистента за филиалом из настроек: список точек сужается до
+   * одной, и всё остальное — услуги, мастера, свободное время, запись — берётся только из неё.
+   */
+  branchId?: string | null;
 }): Promise<Response> {
   const { salonId, rawBody, secrets, salon, assistant, rid } = opts;
   const log = (msg: string, ...more: unknown[]) => console.log(`[wacloud ${rid}] ${msg}`, ...more);
@@ -1087,6 +1118,7 @@ export async function processWaCloudPayload(opts: {
       salon,
       assistant,
       channel: opts.channel,
+      branchId: opts.branchId ?? null,
       errLog,
     });
     if (convId) toRun.add(convId);
@@ -1130,6 +1162,7 @@ export async function processWaCloudPayload(opts: {
       errLog,
       record,
       ms,
+      channelBranchId: opts.branchId ?? null,
     });
   }
 

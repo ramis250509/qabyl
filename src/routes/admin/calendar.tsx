@@ -540,15 +540,38 @@ function CalendarPage() {
               <ZoomIn className="h-4 w-4" />
             </Button>
           </div>
-          <Button variant="outline" size="icon" onClick={() => shiftDate(-1)}>
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
-          <Button variant="outline" onClick={() => setDate(startOfDayInTz(new Date(), tz))}>
-            Сегодня
-          </Button>
-          <Button variant="outline" size="icon" onClick={() => shiftDate(1)}>
-            <ChevronRight className="h-4 w-4" />
-          </Button>
+          {/* Назад / Сегодня / Вперёд — одна группа, а не три отдельные кнопки.
+
+              Кнопки лежали в общем flex-wrap вместе с зумом и выбором вида, и на узком экране
+              перенос рвал их по живому: «назад» и «Сегодня» оставались на одной строке, а
+              «вперёд» уезжала на следующую. Группа переносится целиком. */}
+          <div className="inline-flex items-center overflow-hidden rounded-md border bg-background">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 rounded-none"
+              onClick={() => shiftDate(-1)}
+              aria-label="Предыдущий день"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              className="h-9 rounded-none border-x px-3"
+              onClick={() => setDate(startOfDayInTz(new Date(), tz))}
+            >
+              Сегодня
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 rounded-none"
+              onClick={() => shiftDate(1)}
+              aria-label="Следующий день"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
       </div>
 

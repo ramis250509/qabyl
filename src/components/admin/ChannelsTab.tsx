@@ -31,6 +31,9 @@ import { WhatsAppCard } from "@/components/admin/WhatsAppCard";
 import { InstagramTab } from "@/components/admin/InstagramTab";
 import { getSalonSecrets, upsertSalonSecrets } from "@/lib/salon-secrets.functions";
 import { getOnboardingProgress } from "@/lib/onboarding.functions";
+import { getChannelScopes } from "@/lib/channels.functions";
+import { useSalonShape } from "@/hooks/use-salon-shape";
+import { ChannelScopePicker } from "@/components/admin/ChannelScopePicker";
 
 type Progress = Awaited<ReturnType<typeof getOnboardingProgress>>;
 
@@ -62,6 +65,28 @@ export function ChannelsTab({
   const [channel, setChannel] = useState<"whatsapp" | "instagram">(initialChannel ?? "whatsapp");
   const [assistantOn, setAssistantOn] = useState<boolean>(!!salon.ai_assistant_enabled);
   const [assistantBusy, setAssistantBusy] = useState(false);
+  // Точки салона и уже заданная область каналов. Для одноточечного салона и то и другое
+  // не используется — ChannelScopePicker сам ничего не рисует.
+  const { branches } = useSalonShape(salonId);
+  const loadScopes = useServerFn(getChannelScopes);
+  const [scopes, setScopes] = useState<Record<string, { scope: string; branchId: string | null }>>(
+    {},
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    loadScopes({ data: { salonId } })
+      .then((r) => {
+        if (!cancelled) setScopes(r as any);
+      })
+      .catch(() => {
+        // Область — подсказка, а не условие работы канала. Не смогли прочитать — покажем
+        // «для всей сети», то есть сегодняшнее поведение.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [salonId, loadScopes]);
 
   useEffect(() => {
     setAssistantOn(!!salon.ai_assistant_enabled);
@@ -199,7 +224,16 @@ export function ChannelsTab({
               <SkeletonBlock className="h-40" />
             </div>
           ) : (
-            <WhatsAppChannel salon={salon} onSalonSaved={onSalonSaved} masterOn={assistantOn} />
+            <div className="max-w-2xl space-y-4">
+              <ChannelScopePicker
+                salonId={salonId}
+                kind="whatsapp"
+                branches={branches}
+                initialScope={scopes.whatsapp?.scope as any}
+                initialBranchId={scopes.whatsapp?.branchId ?? null}
+              />
+              <WhatsAppChannel salon={salon} onSalonSaved={onSalonSaved} masterOn={assistantOn} />
+            </div>
           )}
         </TabsContent>
 
@@ -207,7 +241,16 @@ export function ChannelsTab({
             пошаговая инструкция, и диагностика. Дублировать выключатель обёрткой значило бы
             сделать ровно то, чего мы избегаем, — две кнопки для одного действия. */}
         <TabsContent value="instagram" className="mt-4">
-          <InstagramTab salonId={salonId} salonName={salon.name} />
+          <div className="max-w-2xl space-y-4">
+            <ChannelScopePicker
+              salonId={salonId}
+              kind="instagram"
+              branches={branches}
+              initialScope={scopes.instagram?.scope as any}
+              initialBranchId={scopes.instagram?.branchId ?? null}
+            />
+            <InstagramTab salonId={salonId} salonName={salon.name} />
+          </div>
         </TabsContent>
       </Tabs>
     </div>
@@ -361,19 +404,12 @@ function WhatsAppChannel({
       {/* Подключение. Транспорт один: официальный Cloud API от Meta. */}
       <WhatsAppCard salonId={salon.id} />
 
-      <Card className="space-y-3 p-4 sm:p-6">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <h3 className="font-semibold">Писать клиентам первыми</h3>
-            <p className="mt-0.5 text-sm text-muted-foreground">
-              Подтверждение записи, напоминание за два часа, сообщения о переносе и отмене. Если
-              выключить, Qabyl перестанет писать клиентам сам, а на странице записи исчезнут
-              упоминания WhatsApp. На входящие сообщения ассистент продолжит отвечать.
-            </p>
-          </div>
-          <Switch checked={notifyOn} onCheckedChange={toggleNotify} disabled={notifyBusy} />
-        </div>
-      </Card>
+      {/* Переключатель «Писать клиентам первыми» убран.
+
+          Он выключал подтверждения записи и напоминания за два часа — то, ради чего WhatsApp и
+          подключают; выключенное состояние не нужно никому. И он не работал: на колонке висел
+          триггер, разрешавший менять её только платформе, так что владелец щёлкал и получал
+          отказ. Миграция 20260912 включила напоминания всем и сняла триггер. */}
 
       <Card className={`space-y-4 p-4 sm:p-6 ${!notifyOn ? "opacity-60" : ""}`}>
         <div>
