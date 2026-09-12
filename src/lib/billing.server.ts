@@ -1103,7 +1103,9 @@ export async function runBillingCycle(now = new Date()): Promise<{
   for (const sub of (subs ?? []) as Subscription[]) {
     if (sub.billing_exempt) continue;
     const state = await getBillingState(sub.salon_id);
+    // На безлимите (allowance = −1) предупреждать не о чем.
     if (!state?.has_subscription || !state.messages_allowance) continue;
+    if (state.messages_allowance < 0) continue;
     if ((state.usage_pct ?? 0) >= cfg.usage_warn_pct && !state.assistant_paused) {
       await notifyOwnerOnce(
         sub.salon_id,

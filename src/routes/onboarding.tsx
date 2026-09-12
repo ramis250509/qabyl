@@ -781,6 +781,9 @@ function PlanStep({ salonId, onDone }: { salonId: string; onDone: () => void }) 
   const [data, setData] = useState<Awaited<ReturnType<typeof getBillingOverview>> | null>(null);
   const [failed, setFailed] = useState(false);
   const [busyCode, setBusyCode] = useState<string | null>(null);
+  // Что человек отметил на экране. Не то же самое, что сохранённый тариф: выбор и подтверждение
+  // выбора — два разных действия, и раньше они были склеены (см. `confirm` ниже).
+  const [picked, setPicked] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -796,7 +799,22 @@ function PlanStep({ salonId, onDone }: { salonId: string; onDone: () => void }) 
     };
   }, [salonId]);
 
-  async function choose(p: PlanCardData) {
+  /**
+   * Нажатие по карточке только отмечает тариф.
+   *
+   * ЗАЧЕМ РАЗДЕЛЕНО. Раньше клик по карточке сразу сохранял тариф и перебрасывал на следующий
+   * шаг. Человек, который просто читал, чем Business отличается от Start, нажимал — и оказывался
+   * дальше, уже с выбранным тарифом, не успев сравнить. Отменить это на экране было нечем.
+   * Теперь выбор виден на экране, сравнивать можно сколько угодно, а дальше ведёт отдельная
+   * кнопка «Продолжить».
+   */
+  function pick(p: PlanCardData) {
+    setPicked(p.code);
+  }
+
+  async function confirm() {
+    const p = data?.plans.find((x) => x.code === picked);
+    if (!p) return;
     setBusyCode(p.code);
     try {
       const r = await changeBillingPlan({ data: { salonId, planCode: p.code } });
@@ -839,6 +857,11 @@ function PlanStep({ salonId, onDone }: { salonId: string; onDone: () => void }) 
   }
 
   const current = data.plans.find((p) => p.code === data.state?.plan_code) ?? null;
+  // Что-то должно быть отмечено с самого начала: пустой экран выбора без подсказки заставляет
+  // гадать, а рекомендованный тариф у нас и так помечен «Самый популярный».
+  const selected =
+    picked ?? current?.code ?? data.plans.find((p) => p.is_featured)?.code ?? data.plans[0]?.code;
+  const selectedPlan = data.plans.find((p) => p.code === selected) ?? null;
 
   return (
     <div className="qb-rise space-y-6">
@@ -851,21 +874,26 @@ function PlanStep({ salonId, onDone }: { salonId: string; onDone: () => void }) 
 
       <PlanCards
         plans={data.plans}
+        selectedCode={selected ?? null}
         currentCode={current?.code ?? null}
         busyCode={busyCode}
         disabled={busyCode !== null}
-        onChoose={choose}
+        onChoose={pick}
         mode="onboarding"
       />
 
       <div className="flex flex-wrap items-center gap-3">
+        <Button size="lg" onClick={confirm} disabled={busyCode !== null || !selectedPlan}>
+          {busyCode ? "Сохраняем…" : `Продолжить с ${selectedPlan?.name ?? ""}`}
+          {!busyCode && <ArrowRight className="ml-2 h-4 w-4" />}
+        </Button>
         <Button
           variant="ghost"
           className="text-muted-foreground"
           onClick={onDone}
           disabled={busyCode !== null}
         >
-          {current ? `Остаться на ${current.name}` : "Решу позже"}
+          Решу позже
         </Button>
       </div>
     </div>

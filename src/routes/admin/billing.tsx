@@ -203,6 +203,8 @@ function BillingPage() {
   const pendingPlan = data.plans.find((p) => p.code === s.pending_plan_code);
   const used = s.messages_used ?? 0;
   const allowance = s.messages_allowance ?? 0;
+  // −1 с сервера означает «без лимита»: считать проценты и рисовать полоску нечем и незачем.
+  const unlimited = allowance < 0;
   const pct = allowance > 0 ? Math.min(100, Math.round((used * 100) / allowance)) : 0;
   const payLabel =
     s.status === "trialing"
@@ -325,8 +327,8 @@ function BillingPage() {
           <div className="text-right tabular-nums">
             <div className="text-lg font-semibold">
               {formatNumber(used)}{" "}
-              <span className="text-muted-foreground font-normal">
-                из {formatNumber(allowance)}
+              <span className="font-normal text-muted-foreground">
+                {unlimited ? "— без ограничений" : `из ${formatNumber(allowance)}`}
               </span>
             </div>
             {(s.messages_credits ?? 0) > 0 && (
@@ -336,17 +338,19 @@ function BillingPage() {
             )}
           </div>
         </div>
-        <Progress
-          value={pct}
-          aria-label="Израсходовано сообщений"
-          className={
-            s.assistant_paused
-              ? "[&>div]:bg-red-500"
-              : pct >= (s.usage_warn_pct ?? 80)
-                ? "[&>div]:bg-amber-500"
-                : ""
-          }
-        />
+        {!unlimited && (
+          <Progress
+            value={pct}
+            aria-label="Израсходовано сообщений"
+            className={
+              s.assistant_paused
+                ? "[&>div]:bg-red-500"
+                : pct >= (s.usage_warn_pct ?? 80)
+                  ? "[&>div]:bg-amber-500"
+                  : ""
+            }
+          />
+        )}
         {s.assistant_paused && !s.exempt && (
           <p className="text-sm text-red-600 dark:text-red-400">
             Сообщения закончились — ассистент не отвечает клиентам. Сообщения клиентов по-прежнему

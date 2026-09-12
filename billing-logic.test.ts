@@ -290,6 +290,14 @@ describe("расход", () => {
     expect(usageLevel(1000, 1000, cfg)).toBe("assistant_paused");
     expect(usageLevel(1100, 1000, cfg)).toBe("notifications_paused");
   });
+
+  test("безлимит не считается и ничего не останавливает", () => {
+    // −1 и 0 — РАЗНЫЕ вещи: первое «не считать», второе «нечего тратить». Перепутать их значит
+    // остановить ассистента на тарифе, который продан как безлимитный, с первого же сообщения.
+    expect(usageLevel(0, -1, cfg)).toBe("ok");
+    expect(usageLevel(1_000_000, -1, cfg)).toBe("ok");
+    expect(usageLevel(1, 0, cfg)).toBe("notifications_paused");
+  });
 });
 
 describe("юнит-экономика", () => {
@@ -320,6 +328,11 @@ describe("описание тарифа", () => {
     const lines = describePlan({ ...start, limits: { ...start.limits, messages_month: 1234 } });
     expect(lines[0]).toContain("1");
     expect(lines[0]).toContain("234");
+  });
+  test("безлимитный тариф не пишет число сообщений", () => {
+    const lines = describePlan({ ...start, limits: { ...start.limits, messages_month: -1 } });
+    expect(lines[0]).toBe("Сообщения ассистента без ограничений");
+    expect(lines.join(" ")).not.toContain("-1");
   });
   test("без технических слов", () => {
     for (const p of [start, business, pro]) {

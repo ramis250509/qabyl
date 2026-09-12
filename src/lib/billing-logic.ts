@@ -12,6 +12,7 @@
 export type SubscriptionStatus = "trialing" | "active" | "past_due" | "suspended" | "canceled";
 
 export type PlanLimits = {
+  /** −1 = без лимита. См. миграцию 20260912140000: ноль уже занят под «лимита нет вообще». */
   messages_month: number;
   trial_messages: number;
   branches: number;
@@ -330,7 +331,11 @@ export type UsageLevel = "ok" | "warn" | "assistant_paused" | "notifications_pau
  * переговорил, — плохой обмен.
  */
 export function usageLevel(used: number, allowance: number, cfg: BillingConfig): UsageLevel {
-  if (allowance <= 0) return used > 0 ? "notifications_paused" : "ok";
+  // Безлимит. Отрицательное значение приходит с сервера и означает «не считать»; ноль по-прежнему
+  // значит «нечего тратить» — это разные вещи, и путать их нельзя: на безлимите такая путаница
+  // остановила бы ассистента с первого же сообщения.
+  if (allowance < 0) return "ok";
+  if (allowance === 0) return used > 0 ? "notifications_paused" : "ok";
   const pct = (used * 100) / allowance;
   if (pct >= cfg.notifications_ceiling_pct) return "notifications_paused";
   if (pct >= 100) return "assistant_paused";
@@ -388,7 +393,9 @@ export function describePlan(plan: Plan): string[] {
   const l = plan.limits;
   const f = plan.features;
   const lines = [
-    `${formatNumber(l.messages_month)} сообщений ассистента в месяц`,
+    l.messages_month < 0
+      ? "Сообщения ассистента без ограничений"
+      : `${formatNumber(l.messages_month)} сообщений ассистента в месяц`,
     l.channels === 1
       ? "WhatsApp или Instagram"
       : l.channels === 2
