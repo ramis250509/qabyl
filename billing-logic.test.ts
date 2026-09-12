@@ -334,6 +334,15 @@ describe("описание тарифа", () => {
     expect(lines[0]).toBe("Сообщения ассистента без ограничений");
     expect(lines.join(" ")).not.toContain("-1");
   });
+  test("каналы описаны через точки, а не отдельным числом", () => {
+    // Числа «3 филиала» и «2 канала» рядом не объясняются ничем. Правило теперь одно:
+    // на каждую точку — свой WhatsApp и свой Instagram.
+    const one = describePlan({ ...start, limits: { ...start.limits, branches: 1 } });
+    expect(one.join(" ")).toContain("WhatsApp и Instagram салона");
+    const many = describePlan({ ...start, limits: { ...start.limits, branches: 3 } });
+    expect(many.join(" ")).toContain("для каждой точки");
+    expect(many.join(" ")).toContain("До 3 точек");
+  });
   test("без технических слов", () => {
     for (const p of [start, business, pro]) {
       expect(describePlan(p).join(" ")).not.toMatch(/WABA|API|токен|вебхук|Meta|YCloud/i);

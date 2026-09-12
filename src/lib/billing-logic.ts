@@ -400,14 +400,15 @@ export function describePlan(plan: Plan): string[] {
     l.messages_month < 0
       ? "Сообщения ассистента без ограничений"
       : `${formatNumber(l.messages_month)} сообщений ассистента в месяц`,
-    l.channels === 1
-      ? "WhatsApp или Instagram"
-      : l.channels === 2
-        ? "WhatsApp и Instagram"
-        : "Все каналы: WhatsApp, Instagram и новые",
+    // Каналы больше не отдельный лимит: правило одно — на каждую точку свой WhatsApp и свой
+    // Instagram. Прежние строки («WhatsApp ИЛИ Instagram», «до 2 каналов») сталкивали клиента
+    // с числом, которое не совпадало с числом точек, и объяснить это было нечем.
     l.branches === 1
-      ? "1 филиал"
-      : `До ${l.branches} ${plural(l.branches, "филиала", "филиалов", "филиалов")}`,
+      ? "WhatsApp и Instagram салона"
+      : "Свой WhatsApp и Instagram для каждой точки",
+    l.branches === 1
+      ? "Одна точка"
+      : `До ${l.branches} ${plural(l.branches, "точки", "точек", "точек")}`,
     "Онлайн-запись и календарь мастеров",
     "Подтверждения и напоминания клиентам",
   ];
