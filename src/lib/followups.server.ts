@@ -156,6 +156,9 @@ export async function runFollowups(nowMs = Date.now()): Promise<FollowupRunRepor
   if (!salons?.length) return report;
 
   const horizon = new Date(nowMs - 49 * 3_600_000).toISOString();
+  // Функция тарифа читается через один и тот же модуль на весь прогон: динамический импорт внутри
+  // цикла по салонам — это лишняя работа на каждом обороте.
+  const { salonHasFeature } = await import("@/lib/billing.server");
 
   for (const row of salons as any[]) {
     const settings: FollowupSettings = {
@@ -169,7 +172,6 @@ export async function runFollowups(nowMs = Date.now()): Promise<FollowupRunRepor
       continue;
     }
     // Возврат молчащих клиентов входит не во все тарифы.
-    const { salonHasFeature } = await import("@/lib/billing.server");
     if (!(await salonHasFeature(row.salon_id, "reactivation"))) {
       skip("plan");
       continue;
@@ -205,19 +207,32 @@ export async function runFollowups(nowMs = Date.now()): Promise<FollowupRunRepor
       .eq("salon_id", row.salon_id)
       .maybeSingle();
 
+    // Кто говорил последним и есть ли неотвеченное входящее — этого в строке разговора нет.
+    // РАНЬШЕ здесь был запрос НА КАЖДЫЙ разговор: до 200 последовательных обращений к базе за один
+    // проход, и крон падал с таймаутом шлюза (Деби ловил это 14 раз в сутки). Теперь одна выборка
+    // на партию из 40 разговоров — пять запросов вместо двухсот.
+    const msgsByConv = new Map<string, any[]>();
+    const convIds = (convs as any[]).map((c) => c.id);
+    for (let i = 0; i < convIds.length; i += 40) {
+      const { data: batch } = await db
+        .from("wa_messages")
+        .select("conversation_id, direction, created_at, processed_at")
+        .in("conversation_id", convIds.slice(i, i + 40))
+        .gte("created_at", horizon)
+        .order("created_at", { ascending: false })
+        .limit(1000);
+      for (const m of (batch ?? []) as any[]) {
+        const list = msgsByConv.get(m.conversation_id) ?? [];
+        // Порядок внутри разговора сохраняется: выборка отсортирована от новых к старым.
+        if (list.length < 20) list.push(m);
+        msgsByConv.set(m.conversation_id, list);
+      }
+    }
+
     for (const conv of convs as any[]) {
       report.considered++;
 
-      // The two facts the conversation row does not carry: who spoke last, and whether anything
-      // inbound is still unanswered. One query per candidate, and the candidate set is already
-      // narrowed to "never nudged, active in the last two days".
-      const { data: recent } = await db
-        .from("wa_messages")
-        .select("direction, created_at, processed_at")
-        .eq("conversation_id", conv.id)
-        .order("created_at", { ascending: false })
-        .limit(20);
-      const msgs = (recent ?? []) as any[];
+      const msgs = msgsByConv.get(conv.id) ?? [];
       const lastClientMessageAt = msgs.find((m) => m.direction === "in")?.created_at ?? null;
 
       const decision = decideFollowup(

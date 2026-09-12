@@ -37,6 +37,24 @@ import {
 import { buildWeeklyPlan } from "@/lib/ops-marketer.server";
 import { executeApproval, pendingApprovals, requestApproval } from "@/lib/ops-approvals.server";
 import { closeTask, listOpenTasks } from "@/lib/ops-bus.server";
+import {
+  createLead,
+  draftOutreach,
+  dueLeads,
+  funnelCounts,
+  getLead,
+  listLeads,
+  setLeadStage,
+  updateLead,
+} from "@/lib/ops-sales.server";
+import {
+  formatFunnel,
+  formatLeadCard,
+  formatLeadList,
+  parseLeadCommand,
+  parseStage,
+} from "@/lib/ops-sales";
+import { healthReport, runSelfHealing } from "@/lib/ops-sre.server";
 
 /** Владелец пишет «мира», а в базе ключ «marketer» — имена для людей, ключи для кода. */
 const AGENT_ALIASES: Record<string, string> = {
@@ -81,6 +99,19 @@ const HELP = [
   "",
   "<b>Мира (маркетинг)</b>",
   "/mira — план контента на неделю с кнопкой одобрения",
+  "",
+  "<b>Айдар (продажи)</b>",
+  "/lead 0700112233 Нурзат Lashes — добавить лида",
+  "/leads — все лиды и кто ждёт касания",
+  "/lead 7 — карточка лида",
+  "/stage 7 встреча — сменить стадию",
+  "/pitch 7 — черновик сообщения под одобрение",
+  "/note 7 текст — записать в карточку",
+  "/funnel — воронка",
+  "",
+  "<b>Деби (техника)</b>",
+  "/health — что он видит прямо сейчас",
+  "/fix — найти и починить, что можно",
   "",
   "<b>Доска и одобрения</b>",
   "/tasks — что в работе у агентов",
@@ -269,6 +300,173 @@ async function handleUpdate(update: TgUpdate): Promise<void> {
       await sendMessage({ chatId, threadId, text: "Не удалось сохранить план. Ошибки: /errors" });
     }
     await audit("owner", "cmd.mira", { from_model: plan.fromModel });
+    return;
+  }
+
+  // ---- Айдар: лиды ------------------------------------------------------
+  if (cmd === "/lead") {
+    const parsed = parseLeadCommand(text);
+    if (parsed) {
+      const { lead, existed } = await createLead(parsed);
+      if (!lead) {
+        await sendMessage({ chatId, threadId, text: "Не удалось сохранить лида." });
+        return;
+      }
+      await sendMessage({
+        chatId,
+        threadId,
+        parseMode: "HTML",
+        text:
+          (existed ? "Такой лид уже был:\n\n" : "🤝 Лид добавлен\n\n") +
+          formatLeadCard(lead, new Date()),
+      });
+      return;
+    }
+    const id = Number(text.split(/\s+/)[1]);
+    if (Number.isFinite(id)) {
+      const lead = await getLead(id);
+      await sendMessage({
+        chatId,
+        threadId,
+        parseMode: "HTML",
+        text: lead ? formatLeadCard(lead, new Date()) : `Лида #${id} нет. Список: /leads`,
+      });
+      return;
+    }
+    await sendMessage({
+      chatId,
+      threadId,
+      text: "Как добавить: /lead 0700112233 Нурзат Lashes\nКарточка: /lead 7",
+    });
+    return;
+  }
+
+  if (cmd === "/leads") {
+    const [leads, due] = await Promise.all([listLeads({ limit: 15 }), dueLeads()]);
+    const dueIds = new Set(due.map((l) => l.id));
+    const sorted = [...leads].sort((a, b) => Number(dueIds.has(b.id)) - Number(dueIds.has(a.id)));
+    await sendMessage({
+      chatId,
+      threadId,
+      parseMode: "HTML",
+      text: formatLeadList(sorted, new Date()),
+    });
+    return;
+  }
+
+  if (cmd === "/stage") {
+    const [, idRaw, stageRaw] = text.split(/\s+/);
+    const id = Number(idRaw);
+    const stage = parseStage(stageRaw ?? "");
+    if (!Number.isFinite(id) || !stage) {
+      await sendMessage({
+        chatId,
+        threadId,
+        text: "Так: /stage 7 встреча\nСтадии: новый, выясняем, встреча, наш, отказ",
+      });
+      return;
+    }
+    const lead = await setLeadStage(id, stage);
+    await sendMessage({
+      chatId,
+      threadId,
+      parseMode: "HTML",
+      text: lead ? formatLeadCard(lead, new Date()) : `Лида #${id} нет.`,
+    });
+    return;
+  }
+
+  if (cmd === "/note") {
+    const parts = text.split(/\s+/);
+    const id = Number(parts[1]);
+    const note = parts.slice(2).join(" ").trim();
+    if (!Number.isFinite(id) || !note) {
+      await sendMessage({ chatId, threadId, text: "Так: /note 7 просит показать в пятницу" });
+      return;
+    }
+    const lead = await updateLead(id, { notes: note.slice(0, 1000) });
+    await sendMessage({
+      chatId,
+      threadId,
+      text: lead ? `📝 Записал в карточку лида #${id}.` : `Лида #${id} нет.`,
+    });
+    return;
+  }
+
+  if (cmd === "/pitch") {
+    if (!(await isAgentActive("sales"))) {
+      await sendMessage({ chatId, threadId, text: "⏸ Айдар на паузе. Включить: /unpause sales" });
+      return;
+    }
+    const id = Number(text.split(/\s+/)[1]);
+    if (!Number.isFinite(id)) {
+      await sendMessage({ chatId, threadId, text: "Так: /pitch 7" });
+      return;
+    }
+    const lead = await getLead(id);
+    if (!lead) {
+      await sendMessage({ chatId, threadId, text: `Лида #${id} нет. Список: /leads` });
+      return;
+    }
+    await sendMessage({ chatId, threadId, text: "🤝 Айдар пишет черновик…" });
+    const draft = await draftOutreach(id);
+    if (!draft) {
+      await sendMessage({ chatId, threadId, text: "Не получилось составить текст." });
+      return;
+    }
+    await requestApproval({
+      agent: "sales",
+      kind: "sales_message",
+      summary:
+        `🤝 <b>Сообщение лиду #${id}</b>` +
+        (lead.name ? ` (${escapeHtml(lead.name)})` : "") +
+        `\n\n${escapeHtml(draft.text)}\n\n` +
+        (draft.fromModel ? "" : "<i>Черновик по шаблону: модель недоступна.</i>\n") +
+        "Одобрить — отправлю с номера Qabyl или отдам текст вам, если номер ещё не подключён.",
+      action: {
+        type: "sales_message",
+        leadId: id,
+        text: draft.text,
+        phone: lead.phone ?? "",
+      },
+      chatId,
+      threadId,
+    });
+    await audit("owner", "cmd.pitch", { lead: id, from_model: draft.fromModel });
+    return;
+  }
+
+  if (cmd === "/funnel") {
+    const [counts, due] = await Promise.all([funnelCounts(), dueLeads()]);
+    await sendMessage({
+      chatId,
+      threadId,
+      parseMode: "HTML",
+      text: formatFunnel(counts, due.length),
+    });
+    return;
+  }
+
+  // ---- Деби: посмотреть и починить --------------------------------------
+  if (cmd === "/health") {
+    await sendMessage({ chatId, threadId, parseMode: "HTML", text: await healthReport() });
+    return;
+  }
+
+  if (cmd === "/fix") {
+    if (!(await isAgentActive("sre"))) {
+      await sendMessage({ chatId, threadId, text: "⏸ Деби на паузе. Включить: /unpause sre" });
+      return;
+    }
+    await sendMessage({ chatId, threadId, text: "🛠 Деби проверяет и лечит…" });
+    const res = await runSelfHealing({ chatId, threadId });
+    await sendMessage({
+      chatId,
+      threadId,
+      parseMode: "HTML",
+      text: res.text ?? "🛠 Деби: всё чисто.",
+    });
+    await audit("owner", "cmd.fix", { findings: res.findings, fixed: res.fixed });
     return;
   }
 

@@ -95,6 +95,34 @@ const EXECUTORS: Record<string, (action: ApprovalAction) => Promise<ExecResult>>
     };
   },
 
+  /**
+   * Сообщение лиду от Айдара. Уходит с номера Qabyl, если он подключён; иначе владельцу приходит
+   * текст и задача — отправить самому. Отказ Meta (вне 24-часового окна) передаётся словами.
+   */
+  sales_message: async (action) => {
+    const leadId = Number(action.leadId ?? 0);
+    const text = String(action.text ?? "");
+    const phone = String(action.phone ?? "");
+    if (!leadId || !text) return { ok: false, note: "нет текста или лида" };
+    const { logLeadMessage, sendLeadMessage } = await import("@/lib/ops-sales.server");
+    const res = phone
+      ? await sendLeadMessage(phone, text)
+      : { ok: false, note: "у лида нет номера" };
+    await logLeadMessage(leadId, res.ok ? "agent" : "system", text);
+    if (!res.ok) {
+      await createTask("sales", `Отправить лиду #${leadId} вручную`, { text, phone }, "approved");
+      return { ok: true, note: `${res.note} — текст сохранён, задача на доске` };
+    }
+    return { ok: true, note: res.note };
+  },
+
+  /** Лечение от Деби, которое требует разрешения владельца. */
+  sre_fix: async (action) => {
+    const key = String(action.key ?? "");
+    const { executeRemedy } = await import("@/lib/ops-sre.server");
+    return await executeRemedy(key);
+  },
+
   /** Простая задача — агент просит поставить дело на доску. */
   task: async (action) => {
     const agent = String(action.agent ?? "chief");

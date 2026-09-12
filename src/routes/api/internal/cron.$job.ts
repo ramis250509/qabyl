@@ -157,6 +157,17 @@ export const Route = createFileRoute("/api/internal/cron/$job")({
               marketer = id ? `plan_${id}` : "plan_failed";
             }
 
+            // Лиды, к которым пора вернуться: продажи умирают от молчания, а не от отказов.
+            const { dueLeads } = await import("@/lib/ops-sales.server");
+            const due = await dueLeads();
+            if (due.length > 0) {
+              await sendMessage({
+                chatId,
+                threadId: topicId("TELEGRAM_TOPIC_CHIEF"),
+                text: `⏰ Лидов ждут касания: ${due.length}. Список: /leads`,
+              });
+            }
+
             // Разобрать события, накопившиеся за сутки: задачи из них появляются на доске.
             const { routeEvents } = await import("@/lib/ops-bus.server");
             const bus = await routeEvents();
@@ -165,16 +176,42 @@ export const Route = createFileRoute("/api/internal/cron/$job")({
 
           if (job === "sre-scan") {
             if (!(await isAgentActive("sre"))) return json({ skipped: true, reason: "sre_paused" });
+            const threadSre = topicId("TELEGRAM_TOPIC_SRE");
             const alert = await scanErrors(30);
-            if (!alert) return json({ ok: true, new_errors: false });
-            await sendMessage({
+            if (alert) {
+              await sendMessage({
+                chatId,
+                threadId: threadSre,
+                parseMode: "HTML",
+                text: alert.text,
+              });
+              await audit("cron", "sre.sent");
+            }
+
+            // Деби не только сообщает, но и лечит то, что лечится без человека: зависшие замки
+            // обработки, неразобранные события, просроченные попытки списания. Молчит, когда чисто,
+            // — иначе раз в 15 минут приходило бы «всё хорошо», и важное перестали бы читать.
+            const { runSelfHealing } = await import("@/lib/ops-sre.server");
+            const healing = await runSelfHealing({
               chatId,
-              threadId: topicId("TELEGRAM_TOPIC_SRE"),
-              parseMode: "HTML",
-              text: alert.text,
+              threadId: threadSre,
+              quiet: true,
             });
-            await audit("cron", "sre.sent");
-            return json({ ok: true, new_errors: true });
+            if (healing.text && (healing.fixed > 0 || healing.incidents > 0)) {
+              await sendMessage({
+                chatId,
+                threadId: threadSre,
+                parseMode: "HTML",
+                text: healing.text,
+              });
+            }
+            return json({
+              ok: true,
+              new_errors: Boolean(alert),
+              findings: healing.findings,
+              fixed: healing.fixed,
+              incidents: healing.incidents,
+            });
           }
 
           return json({ error: "unknown_job", job }, 404);
