@@ -130,7 +130,7 @@ export function SharedMasterLoginsCard({
   }
 
   return (
-    <Card className="p-6">
+    <Card className="p-4 sm:p-6">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}

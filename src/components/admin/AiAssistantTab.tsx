@@ -1047,7 +1047,7 @@ function Section({
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-controls={`section-${id}`}
-        className="qb-press flex w-full items-center gap-3 p-5 text-left hover:bg-muted/40"
+        className="qb-press flex w-full items-center gap-3 p-4 text-left hover:bg-muted/40 sm:p-5"
       >
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted">
           <Icon className="h-4 w-4 text-muted-foreground" />
@@ -1063,7 +1063,7 @@ function Section({
         />
       </button>
       {open && (
-        <div id={`section-${id}`} className="qb-rise space-y-5 border-t p-5">
+        <div id={`section-${id}`} className="qb-rise space-y-5 border-t p-4 sm:p-5">
           {children}
         </div>
       )}

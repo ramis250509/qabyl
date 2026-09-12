@@ -383,7 +383,7 @@ function Dashboard() {
           );
           if (!c.to) {
             return (
-              <Card key={c.label} className="p-5">
+              <Card key={c.label} className="p-4 sm:p-5">
                 {body}
               </Card>
             );
@@ -421,7 +421,7 @@ function Dashboard() {
       )}
 
       {progress && progress.appointmentsCount > 0 && progress.slug && (
-        <Card className="p-5">
+        <Card className="p-4 sm:p-5">
           <ShareRow slug={progress.slug} />
         </Card>
       )}

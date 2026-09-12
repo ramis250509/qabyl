@@ -264,7 +264,11 @@ function SalonEdit() {
 
       <div ref={tabsRef} className="scroll-mt-4">
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+          {/* Лента вкладок шире экрана телефона, и края у неё обрезаются ровно по границе —
+              понять, что список продолжается, было нельзя. `no-scrollbar` убирает полосу
+              прокрутки (на телефоне её и так нет), а отрицательные поля дают ленте уехать
+              под края экрана: обрезанная наполовину вкладка и есть подсказка «листай». */}
+          <div className="no-scrollbar -mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
             {/* Порядок вкладок — это порядок вопросов, которые владелец задаёт себе сам:
                   1. кто мы и что делаем      — Салон, Услуги, Мастера, Команда;
                   2. как мы говорим с клиентом — Каналы, Ассистент, Переписки;
@@ -3019,7 +3023,7 @@ function AccessTab({ salonId }: { salonId: string }) {
   }
 
   return (
-    <Card className="p-6 space-y-4 max-w-2xl">
+    <Card className="p-4 sm:p-6 space-y-4 max-w-2xl">
       <div>
         <h2 className="font-semibold">Доступ владельца салона</h2>
         <p className="text-sm text-muted-foreground">

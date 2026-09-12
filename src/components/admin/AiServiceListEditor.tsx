@@ -162,7 +162,7 @@ export function AiServiceListEditor({ salonId }: { salonId: string }) {
   if (loading) return null;
 
   return (
-    <Card className="p-5 space-y-4">
+    <Card className="p-4 sm:p-5 space-y-4">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-3">
           <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">

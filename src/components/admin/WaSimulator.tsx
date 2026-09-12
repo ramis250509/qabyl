@@ -162,7 +162,7 @@ export function WaSimulator({ salonId }: { salonId: string }) {
   }
 
   return (
-    <Card className="p-5 space-y-4">
+    <Card className="p-4 sm:p-5 space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Bot className="h-5 w-5 text-primary" />

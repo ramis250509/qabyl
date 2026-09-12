@@ -507,7 +507,7 @@ export function WhatsAppCard({ salonId }: { salonId: string }) {
   if (loading || !cfg) {
     return (
       <div className="space-y-4">
-        <Card className="space-y-3 p-6">
+        <Card className="space-y-3 p-4 sm:p-6">
           <SkeletonBlock className="h-6 w-52" />
           <SkeletonBlock className="h-4 w-full" />
           <SkeletonBlock className="h-4 w-2/3" />
@@ -588,7 +588,7 @@ export function WhatsAppCard({ salonId }: { salonId: string }) {
       )}
 
       {/* ---- Подключение. */}
-      <Card className="space-y-4 p-6">
+      <Card className="space-y-4 p-4 sm:p-6">
         <div className="flex items-start gap-3">
           <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
           <div className="min-w-0">
@@ -624,7 +624,7 @@ export function WhatsAppCard({ salonId }: { salonId: string }) {
       </Card>
 
       {/* ---- Уведомления клиентам. */}
-      <Card className="space-y-4 p-6">
+      <Card className="space-y-4 p-4 sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <h3 className="font-semibold">Тексты уведомлений</h3>

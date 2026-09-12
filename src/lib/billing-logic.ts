@@ -59,6 +59,10 @@ export type BillingConfig = {
   /** Текст для владельца, пока оплата картой не подключена: куда перевести и кому написать. */
   manual_payment_instructions?: string | null;
   support_contact?: string | null;
+  /** Реквизиты ручной оплаты, пока нет шлюза карт. */
+  manual_payment_bank?: string | null;
+  manual_payment_phone?: string | null;
+  manual_payment_recipient?: string | null;
   /** false — ограничения выключены для всех салонов разом. Расход продолжает считаться. */
   enforcement_enabled?: boolean;
 };

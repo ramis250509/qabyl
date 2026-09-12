@@ -284,28 +284,34 @@ function AdminLayout() {
         {SidebarContent}
       </aside>
       <div className="flex-1 flex flex-col min-w-0">
-        {/* На телефоне шапка показывала только слово «Qabyl». После перехода вглубь (запись,
-            настройки, переписка) понять, где ты находишься, было можно только по содержимому
-            экрана. Название раздела стоит одной строки и снимает этот вопрос. */}
-        <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b bg-card px-4 md:hidden">
-          <div className="min-w-0">
-            <div className="truncate font-semibold leading-tight">
-              {navItems.find((i) =>
-                (i as any).exact ? location.pathname === i.to : location.pathname.startsWith(i.to),
-              )?.label ?? "Qabyl"}
-            </div>
-            <div className="text-[11px] leading-tight text-muted-foreground">Qabyl</div>
-          </div>
+        {/* Шапка телефона: бургер слева, название раздела справа.
+            
+            Слева меню, потому что большой палец правой руки до левого верхнего угла не достаёт,
+            а до правого — легко; но открывать меню случайным касанием при прокрутке хуже, чем
+            тянуться. Справа — где ты находишься: «Мой салон», а под ним мелким «Qabyl», чтобы
+            название продукта не спорило за внимание с названием раздела.
+            
+            Высота 56 и кнопка 44×44 — не про красоту: это нижняя граница, ниже которой палец
+            начинает промахиваться. */}
+        <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b bg-card px-3 md:hidden">
           <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
             <SheetTrigger asChild>
-              <Button variant="ghost" size="icon">
+              <Button variant="ghost" size="icon" className="h-11 w-11" aria-label="Меню">
                 <Menu className="h-5 w-5" />
               </Button>
             </SheetTrigger>
-            <SheetContent side="left" className="w-64 p-0 flex flex-col">
+            <SheetContent side="left" className="flex w-[17rem] flex-col p-0">
               {SidebarContent}
             </SheetContent>
           </Sheet>
+          <div className="min-w-0 text-right">
+            <div className="truncate text-[15px] font-semibold leading-tight">
+              {navItems.find((i) =>
+                (i as any).exact ? location.pathname === i.to : location.pathname.startsWith(i.to),
+              )?.label ?? "Кабинет"}
+            </div>
+            <div className="text-[11px] leading-tight text-muted-foreground">Qabyl</div>
+          </div>
         </header>
         {!isSuperAdmin && <BillingBanner state={billing} isOwner={isSalonAdmin} />}
         <RefreshProvider>

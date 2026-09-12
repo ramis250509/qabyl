@@ -74,7 +74,7 @@ export function PlatformBillingOverview() {
         </p>
       </header>
 
-      <Card className="p-5">
+      <Card className="p-4 sm:p-5">
         <label className="flex items-start gap-4 cursor-pointer">
           <Switch
             className="mt-0.5"

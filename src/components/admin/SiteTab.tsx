@@ -118,7 +118,7 @@ export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => v
 
   return (
     <div className="space-y-6 max-w-3xl">
-      <Card className="p-6 space-y-4">
+      <Card className="p-4 sm:p-6 space-y-4">
         <div className="flex items-center justify-between">
           <div>
             <h3 className="font-semibold">Показывать сайт на домене</h3>
@@ -145,7 +145,7 @@ export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => v
         </div>
       </Card>
 
-      <Card className="p-6 space-y-4">
+      <Card className="p-4 sm:p-6 space-y-4">
         <h3 className="font-semibold">Шаблон сайта</h3>
         <div className="grid sm:grid-cols-3 gap-3">
           {TEMPLATES.map((t) => (
@@ -204,7 +204,7 @@ export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => v
         )}
       </Card>
 
-      <Card className="p-6 space-y-4">
+      <Card className="p-4 sm:p-6 space-y-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h3 className="font-semibold">Hero (первый экран)</h3>
@@ -279,7 +279,7 @@ export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => v
         </div>
       </Card>
 
-      <Card className="p-6 space-y-4">
+      <Card className="p-4 sm:p-6 space-y-4">
         <h3 className="font-semibold">О салоне</h3>
         <Textarea
           rows={5}
@@ -289,7 +289,7 @@ export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => v
         />
       </Card>
 
-      <Card className="p-6 space-y-4">
+      <Card className="p-4 sm:p-6 space-y-4">
         <h3 className="font-semibold">Галерея работ</h3>
         <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
           {form.gallery_images.map((url: string) => (
@@ -317,7 +317,7 @@ export function SiteTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => v
         <p className="text-xs text-muted-foreground">Можно выбрать несколько фото сразу</p>
       </Card>
 
-      <Card className="p-6 space-y-3">
+      <Card className="p-4 sm:p-6 space-y-3">
         <h3 className="font-semibold">Соцсети</h3>
         <div className="grid sm:grid-cols-2 gap-3">
           <div>

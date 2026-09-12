@@ -9,6 +9,8 @@ import { toast } from "sonner";
 import { humanError } from "@/lib/human-error";
 import { CreditCard, Loader2, MessageSquare, ShieldCheck } from "lucide-react";
 import { useAuth } from "@/lib/auth-client";
+import { supabase } from "@/integrations/supabase/client";
+import { MbankPayment } from "@/components/billing/MbankPayment";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -121,6 +123,25 @@ function BillingPage() {
   const [data, setData] = useState<Overview | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  // Название нужно ровно для одного: подсказать, что писать в комментарии к переводу. Без него
+  // у нас на счёте десяток одинаковых зачислений и ни одного способа понять, чьи они.
+  const [salonName, setSalonName] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!salonId) return;
+    let cancelled = false;
+    supabase
+      .from("salons")
+      .select("name")
+      .eq("id", salonId)
+      .maybeSingle()
+      .then(({ data: row }: { data: any }) => {
+        if (!cancelled) setSalonName((row as any)?.name ?? null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [salonId]);
 
   const load = useCallback(async () => {
     if (!salonId) return;
@@ -243,7 +264,7 @@ function BillingPage() {
 
       {/* Статус */}
       <Card
-        className={`p-5 border-l-4 ${
+        className={`p-4 sm:p-5 border-l-4 ${
           view.tone === "error"
             ? "border-l-red-500"
             : view.tone === "warn"
@@ -302,19 +323,22 @@ function BillingPage() {
             </div>
           )}
         </div>
-        {!s.exempt && !data.paymentsEnabled && (
-          <div className="mt-4 rounded-md bg-muted p-3 text-sm space-y-1">
-            <p className="font-medium">Как оплатить</p>
-            <p className="text-muted-foreground whitespace-pre-line">
-              {data.manualInstructions ||
-                `Оплата картой скоро появится. Сейчас оплатить можно переводом — напишите нам: ${data.supportContact}. Тариф включится сразу после поступления оплаты.`}
-            </p>
-          </div>
-        )}
       </Card>
 
+      {/* Пока шлюза карт нет, это главный блок экрана — он стоит сразу под состоянием
+          подписки, а не сноской в конце. Освобождённым от оплаты салонам он не нужен. */}
+      {!s.exempt && !data.paymentsEnabled && (
+        <MbankPayment
+          manual={data.manualPayment}
+          amountKgs={pendingPlan?.price_kgs ?? s.price_kgs ?? 0}
+          planName={pendingPlan?.name ?? currentPlan?.name ?? s.plan_name ?? null}
+          salonName={salonName}
+          supportContact={data.supportContact}
+        />
+      )}
+
       {/* Расход */}
-      <Card className="p-5 space-y-4">
+      <Card className="p-4 sm:p-5 space-y-4">
         <div className="flex items-start gap-3">
           <MessageSquare className="h-5 w-5 mt-0.5 text-muted-foreground" aria-hidden />
           <div className="flex-1 space-y-1">
@@ -418,7 +442,7 @@ function BillingPage() {
 
       {/* Счета */}
       {data.invoices.length > 0 && (
-        <Card className="p-5 space-y-3">
+        <Card className="p-4 sm:p-5 space-y-3">
           <h2 className="font-semibold">История оплат</h2>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -486,7 +510,7 @@ function PlatformPanel({
   const defaultAmount = (plan?.price_kgs ?? 0) * months;
 
   return (
-    <Card className="p-5 space-y-4 border-dashed">
+    <Card className="p-4 sm:p-5 space-y-4 border-dashed">
       <div className="flex items-center gap-2">
         <ShieldCheck className="h-5 w-5 text-muted-foreground" aria-hidden />
         <h2 className="font-semibold">Владелец платформы</h2>

@@ -50,7 +50,7 @@ export function ReviewsTab({ salonId }: { salonId: string }) {
 
   return (
     <div className="space-y-4 max-w-3xl">
-      <Card className="p-6">
+      <Card className="p-4 sm:p-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-semibold">Отзывы клиентов</h3>
           {!adding && (

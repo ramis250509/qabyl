@@ -87,7 +87,7 @@ function AccountPage() {
       </div>
 
       {/* Логин */}
-      <Card className="p-5 space-y-4">
+      <Card className="p-4 sm:p-5 space-y-4">
         <div className="flex items-start gap-3">
           <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
             <AtSign className="h-5 w-5 text-primary" />
@@ -127,7 +127,7 @@ function AccountPage() {
       </Card>
 
       {/* Пароль */}
-      <Card className="p-5 space-y-4">
+      <Card className="p-4 sm:p-5 space-y-4">
         <div className="flex items-start gap-3">
           <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
             <KeyRound className="h-5 w-5 text-primary" />
@@ -181,7 +181,7 @@ function AccountPage() {
 
       {/* Экскурсия показывается один раз и больше никогда. Способ вернуть её нужен ровно для
           двух случаев: человек пролистал её не глядя, и человек передал кабинет сотруднику. */}
-      <Card className="p-5">
+      <Card className="p-4 sm:p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
             <h2 className="font-semibold">Знакомство с кабинетом</h2>
@@ -209,7 +209,7 @@ function InstallAppCard() {
   const { installed, canInstall, isIos, install } = useInstallState();
 
   return (
-    <Card className="p-5">
+    <Card className="p-4 sm:p-5">
       <div className="flex items-start gap-3">
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
           {installed ? (

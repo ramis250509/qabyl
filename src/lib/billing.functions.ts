@@ -98,6 +98,14 @@ export const getBillingOverview = createServerFn({ method: "POST" })
       paymentsEnabled: Boolean(freedomPayConfig()),
       manualInstructions: cfg.manual_payment_instructions ?? null,
       supportContact: cfg.support_contact ?? "support@qabyl.com",
+      // Реквизиты ручной оплаты. Пока шлюза карт нет, это и есть касса Qabyl, и прятать её в
+      // серую сноску внизу карточки — значит каждый месяц объяснять каждому салону голосом,
+      // куда переводить деньги.
+      manualPayment: {
+        bank: (cfg.manual_payment_bank as string) ?? "MBANK",
+        phone: (cfg.manual_payment_phone as string) ?? null,
+        recipient: (cfg.manual_payment_recipient as string) ?? null,
+      },
     };
   });
 

@@ -246,7 +246,7 @@ function CommentTriggersCard({ salonId }: { salonId: string }) {
   }
 
   return (
-    <Card className="p-6 space-y-4">
+    <Card className="p-4 sm:p-6 space-y-4">
       <div className="space-y-1">
         <h2 className="font-semibold">Кодовое слово в комментариях → сообщение в директ</h2>
         <p className="text-sm text-muted-foreground">
@@ -540,7 +540,7 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
 
   return (
     <div className="space-y-4 max-w-2xl">
-      <Card className="p-6 space-y-3">
+      <Card className="p-4 sm:p-6 space-y-3">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             {/* Заголовок и формулировка — те же, что у переключателя WhatsApp в ChannelsTab.
@@ -574,7 +574,7 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
         )}
       </Card>
 
-      <Card className="p-6 space-y-4">
+      <Card className="p-4 sm:p-6 space-y-4">
         <div>
           <h2 className="font-semibold">Шаг 1. Подготовьте аккаунт</h2>
           <p className="text-sm text-muted-foreground mt-1">
@@ -586,7 +586,7 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
         </div>
       </Card>
 
-      <Card className="p-6 space-y-4">
+      <Card className="p-4 sm:p-6 space-y-4">
         <div>
           <h2 className="font-semibold">Шаг 2. Получите доступ к API</h2>
           <p className="text-sm text-muted-foreground mt-1">
@@ -644,7 +644,7 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
         </div>
       </Card>
 
-      <Card className="p-6 space-y-4">
+      <Card className="p-4 sm:p-6 space-y-4">
         <div>
           <h2 className="font-semibold">Шаг 3. Пропишите webhook в Meta</h2>
           <p className="text-sm text-muted-foreground mt-1">
@@ -660,7 +660,7 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
         />
       </Card>
 
-      <Card className="p-6 space-y-4">
+      <Card className="p-4 sm:p-6 space-y-4">
         <div>
           <h2 className="font-semibold">Шаг 4. Введите данные приложения</h2>
           <p className="text-sm text-muted-foreground mt-1">
@@ -765,7 +765,7 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
         )}
       </Card>
 
-      <Card className="p-6 space-y-3">
+      <Card className="p-4 sm:p-6 space-y-3">
         <div className="flex items-center justify-between gap-2">
           <h2 className="font-semibold">Диагностика</h2>
           <Button
@@ -826,7 +826,7 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
 
       <CommentTriggersCard salonId={salonId} />
 
-      <Card className="p-6 space-y-2">
+      <Card className="p-4 sm:p-6 space-y-2">
         <h2 className="font-semibold">Как это работает у клиента</h2>
         <ul className="text-sm text-muted-foreground space-y-1.5 list-disc pl-4">
           <li>Клиент пишет в Direct — ассистент отвечает сам, на языке клиента.</li>

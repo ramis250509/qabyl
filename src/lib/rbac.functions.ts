@@ -84,6 +84,46 @@ async function audit(params: {
   });
 }
 
+/**
+ * Найти аккаунт по адресу.
+ *
+ * Перебор страниц listUsers — единственное, что даёт админский API: поиска по email в нём нет.
+ * На тысяче аккаунтов это одна страница, дальше растёт линейно; когда станет дорого, здесь
+ * появится запрос к auth.users через service-role, а не ещё один цикл.
+ */
+async function findUserByEmail(supabaseAdmin: any, email: string): Promise<{ id: string } | null> {
+  const needle = email.trim().toLowerCase();
+  for (let page = 1; page <= 20; page++) {
+    const { data: list } = await supabaseAdmin.auth.admin.listUsers({ page, perPage: 1000 });
+    const users = list?.users ?? [];
+    const hit = users.find(
+      (u: { id: string; email?: string }) => u.email?.toLowerCase() === needle,
+    );
+    if (hit) return { id: hit.id };
+    if (users.length < 1000) return null;
+  }
+  return null;
+}
+
+/**
+ * Почему письмо не ушло — словами владельца салона и с выходом из положения.
+ *
+ * Самая частая причина — предел встроенной почтовой службы Supabase. Она рассчитана на проверку,
+ * а не на работу, и молча упирается в потолок. Владельцу в этот момент нужно не название ошибки,
+ * а понимание, что делать прямо сейчас: у него есть логин с паролем вручную.
+ */
+function mailErrorText(raw: string): string {
+  const m = (raw || "").toLowerCase();
+  if (m.includes("rate limit") || m.includes("too many") || m.includes("429")) {
+    return "Достигнут предел писем за час. Отправьте приглашение позже — или выдайте доступ прямо сейчас через «У сотрудника нет почты» ниже.";
+  }
+  if (m.includes("smtp") || m.includes("send") || m.includes("mail")) {
+    return "Письмо не отправилось — почтовая служба недоступна. Выдайте доступ через «У сотрудника нет почты» ниже, а мы разберёмся с отправкой.";
+  }
+  if (m.includes("invalid") && m.includes("email")) return "Проверьте, правильно ли написан адрес.";
+  return `Письмо не отправилось: ${raw}`;
+}
+
 // ─────────────────────────── invite / list / revoke ────────────────────────
 
 export const inviteEmployee = createServerFn({ method: "POST" })
@@ -112,31 +152,41 @@ export const inviteEmployee = createServerFn({ method: "POST" })
     const mod = await import("@/integrations/supabase/client.server");
     const supabaseAdmin = mod.supabaseAdmin as any;
 
-    // 1) Ensure the auth user exists — invite if new, look up if existing.
+    // 1) Завести аккаунт или найти существующий — и ЧЕСТНО сказать, ушло ли письмо.
+    //
+    // ЧТО БЫЛО СЛОМАНО (логи auth за 12.09). За сутки было два вызова /invite: один вернул 200
+    // и отправил письмо, второй — 422 «A user with this email address has already been
+    // registered», письма не было вовсе. Прежний код глотал эту ошибку, находил человека
+    // перебором, выдавал роль и возвращал `invited: false`, а экран показывал «Доступ выдан».
+    // С точки зрения владельца салона это «приглашение отправлено» — и он ждал, пока сотрудник
+    // зайдёт. Сотрудник не получал ничего и не знал, что его куда-то позвали.
+    //
+    // Такой случай — не редкость, а норма: человек уже пробовал Qabyl, или его зовут во второй
+    // салон, или владелец нажал «Пригласить» дважды. Дальше по коду `outcome` доезжает до экрана,
+    // и тот говорит разными словами про «письмо ушло» и «письма не было».
     let userId: string | null = null;
-    let invited = false;
-    const inviteResult = await supabaseAdmin.auth.admin.inviteUserByEmail(data.email, {
-      redirectTo: inviteRedirectTo(data.origin),
-    });
-    if (inviteResult.error) {
-      // "already registered" or similar — fall back to a lookup.
-      let existing: { id: string; email?: string } | undefined;
-      let page = 1;
-      while (!existing) {
-        const { data: list } = await supabaseAdmin.auth.admin.listUsers({ page, perPage: 1000 });
-        const users = list?.users ?? [];
-        existing = users.find(
-          (u: { id: string; email?: string }) =>
-            u.email?.toLowerCase() === data.email.toLowerCase(),
-        );
-        if (existing || users.length < 1000) break;
-        page += 1;
-      }
-      if (!existing) throw new Error(inviteResult.error.message);
+    let outcome: "invited" | "already_registered" | "role_added" = "invited";
+
+    const existing = await findUserByEmail(supabaseAdmin, data.email);
+    if (existing) {
       userId = existing.id;
+      outcome = "already_registered";
     } else {
-      userId = inviteResult.data.user!.id;
-      invited = true;
+      const inviteResult = await supabaseAdmin.auth.admin.inviteUserByEmail(data.email, {
+        redirectTo: inviteRedirectTo(data.origin),
+      });
+      if (inviteResult.error) {
+        // Гонка: аккаунт завели между проверкой и приглашением. Всё остальное — настоящая
+        // поломка отправки (лимит писем, отказ SMTP), и молчать о ней нельзя: владелец должен
+        // знать, что письма не будет, чтобы дать доступ вторым способом.
+        const again = await findUserByEmail(supabaseAdmin, data.email);
+        if (!again) throw new Error(mailErrorText(inviteResult.error.message));
+        userId = again.id;
+        outcome = "already_registered";
+      } else {
+        userId = inviteResult.data.user!.id;
+        outcome = "invited";
+      }
     }
 
     // 2) Assign role (idempotent — dedup with 'duplicate' ignore).
@@ -173,13 +223,79 @@ export const inviteEmployee = createServerFn({ method: "POST" })
     await audit({
       salonId: data.salonId,
       actorId: context.userId,
-      action: invited ? "invite" : "assign_role",
+      action: outcome === "invited" ? "invite" : "assign_role",
       subjectUser: userId,
       subjectMaster: data.masterId ?? null,
-      after: { role: data.role, email: data.email, invited },
+      after: { role: data.role, email: data.email, outcome },
     });
 
-    return { ok: true, userId, invited, roleLabel: ROLE_LABELS[data.role] };
+    return {
+      ok: true,
+      userId,
+      /** Ушло ли письмо. Единственное, что отличает «сотрудник узнает» от «не узнает». */
+      emailSent: outcome === "invited",
+      outcome,
+      invited: outcome === "invited",
+      roleLabel: ROLE_LABELS[data.role],
+    };
+  });
+
+/**
+ * Отправить человеку ссылку для входа ещё раз.
+ *
+ * ЗАЧЕМ ОТДЕЛЬНАЯ ФУНКЦИЯ, А НЕ ПОВТОРНЫЙ inviteUserByEmail. Повторное приглашение существующему
+ * аккаунту Supabase отклоняет с 422 — тем самым, из-за которого письма и не приходили. Поэтому
+ * повтор идёт через письмо восстановления пароля: оно уходит любому существующему аккаунту,
+ * приводит на наш же экран и заканчивается тем же самым — человек задаёт пароль и попадает в
+ * кабинет. Для сотрудника разницы нет; для нас это разница между «работает» и «422».
+ *
+ * Письмо идёт через почтовую службу Supabase, и у неё есть предел. Если предел исчерпан, владелец
+ * узнаёт об этом текстом, а не тишиной: у него есть второй путь — логин и пароль вручную.
+ */
+export const resendEmployeeInvite = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) =>
+    z
+      .object({
+        salonId: z.string().uuid(),
+        userId: z.string().uuid(),
+        origin: z.string().max(200).nullable().optional(),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    await assertCanManageEmployees(context.userId, data.salonId);
+    const mod = await import("@/integrations/supabase/client.server");
+    const supabaseAdmin = mod.supabaseAdmin as any;
+
+    // Человек должен иметь доступ именно к ЭТОМУ салону: иначе кнопка «отправить ещё раз»
+    // превращается в рассылку писем на любой адрес из базы.
+    const { data: roles } = await supabaseAdmin
+      .from("user_roles")
+      .select("id")
+      .eq("user_id", data.userId)
+      .eq("salon_id", data.salonId)
+      .limit(1);
+    if (!roles?.length) throw new Error("У этого человека нет доступа к салону");
+
+    const { data: got } = await supabaseAdmin.auth.admin.getUserById(data.userId);
+    const email = got?.user?.email as string | undefined;
+    if (!email) throw new Error("У аккаунта нет почты — отправить письмо некуда");
+
+    const { error } = await supabaseAdmin.auth.resetPasswordForEmail(email, {
+      redirectTo: inviteRedirectTo(data.origin),
+    });
+    if (error) throw new Error(mailErrorText(error.message));
+
+    await audit({
+      salonId: data.salonId,
+      actorId: context.userId,
+      action: "resend_invite",
+      subjectUser: data.userId,
+      after: { email },
+    });
+
+    return { ok: true, email };
   });
 
 export const listSalonEmployees = createServerFn({ method: "POST" })
@@ -214,7 +330,15 @@ export const listSalonEmployees = createServerFn({ method: "POST" })
     const found = await Promise.all(
       userIds.map(async (id) => {
         const { data } = await supabaseAdmin.auth.admin.getUserById(id);
-        return [id, data?.user?.email as string | undefined] as const;
+        return [
+          id,
+          {
+            email: data?.user?.email as string | undefined,
+            // Заходил ли человек хоть раз. Без этого «доступ выдан» и «человек так и не вошёл»
+            // на экране выглядят одинаково, и владелец неделю ждёт того, кто ничего не получал.
+            signedIn: Boolean(data?.user?.last_sign_in_at),
+          },
+        ] as const;
       }),
     );
     const emailById = new Map(found);
@@ -223,7 +347,8 @@ export const listSalonEmployees = createServerFn({ method: "POST" })
     return (roles ?? []).map((r: any) => ({
       id: r.id,
       userId: r.user_id,
-      email: emailById.get(r.user_id) ?? "(неизвестно)",
+      email: emailById.get(r.user_id)?.email ?? "(неизвестно)",
+      signedIn: emailById.get(r.user_id)?.signedIn ?? false,
       role: r.role as AllowedRole,
       roleLabel: ROLE_LABELS[r.role as AllowedRole] ?? r.role,
       branchId: r.branch_id ?? null,

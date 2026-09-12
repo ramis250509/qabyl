@@ -144,7 +144,7 @@ export function ChannelsTab({
       {/* Выключателей три и они устроены как автомат в щитке: этот общий, и пока он выключен,
           не работает ни один канал, сколько ни щёлкай их собственные. Ставим его отдельно и
           выше, чтобы порядок подчинения читался глазами, а не выяснялся опытом. */}
-      <Card className="p-5">
+      <Card className="p-4 sm:p-5">
         <div className="flex items-start gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10">
             <Sparkles className="h-5 w-5 text-primary" />
@@ -177,7 +177,7 @@ export function ChannelsTab({
       </Card>
 
       <Tabs value={channel} onValueChange={(v) => setChannel(v as any)}>
-        <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+        <div className="no-scrollbar -mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
           <TabsList className="h-auto w-max">
             <TabsTrigger value="whatsapp" className="gap-2 py-2">
               <MessageCircle className="h-4 w-4" />
@@ -334,7 +334,7 @@ function WhatsAppChannel({
     <div className="max-w-2xl space-y-4">
       {/* Выключатель канала — первым, ровно как в панели Instagram. Симметрия здесь не
           украшение: человек, настроивший один канал, должен узнавать второй с первого взгляда. */}
-      <Card className="space-y-3 p-6">
+      <Card className="space-y-3 p-4 sm:p-6">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <h3 className="font-semibold">Ассистент отвечает в WhatsApp</h3>
@@ -361,7 +361,7 @@ function WhatsAppChannel({
       {/* Подключение. Транспорт один: официальный Cloud API от Meta. */}
       <WhatsAppCard salonId={salon.id} />
 
-      <Card className="space-y-3 p-6">
+      <Card className="space-y-3 p-4 sm:p-6">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <h3 className="font-semibold">Писать клиентам первыми</h3>
@@ -375,7 +375,7 @@ function WhatsAppChannel({
         </div>
       </Card>
 
-      <Card className={`space-y-4 p-6 ${!notifyOn ? "opacity-60" : ""}`}>
+      <Card className={`space-y-4 p-4 sm:p-6 ${!notifyOn ? "opacity-60" : ""}`}>
         <div>
           <h3 className="font-semibold">Куда писать вам</h3>
           <p className="mt-0.5 text-sm text-muted-foreground">

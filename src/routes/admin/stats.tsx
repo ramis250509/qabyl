@@ -314,7 +314,7 @@ function StatsPage() {
         Считается по дате создания записи (когда её оформили), а не по дате визита.
       </p>
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="p-6">
+        <Card className="p-4 sm:p-6">
           <p className="text-sm text-muted-foreground">Выручка</p>
           <p className="text-3xl sm:text-4xl font-bold mt-1">
             {stats.revenue.toLocaleString("ru-RU")} сом
@@ -323,7 +323,7 @@ function StatsPage() {
             средний чек {stats.avgTicket.toLocaleString("ru-RU")} сом
           </p>
         </Card>
-        <Card className="p-6">
+        <Card className="p-4 sm:p-6">
           <p className="text-sm text-muted-foreground">Записей</p>
           <p className="text-3xl sm:text-4xl font-bold mt-1">{stats.count}</p>
           <p className="text-xs text-muted-foreground mt-1 space-x-2">
@@ -331,7 +331,7 @@ function StatsPage() {
             {stats.noShowCount > 0 && <span>+ {stats.noShowCount} не пришли</span>}
           </p>
         </Card>
-        <Card className="p-6">
+        <Card className="p-4 sm:p-6">
           <p className="text-sm text-muted-foreground">Клиентов</p>
           <p className="text-3xl sm:text-4xl font-bold mt-1">{stats.uniqueClients}</p>
           <p className="text-xs text-muted-foreground mt-1">
@@ -340,7 +340,7 @@ function StatsPage() {
               : "повторных визитов пока нет"}
           </p>
         </Card>
-        <Card className="p-6">
+        <Card className="p-4 sm:p-6">
           <p className="text-sm text-muted-foreground">Через Ассистента</p>
           <p className="text-3xl sm:text-4xl font-bold mt-1">{stats.aiCount}</p>
           <p className="text-xs text-muted-foreground mt-1">записей оформил ассистент</p>
@@ -356,7 +356,7 @@ function StatsPage() {
       {/* Assistant funnel: how many assistant conversations turned into bookings. Super-admin only.
           Counts every channel — wa_conversations holds both WhatsApp and Instagram Direct. */}
       {advanced && (
-        <Card className="p-6">
+        <Card className="p-4 sm:p-6">
           <h3 className="font-semibold mb-4">Воронка ассистента</h3>
           <div className="grid grid-cols-3 gap-4 text-center">
             <div>
@@ -390,7 +390,7 @@ function StatsPage() {
       {/* Where conversations stop. The card above says HOW MANY convert; this one says WHERE the
           rest are lost, which is the only version of the number anyone can act on. */}
       {advanced && (
-        <Card className="p-6">
+        <Card className="p-4 sm:p-6">
           <h3 className="font-semibold mb-1">Где обрываются диалоги</h3>
           <p className="text-xs text-muted-foreground mb-4">
             Самый дальний этап, которого диалог достиг. Если клиент дошёл до выбора времени, а потом
@@ -431,7 +431,7 @@ function StatsPage() {
       {!advanced && <LockedAnalyticsCard />}
 
       {advanced && (
-        <Card className="p-6">
+        <Card className="p-4 sm:p-6">
           <div className="flex items-baseline justify-between flex-wrap gap-2">
             <h3 className="font-semibold">Неявки (No-Show)</h3>
             <span className="text-sm text-muted-foreground">
@@ -460,7 +460,7 @@ function StatsPage() {
       )}
 
       {showBranchTable && (
-        <Card className="p-6">
+        <Card className="p-4 sm:p-6">
           <h3 className="font-semibold mb-3">По филиалам</h3>
           <div className="space-y-2">
             {stats.byBranch.map((b, i) => (
@@ -480,7 +480,7 @@ function StatsPage() {
       )}
 
       <div className="grid md:grid-cols-2 gap-4">
-        <Card className="p-6">
+        <Card className="p-4 sm:p-6">
           <h3 className="font-semibold mb-3">Топ мастеров</h3>
           <div className="space-y-2">
             {stats.byMaster.slice(0, 10).map((m, i) => (
@@ -497,7 +497,7 @@ function StatsPage() {
           </div>
         </Card>
         {advanced && (
-          <Card className="p-6">
+          <Card className="p-4 sm:p-6">
             <h3 className="font-semibold mb-3">Часы в кресле</h3>
             <div className="space-y-2">
               {stats.hoursByMaster.slice(0, 10).map((m, i) => (
@@ -519,7 +519,7 @@ function StatsPage() {
             </p>
           </Card>
         )}
-        <Card className="p-6">
+        <Card className="p-4 sm:p-6">
           <h3 className="font-semibold mb-3">Топ услуг</h3>
           <div className="space-y-2">
             {stats.byService.slice(0, 10).map((s, i) => (
@@ -543,7 +543,7 @@ function StatsPage() {
 /** Что даёт расширенная аналитика — показывается вместо неё на тарифе без неё. */
 function LockedAnalyticsCard() {
   return (
-    <Card className="p-6 border-dashed">
+    <Card className="p-4 sm:p-6 border-dashed">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
         <div className="flex-1 space-y-1">
           <h3 className="font-semibold">Расширенная аналитика</h3>

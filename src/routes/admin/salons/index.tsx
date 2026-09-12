@@ -190,7 +190,7 @@ function SalonsList() {
       ) : (
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
           {salons.map((s) => (
-            <Card key={s.id} className="p-5">
+            <Card key={s.id} className="p-4 sm:p-5">
               <div className="flex items-start gap-3">
                 <div
                   className="h-12 w-12 rounded-full flex items-center justify-center font-bold text-white"

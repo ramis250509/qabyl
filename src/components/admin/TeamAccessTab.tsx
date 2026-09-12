@@ -27,10 +27,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { EmptyState, SkeletonBlock, StatusBadge } from "@/components/ui/status";
-import { Trash2, UserPlus, Users } from "lucide-react";
+import { Send, Trash2, UserPlus, Users } from "lucide-react";
 import {
   inviteEmployee,
   listSalonEmployees,
+  resendEmployeeInvite,
   revokeEmployeeAccess,
   setStaffIsolation,
 } from "@/lib/rbac.functions";
@@ -76,6 +77,7 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
   const list = useServerFn(listSalonEmployees);
   const invite = useServerFn(inviteEmployee);
   const revoke = useServerFn(revokeEmployeeAccess);
+  const resend = useServerFn(resendEmployeeInvite);
   const setIsolation = useServerFn(setStaffIsolation);
 
   // Филиалы читаются общим хуком: он же решает, произносит ли интерфейс слово «филиал».
@@ -87,6 +89,10 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
 
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<Role>("manager");
+  // Кого мы только что позвали и ушло ли письмо. Держим на экране, а не в исчезающем тосте:
+  // «письма не будет» — это указание к действию, а не уведомление.
+  const [lastInvite, setLastInvite] = useState<{ email: string; emailSent: boolean } | null>(null);
+  const [resending, setResending] = useState<string | null>(null);
   const [branchId, setBranchId] = useState<string>("");
 
   const load = useCallback(async () => {
@@ -139,10 +145,11 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
           origin: typeof window !== "undefined" ? window.location.origin : null,
         },
       });
+      setLastInvite({ email: value, emailSent: res.emailSent });
       toast.success(
-        res.invited
-          ? `Письмо отправлено на ${value}. По ссылке из письма сотрудник придумает пароль и сразу попадёт в кабинет.`
-          : `Доступ выдан: у ${value} уже был аккаунт в Qabyl`,
+        res.emailSent
+          ? `Письмо отправлено на ${value}`
+          : `Доступ выдан, но письмо не отправляли — читайте ниже`,
       );
       setEmail("");
       await load();
@@ -150,6 +157,24 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
       toast.error(humanError(e, "Не удалось выдать доступ"));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function onResend(row: Employee) {
+    setResending(row.userId);
+    try {
+      await resend({
+        data: {
+          salonId,
+          userId: row.userId,
+          origin: typeof window !== "undefined" ? window.location.origin : null,
+        },
+      });
+      toast.success(`Ссылка для входа отправлена на ${row.email}`);
+    } catch (e: any) {
+      toast.error(humanError(e, "Не удалось отправить письмо"));
+    } finally {
+      setResending(null);
     }
   }
 
@@ -185,7 +210,7 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
 
   return (
     <div className="max-w-3xl space-y-4">
-      <Card className="space-y-4 p-6">
+      <Card className="space-y-4 p-4 sm:p-6">
         <div>
           <h2 className="font-semibold">Пригласить сотрудника</h2>
           <p className="mt-0.5 text-sm text-muted-foreground">
@@ -245,10 +270,42 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
           </div>
         )}
 
-        <Button onClick={onInvite} disabled={busy}>
+        <Button onClick={onInvite} disabled={busy} size="lg" className="w-full sm:w-auto">
           <UserPlus className="mr-1.5 h-4 w-4" />
           {busy ? "Отправляем…" : "Пригласить"}
         </Button>
+
+        {/* Самое важное сообщение этого экрана.
+
+            У человека уже может быть аккаунт Qabyl — он пробовал сам, или его звали в другой
+            салон. Supabase в этом случае письмо не отправляет вообще, и раньше владелец видел
+            бодрое «Доступ выдан» и неделю ждал сотрудника, который ничего не получал. */}
+        {lastInvite && (
+          <div
+            className={`qb-rise rounded-lg border p-3.5 text-sm ${
+              lastInvite.emailSent
+                ? "border-success-border bg-success-surface"
+                : "border-warning-border bg-warning-surface"
+            }`}
+          >
+            {lastInvite.emailSent ? (
+              <p>
+                Письмо ушло на <span className="font-medium">{lastInvite.email}</span>. Сотрудник
+                придумает пароль по ссылке и сразу попадёт в кабинет. Если письма нет — пусть
+                проверит папку «Спам».
+              </p>
+            ) : (
+              <div className="space-y-1.5">
+                <p className="font-medium">Доступ выдан, но письмо мы не отправляли</p>
+                <p>
+                  У <span className="font-medium">{lastInvite.email}</span> уже есть аккаунт Qabyl —
+                  он заходит этой почтой и своим паролем. Скажите ему об этом. Если пароль забыт,
+                  нажмите «Отправить ссылку» в списке ниже.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
       </Card>
 
       <Card className="p-0">
@@ -270,26 +327,47 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
         ) : (
           <ul className="qb-stagger divide-y">
             {rows.map((r) => (
-              <li key={r.id} className="flex items-center gap-3 px-6 py-3.5">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{r.email}</p>
-                  <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                    {r.linkedMaster
-                      ? `Профиль мастера: ${r.linkedMaster.name}`
-                      : "Без профиля мастера"}
-                  </p>
+              // На телефоне почта, роль и кнопки в одну строку не помещаются: адрес обрезался
+              // до «akbar…», и отличить двух сотрудников с похожими адресами было нельзя.
+              // Поэтому вертикально: адрес целиком с переносом, под ним роль и действия.
+              <li key={r.id} className="px-4 py-4 sm:px-6 sm:py-3.5">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="break-all text-sm font-medium sm:truncate">{r.email}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {r.linkedMaster
+                        ? `Профиль мастера: ${r.linkedMaster.name}`
+                        : "Без профиля мастера"}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <StatusBadge tone={roleTone(r.role)}>{r.roleLabel}</StatusBadge>
+                    {!r.signedIn && <StatusBadge tone="warn">ещё не заходил</StatusBadge>}
+                    <div className="ml-auto flex items-center gap-1 sm:ml-0">
+                      {!r.signedIn && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => onResend(r)}
+                          disabled={resending === r.userId}
+                        >
+                          <Send className="mr-1.5 h-3.5 w-3.5" />
+                          {resending === r.userId ? "Отправляем…" : "Отправить ссылку"}
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => onRevoke(r)}
+                        disabled={busy}
+                        aria-label={`Отозвать доступ у ${r.email}`}
+                        className="h-10 w-10 shrink-0 text-muted-foreground hover:text-danger"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
                 </div>
-                <StatusBadge tone={roleTone(r.role)}>{r.roleLabel}</StatusBadge>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => onRevoke(r)}
-                  disabled={busy}
-                  aria-label={`Отозвать доступ у ${r.email}`}
-                  className="shrink-0 text-muted-foreground hover:text-danger"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
               </li>
             ))}
           </ul>
@@ -300,7 +378,7 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
           она всё равно бы не сработала. Показывать выключатель, который заведомо откажет, —
           это обещание, которое интерфейс не может сдержать. */}
       {isOwner && (
-        <Card className="p-6">
+        <Card className="p-4 sm:p-6">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <h2 className="font-semibold">Мастер видит только свои записи</h2>
