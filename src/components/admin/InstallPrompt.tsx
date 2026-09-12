@@ -54,6 +54,52 @@ function dismissed(): boolean {
   }
 }
 
+/**
+ * Состояние установки для экрана, который спрашивает о ней сам.
+ *
+ * ЗАЧЕМ ОТДЕЛЬНО ОТ ПОЛОСКИ. Полоска внизу приходит один раз и закрывается навсегда — это
+ * правильно для предложения, которое человек не просил. Но тот, кто закрыл её, а через месяц
+ * решил поставить приложение, должен иметь куда пойти. Эта же логика, но по запросу: карточка
+ * в «Аккаунте», которая не исчезает и ничего не навязывает.
+ */
+export function useInstallState() {
+  const [deferred, setDeferred] = useState<InstallEvent | null>(null);
+  const [installed, setInstalled] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setInstalled(isStandalonePWA());
+    const onPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferred(e as InstallEvent);
+    };
+    const onInstalled = () => setInstalled(true);
+    window.addEventListener("beforeinstallprompt", onPrompt);
+    window.addEventListener("appinstalled", onInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onPrompt);
+      window.removeEventListener("appinstalled", onInstalled);
+    };
+  }, []);
+
+  return {
+    installed,
+    /** Браузер готов показать системное окно установки. */
+    canInstall: Boolean(deferred),
+    /** iOS ставится только руками через «Поделиться» — кнопки там не будет никогда. */
+    isIos: typeof window !== "undefined" && isIos(),
+    async install() {
+      if (!deferred) return;
+      try {
+        await deferred.prompt();
+        await deferred.userChoice;
+      } catch {
+        /* закрыл системное окно — не ошибка */
+      }
+    },
+  };
+}
+
 export function InstallPrompt() {
   const [deferred, setDeferred] = useState<InstallEvent | null>(null);
   const [show, setShow] = useState(false);
