@@ -264,6 +264,22 @@ export const Route = createFileRoute("/api/public/ig/$salonId")({
           }
         }
 
+        // Точка, за которой закреплён этот Instagram.
+        //
+        // Салон известен из адреса вебхука, поэтому ищем только область действия. NULL — канал
+        // общий на сеть, и дальше всё работает как раньше: ассистент спросит клиента, в какую
+        // точку он хочет. Не NULL — клиент написал в директ конкретного филиала, и спрашивать
+        // его об этом незачем.
+        //
+        // Ошибка чтения даёт NULL: канал продолжает работать как общий. Потерять уточнение
+        // хуже, чем потерять ответ, но несравнимо лучше, чем второе.
+        const { branchForSalonChannel } = await import("@/lib/channel-routing.server");
+        const channelBranchId = await branchForSalonChannel(
+          supabaseAdmin as any,
+          salonId,
+          "instagram",
+        );
+
         // Ingest EVERY event first (so the admin panel and the audit log stay complete even when
         // the assistant is off or paused), then run at most one agent turn per conversation.
         const conversationsToProcess = new Set<string>();
@@ -273,6 +289,7 @@ export const Route = createFileRoute("/api/public/ig/$salonId")({
             salonId,
             ev,
             creds,
+            branchId: channelBranchId,
             errLog,
           });
           if (convId) conversationsToProcess.add(convId);
@@ -356,6 +373,7 @@ export const Route = createFileRoute("/api/public/ig/$salonId")({
               errLog,
               record,
               ms,
+              channelBranchId,
             });
           } catch (e: any) {
             // Anything that escapes the turn leaves the client staring at silence, so it must be
@@ -594,6 +612,8 @@ async function ingestEvent(opts: {
   salonId: string;
   ev: IgInboundEvent;
   creds: IgCreds;
+  /** Точка канала. Проставляется новому диалогу, чтобы ассистент не спрашивал «в какой филиал». */
+  branchId?: string | null;
   errLog: (m: string, ...r: unknown[]) => void;
 }): Promise<string | null> {
   const { db, salonId, ev, creds, errLog } = opts;
@@ -760,7 +780,8 @@ async function ingestEvent(opts: {
           ? {
               status: "active",
               appointment_id: null,
-              selected_branch_id: null,
+              // Канал, закреплённый за точкой, отвечает на этот вопрос заранее.
+              selected_branch_id: opts.branchId ?? null,
               session_started_at: nowIso,
               state: "idle",
               // Deliberately keeps NOTHING from the previous session except the phone: a returning
@@ -1124,6 +1145,8 @@ async function runConversationTurn(opts: {
   errLog: (m: string, ...r: unknown[]) => void;
   record: (message: string, context?: Record<string, unknown>) => Promise<void>;
   ms: () => number;
+  /** Точка канала: если канал принадлежит филиалу, остальные для этого разговора не существуют. */
+  channelBranchId?: string | null;
 }): Promise<void> {
   const {
     db,
@@ -1183,7 +1206,11 @@ async function runConversationTurn(opts: {
     // Super-admin pinned the assistant to one branch — same choke point as the WhatsApp route:
     // replacing the branch list makes every other branch's masters, slots and appointments
     // unreachable without touching the engine.
-    const pinnedBranchId = (assistant as any)?.assistant_branch_id as string | null | undefined;
+    // Точка канала сильнее настройки ассистента: клиент написал в директ конкретного филиала,
+    // и предлагать ему другой — значит отправить его не туда, куда он пришёл.
+    const pinnedBranchId =
+      opts.channelBranchId ??
+      ((assistant as any)?.assistant_branch_id as string | null | undefined);
     if (pinnedBranchId) {
       const pinned = branches.find((b) => b.id === pinnedBranchId);
       if (pinned) {
