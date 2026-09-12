@@ -3,17 +3,58 @@ import { useEffect, useState, useMemo, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { ChevronLeft, ChevronRight, Phone, Clock, Scissors, User, RotateCcw, Plus, ArrowRightLeft, ZoomIn, ZoomOut, UserX, Check } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Phone,
+  Clock,
+  Scissors,
+  User,
+  RotateCcw,
+  Plus,
+  ArrowRightLeft,
+  ZoomIn,
+  ZoomOut,
+  UserX,
+  Check,
+} from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth-client";
 import { useAdminFilters } from "@/hooks/use-branch-filter";
 import { BranchFilterBar } from "@/components/admin/BranchFilterBar";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { useSalonTimezone, formatInTz, dayKeyInTz, minutesFromMidnightInTz, startOfDayInTz, addDaysInTz, dowInTz, zonedTimeToUtc } from "@/lib/tz";
-import { CreateAppointmentDialog, MoveAppointmentDialog } from "@/components/admin/AppointmentDialogs";
+import {
+  useSalonTimezone,
+  formatInTz,
+  dayKeyInTz,
+  minutesFromMidnightInTz,
+  startOfDayInTz,
+  addDaysInTz,
+  dowInTz,
+  zonedTimeToUtc,
+} from "@/lib/tz";
+import {
+  CreateAppointmentDialog,
+  MoveAppointmentDialog,
+} from "@/components/admin/AppointmentDialogs";
 import { LoadingState } from "@/components/ui/loading-state";
 import { useRegisterRefresh } from "@/lib/refresh-context";
 import {
@@ -53,7 +94,11 @@ const MAX_BOUND = 24;
 type Density = "compact" | "comfortable" | "spacious";
 const HOUR_PX_BY_DENSITY: Record<Density, number> = { compact: 36, comfortable: 60, spacious: 96 };
 const DENSITY_ORDER: Density[] = ["compact", "comfortable", "spacious"];
-const DENSITY_LABEL: Record<Density, string> = { compact: "Компактный", comfortable: "Стандартный", spacious: "Просторный" };
+const DENSITY_LABEL: Record<Density, string> = {
+  compact: "Компактный",
+  comfortable: "Стандартный",
+  spacious: "Просторный",
+};
 
 type DragData = { id: string; durationMin: number; masterId: string; salonId: string };
 
@@ -85,7 +130,8 @@ function CalendarPage() {
     return v && HOUR_PX_BY_DENSITY[v] ? v : "comfortable";
   });
   useEffect(() => {
-    if (typeof window !== "undefined") window.localStorage.setItem("qabyl.calendar.density", density);
+    if (typeof window !== "undefined")
+      window.localStorage.setItem("qabyl.calendar.density", density);
   }, [density]);
   const hourPx = HOUR_PX_BY_DENSITY[density];
   function zoom(delta: number) {
@@ -105,7 +151,12 @@ function CalendarPage() {
   const [appointments, setAppointments] = useState<any[]>([]);
   const [selected, setSelected] = useState<any | null>(null);
   const [restoreTarget, setRestoreTarget] = useState<any | null>(null);
-  const [conflictInfo, setConflictInfo] = useState<{ client_name: string; service: string; starts_at: string; ends_at: string } | null>(null);
+  const [conflictInfo, setConflictInfo] = useState<{
+    client_name: string;
+    service: string;
+    starts_at: string;
+    ends_at: string;
+  } | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [moveTarget, setMoveTarget] = useState<any | null>(null);
   const dragRef = useRef<DragData | null>(null);
@@ -117,9 +168,11 @@ function CalendarPage() {
     if (!el || !dragRef.current) return;
     const rect = el.getBoundingClientRect();
     const edge = 60;
-    let dy = 0, dx = 0;
+    let dy = 0,
+      dx = 0;
     if (e.clientY < rect.top + edge) dy = -Math.max(4, (rect.top + edge - e.clientY) / 4);
-    else if (e.clientY > rect.bottom - edge) dy = Math.max(4, (e.clientY - (rect.bottom - edge)) / 4);
+    else if (e.clientY > rect.bottom - edge)
+      dy = Math.max(4, (e.clientY - (rect.bottom - edge)) / 4);
     if (e.clientX < rect.left + edge) dx = -Math.max(4, (rect.left + edge - e.clientX) / 4);
     else if (e.clientX > rect.right - edge) dx = Math.max(4, (e.clientX - (rect.right - edge)) / 4);
     if (autoScrollRaf.current) cancelAnimationFrame(autoScrollRaf.current);
@@ -133,19 +186,30 @@ function CalendarPage() {
     }
   }
   function stopAutoScroll() {
-    if (autoScrollRaf.current) { cancelAnimationFrame(autoScrollRaf.current); autoScrollRaf.current = null; }
+    if (autoScrollRaf.current) {
+      cancelAnimationFrame(autoScrollRaf.current);
+      autoScrollRaf.current = null;
+    }
   }
 
   useEffect(() => {
     if (!effectiveSalonId) return;
-    let q = supabase.from("masters").select("*").eq("salon_id", effectiveSalonId).eq("is_active", true).order("sort_order");
+    let q = supabase
+      .from("masters")
+      .select("*")
+      .eq("salon_id", effectiveSalonId)
+      .eq("is_active", true)
+      .order("sort_order");
     if (branchId !== "all") q = q.eq("branch_id", branchId);
     q.then(({ data }) => {
       const list = data ?? [];
       setMasters(list);
       if (list.length > 0) {
         const ids = list.map((m) => m.id);
-        supabase.from("master_schedules").select("master_id, start_time, end_time").in("master_id", ids)
+        supabase
+          .from("master_schedules")
+          .select("master_id, start_time, end_time")
+          .in("master_id", ids)
           .then(({ data: s }) => setSchedules(s ?? []));
       } else {
         setSchedules([]);
@@ -155,25 +219,34 @@ function CalendarPage() {
 
   // Reset master filter when masters list changes. Always allow "all" (within current branch scope).
   useEffect(() => {
-    if (masters.length === 0) { setSelectedMasterId("all"); return; }
+    if (masters.length === 0) {
+      setSelectedMasterId("all");
+      return;
+    }
     if (selectedMasterId !== "all" && !masters.some((m) => m.id === selectedMasterId)) {
       setSelectedMasterId("all");
     }
   }, [masters]);
 
-  const visibleMasters = useMemo(() =>
-    selectedMasterId === "all" ? masters : masters.filter((m) => m.id === selectedMasterId),
-  [masters, selectedMasterId]);
+  const visibleMasters = useMemo(
+    () => (selectedMasterId === "all" ? masters : masters.filter((m) => m.id === selectedMasterId)),
+    [masters, selectedMasterId],
+  );
 
-  const visibleAppointments = useMemo(() =>
-    selectedMasterId === "all" ? appointments : appointments.filter((a) => a.master_id === selectedMasterId),
-  [appointments, selectedMasterId]);
+  const visibleAppointments = useMemo(
+    () =>
+      selectedMasterId === "all"
+        ? appointments
+        : appointments.filter((a) => a.master_id === selectedMasterId),
+    [appointments, selectedMasterId],
+  );
 
   // Dynamic hour range from master_schedules + visible appointments
   const { hourStart, hourEnd, hours, totalPx } = useMemo(() => {
     const visIds = new Set(visibleMasters.map((m) => m.id));
     const relevant = schedules.filter((s) => visIds.has(s.master_id));
-    let minH = DEFAULT_START, maxH = DEFAULT_END;
+    let minH = DEFAULT_START,
+      maxH = DEFAULT_END;
     if (relevant.length > 0) {
       minH = Math.min(...relevant.map((s) => parseHour(s.start_time)));
       maxH = Math.max(...relevant.map((s) => parseHour(s.end_time)));
@@ -189,7 +262,10 @@ function CalendarPage() {
     }
     minH = Math.max(MIN_BOUND, minH);
     maxH = Math.min(MAX_BOUND, maxH);
-    if (maxH <= minH) { minH = DEFAULT_START; maxH = DEFAULT_END; }
+    if (maxH <= minH) {
+      minH = DEFAULT_START;
+      maxH = DEFAULT_END;
+    }
     const hrs = Array.from({ length: maxH - minH }, (_, i) => minH + i);
     return { hourStart: minH, hourEnd: maxH, hours: hrs, totalPx: (maxH - minH) * hourPx };
   }, [schedules, visibleMasters, visibleAppointments, tz, hourPx]);
@@ -208,12 +284,16 @@ function CalendarPage() {
   const [loadingAppts, setLoadingAppts] = useState(true);
 
   async function loadAppointments() {
-    if (!effectiveSalonId) { setLoadingAppts(false); return; }
+    if (!effectiveSalonId) {
+      setLoadingAppts(false);
+      return;
+    }
     setLoadingAppts(true);
     const selectCols = lockedMaster
       ? "id, salon_id, branch_id, master_id, service_id, client_name, client_notes, starts_at, ends_at, price, status, created_at, masters(name), services(name, color)"
       : "*, masters(name), services(name, color)";
-    let q = supabase.from("appointments")
+    let q = supabase
+      .from("appointments")
       .select(selectCols)
       .eq("salon_id", effectiveSalonId)
       // Attendance-marked visits (no_show/completed) stay on the calendar so the outcome is
@@ -227,8 +307,13 @@ function CalendarPage() {
     const list = data ?? [];
     setAppointments(list);
     const ids = list.map((a: any) => a.id);
-    if (ids.length === 0) { setAddonsByAppt({}); setLoadingAppts(false); return; }
-    const { data: ad } = await supabase.from("appointment_addons")
+    if (ids.length === 0) {
+      setAddonsByAppt({});
+      setLoadingAppts(false);
+      return;
+    }
+    const { data: ad } = await supabase
+      .from("appointment_addons")
       .select("appointment_id, name_snapshot")
       .in("appointment_id", ids);
     const grp: Record<string, { name: string }[]> = {};
@@ -239,7 +324,9 @@ function CalendarPage() {
     setLoadingAppts(false);
   }
 
-  useEffect(() => { loadAppointments(); }, [effectiveSalonId, branchId, range.start.getTime(), range.end.getTime()]);
+  useEffect(() => {
+    loadAppointments();
+  }, [effectiveSalonId, branchId, range.start.getTime(), range.end.getTime()]);
   useRegisterRefresh(loadAppointments);
 
   // Realtime: refresh on any appointment change within this salon.
@@ -247,19 +334,29 @@ function CalendarPage() {
     if (!effectiveSalonId) return;
     const ch = supabase
       .channel(`appts-${effectiveSalonId}-${Date.now()}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "appointments", filter: `salon_id=eq.${effectiveSalonId}` }, () => {
-        loadAppointments();
-      })
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "appointments",
+          filter: `salon_id=eq.${effectiveSalonId}`,
+        },
+        () => {
+          loadAppointments();
+        },
+      )
       .on("postgres_changes", { event: "*", schema: "public", table: "appointment_addons" }, () => {
         loadAppointments();
       })
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
+    return () => {
+      supabase.removeChannel(ch);
+    };
   }, [effectiveSalonId, branchId, range.start.getTime(), range.end.getTime()]);
 
-  const days = view === "week"
-    ? Array.from({ length: 7 }, (_, i) => addDaysInTz(range.start, i, tz))
-    : [date];
+  const days =
+    view === "week" ? Array.from({ length: 7 }, (_, i) => addDaysInTz(range.start, i, tz)) : [date];
 
   function shiftDate(delta: number) {
     setDate(addDaysInTz(date, view === "week" ? delta * 7 : delta, tz));
@@ -267,7 +364,10 @@ function CalendarPage() {
 
   async function cancelAppt(id: string) {
     if (!confirm("Отменить эту запись?")) return;
-    const { error } = await supabase.from("appointments").update({ status: "cancelled" }).eq("id", id);
+    const { error } = await supabase
+      .from("appointments")
+      .update({ status: "cancelled" })
+      .eq("id", id);
     if (error) return toast.error(error.message);
     toast.success("Запись отменена");
     setSelected(null);
@@ -281,14 +381,22 @@ function CalendarPage() {
     const { error } = await supabase.from("appointments").update({ status }).eq("id", id);
     if (error) return toast.error(error.message);
     toast.success(
-      status === "no_show" ? "Отмечено: клиент не пришёл" : status === "completed" ? "Отмечено: визит состоялся" : "Возвращено в подтверждённые",
+      status === "no_show"
+        ? "Отмечено: клиент не пришёл"
+        : status === "completed"
+          ? "Отмечено: визит состоялся"
+          : "Возвращено в подтверждённые",
     );
     setSelected((prev: any) => (prev && prev.id === id ? { ...prev, status } : prev));
     loadAppointments();
   }
 
   async function restoreAppt(appt: any) {
-    if (lockedMaster) { toast.error("Недостаточно прав для восстановления записи"); setRestoreTarget(null); return; }
+    if (lockedMaster) {
+      toast.error("Недостаточно прав для восстановления записи");
+      setRestoreTarget(null);
+      return;
+    }
     // Conflict check with details
     const { data: conflicts } = await supabase
       .from("appointments")
@@ -309,7 +417,10 @@ function CalendarPage() {
       });
       return;
     }
-    const { error } = await supabase.from("appointments").update({ status: "confirmed" }).eq("id", appt.id);
+    const { error } = await supabase
+      .from("appointments")
+      .update({ status: "confirmed" })
+      .eq("id", appt.id);
     if (error) return toast.error(error.message);
     toast.success("Запись восстановлена");
     setRestoreTarget(null);
@@ -317,7 +428,12 @@ function CalendarPage() {
     loadAppointments();
   }
 
-  async function moveAppointment(drag: DragData, day: Date, minutesFromTop: number, newMasterId?: string) {
+  async function moveAppointment(
+    drag: DragData,
+    day: Date,
+    minutesFromTop: number,
+    newMasterId?: string,
+  ) {
     const snapped = Math.round(minutesFromTop / SNAP_MIN) * SNAP_MIN;
     const totalMin = hourStart * 60 + snapped;
     const hh = Math.floor(totalMin / 60);
@@ -332,7 +448,18 @@ function CalendarPage() {
       return;
     }
     const end = new Date(start.getTime() + drag.durationMin * 60000);
-    setAppointments((prev) => prev.map((a) => (a.id === drag.id ? { ...a, starts_at: start.toISOString(), ends_at: end.toISOString(), master_id: newMasterId ?? a.master_id } : a)));
+    setAppointments((prev) =>
+      prev.map((a) =>
+        a.id === drag.id
+          ? {
+              ...a,
+              starts_at: start.toISOString(),
+              ends_at: end.toISOString(),
+              master_id: newMasterId ?? a.master_id,
+            }
+          : a,
+      ),
+    );
     // Route through the validated server RPC (atomic double-booking / break / past-time checks)
     // instead of writing straight to the table — and it notifies the client over WhatsApp.
     try {
@@ -343,7 +470,11 @@ function CalendarPage() {
           newMasterId: newMasterId ?? null,
         },
       });
-      if (!res.ok) { toast.error(res.error); loadAppointments(); return; }
+      if (!res.ok) {
+        toast.error(res.error);
+        loadAppointments();
+        return;
+      }
       toast.success("Запись перенесена");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Не удалось перенести запись");
@@ -361,15 +492,28 @@ function CalendarPage() {
         <div className="flex items-center gap-2 flex-wrap">
           {!lockedMaster && effectiveSalonId && (
             <Button onClick={() => setCreateOpen(true)} className="gap-1">
-              <Plus className="h-4 w-4" />Добавить запись
+              <Plus className="h-4 w-4" />
+              Добавить запись
             </Button>
           )}
           <Select value={view} onValueChange={(v) => setView(v as any)}>
-            <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
-            <SelectContent><SelectItem value="day">День</SelectItem><SelectItem value="week">Неделя</SelectItem></SelectContent>
+            <SelectTrigger className="w-28">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="day">День</SelectItem>
+              <SelectItem value="week">Неделя</SelectItem>
+            </SelectContent>
           </Select>
           <div className="flex items-center rounded-md border bg-background">
-            <Button variant="ghost" size="icon" className="h-9 w-9 rounded-r-none" onClick={() => zoom(-1)} disabled={density === "compact"} title="Уменьшить">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 rounded-r-none"
+              onClick={() => zoom(-1)}
+              disabled={density === "compact"}
+              title="Уменьшить"
+            >
               <ZoomOut className="h-4 w-4" />
             </Button>
             <Select value={density} onValueChange={(v) => setDensity(v as Density)}>
@@ -377,16 +521,33 @@ function CalendarPage() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {DENSITY_ORDER.map((d) => <SelectItem key={d} value={d}>{DENSITY_LABEL[d]}</SelectItem>)}
+                {DENSITY_ORDER.map((d) => (
+                  <SelectItem key={d} value={d}>
+                    {DENSITY_LABEL[d]}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
-            <Button variant="ghost" size="icon" className="h-9 w-9 rounded-l-none" onClick={() => zoom(1)} disabled={density === "spacious"} title="Увеличить">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 rounded-l-none"
+              onClick={() => zoom(1)}
+              disabled={density === "spacious"}
+              title="Увеличить"
+            >
               <ZoomIn className="h-4 w-4" />
             </Button>
           </div>
-          <Button variant="outline" size="icon" onClick={() => shiftDate(-1)}><ChevronLeft className="h-4 w-4" /></Button>
-          <Button variant="outline" onClick={() => setDate(startOfDayInTz(new Date(), tz))}>Сегодня</Button>
-          <Button variant="outline" size="icon" onClick={() => shiftDate(1)}><ChevronRight className="h-4 w-4" /></Button>
+          <Button variant="outline" size="icon" onClick={() => shiftDate(-1)}>
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <Button variant="outline" onClick={() => setDate(startOfDayInTz(new Date(), tz))}>
+            Сегодня
+          </Button>
+          <Button variant="outline" size="icon" onClick={() => shiftDate(1)}>
+            <ChevronRight className="h-4 w-4" />
+          </Button>
         </div>
       </div>
 
@@ -396,10 +557,20 @@ function CalendarPage() {
         <div className={isMobile ? "space-y-1" : "flex items-center gap-2 flex-wrap"}>
           <span className="text-sm text-muted-foreground">Мастер:</span>
           <Select value={selectedMasterId} onValueChange={setSelectedMasterId}>
-            <SelectTrigger className={isMobile ? "w-full" : "w-56"}><SelectValue /></SelectTrigger>
+            <SelectTrigger className={isMobile ? "w-full" : "w-56"}>
+              <SelectValue />
+            </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">Все мастера{branchId !== "all" ? " филиала" : ""}</SelectItem>
-              {masters.map((m) => <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>)}
+              <SelectItem value="all">
+                {/* «Все мастера филиала» — слово из словаря сетей. Салон с одной точкой его
+                    не знает, и уточнение там ничего не уточняет. */}
+                {filters.multiBranch && branchId !== "all" ? "Все мастера филиала" : "Все мастера"}
+              </SelectItem>
+              {masters.map((m) => (
+                <SelectItem key={m.id} value={m.id}>
+                  {m.name}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
@@ -407,18 +578,32 @@ function CalendarPage() {
 
       <div className="text-sm font-medium">
         {view === "day"
-          ? formatInTz(date, tz, { weekday: "long", day: "numeric", month: "long", year: "numeric" })
+          ? formatInTz(date, tz, {
+              weekday: "long",
+              day: "numeric",
+              month: "long",
+              year: "numeric",
+            })
           : `${formatInTz(days[0], tz, { day: "numeric", month: "short" })} — ${formatInTz(days[6], tz, { day: "numeric", month: "short", year: "numeric" })}`}
       </div>
 
       {loadingAppts && appointments.length === 0 ? (
-        <Card className="p-0"><LoadingState /></Card>
+        <Card className="p-0">
+          <LoadingState />
+        </Card>
       ) : visibleMasters.length === 0 ? (
         <Card className="p-12 text-center text-muted-foreground">
           Сначала добавьте мастеров в настройках салона
         </Card>
       ) : (
-        <Card className="overflow-auto max-h-[calc(100vh-220px)]" ref={scrollRef as any} onDragOver={handleDragOverScroll} onDrop={stopAutoScroll} onDragEnd={stopAutoScroll} onDragLeave={stopAutoScroll}>
+        <Card
+          className="overflow-auto max-h-[calc(100vh-220px)]"
+          ref={scrollRef as any}
+          onDragOver={handleDragOverScroll}
+          onDrop={stopAutoScroll}
+          onDragEnd={stopAutoScroll}
+          onDragLeave={stopAutoScroll}
+        >
           <div className={isMobile ? "w-full" : "min-w-fit"}>
             {view === "day" ? (
               <DayGrid
@@ -435,7 +620,8 @@ function CalendarPage() {
                 dragRef={dragRef}
                 onDropAt={(masterId, minutesFromTop) => {
                   stopAutoScroll();
-                  const d = dragRef.current; if (!d) return;
+                  const d = dragRef.current;
+                  if (!d) return;
                   moveAppointment(d, date, minutesFromTop, masterId);
                 }}
               />
@@ -453,7 +639,8 @@ function CalendarPage() {
                 dragRef={dragRef}
                 onDropAt={(day, minutesFromTop) => {
                   stopAutoScroll();
-                  const d = dragRef.current; if (!d) return;
+                  const d = dragRef.current;
+                  if (!d) return;
                   moveAppointment(d, day, minutesFromTop);
                 }}
               />
@@ -464,20 +651,45 @@ function CalendarPage() {
 
       <Dialog open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
         <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>Детали записи</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Детали записи</DialogTitle>
+          </DialogHeader>
           {selected && (
             <div className="space-y-3 text-sm">
-              <div className="flex items-center gap-2"><User className="h-4 w-4 text-muted-foreground" /><span className="font-medium">{selected.client_name}</span></div>
+              <div className="flex items-center gap-2">
+                <User className="h-4 w-4 text-muted-foreground" />
+                <span className="font-medium">{selected.client_name}</span>
+              </div>
               {!lockedMaster && selected.client_phone && (
-                <div className="flex items-center gap-2"><Phone className="h-4 w-4 text-muted-foreground" /><a href={`tel:${selected.client_phone}`} className="text-primary">{selected.client_phone}</a></div>
+                <div className="flex items-center gap-2">
+                  <Phone className="h-4 w-4 text-muted-foreground" />
+                  <a href={`tel:${selected.client_phone}`} className="text-primary">
+                    {selected.client_phone}
+                  </a>
+                </div>
               )}
-              <div className="flex items-center gap-2"><Scissors className="h-4 w-4 text-muted-foreground" /><span>{selected.services?.name}</span></div>
-              <div className="flex items-center gap-2"><Clock className="h-4 w-4 text-muted-foreground" /><span>{formatInTz(selected.starts_at, tz, { dateStyle: "short", timeStyle: "short" })} – {formatInTz(selected.ends_at, tz, { hour: "2-digit", minute: "2-digit" })}</span></div>
+              <div className="flex items-center gap-2">
+                <Scissors className="h-4 w-4 text-muted-foreground" />
+                <span>{selected.services?.name}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Clock className="h-4 w-4 text-muted-foreground" />
+                <span>
+                  {formatInTz(selected.starts_at, tz, { dateStyle: "short", timeStyle: "short" })} –{" "}
+                  {formatInTz(selected.ends_at, tz, { hour: "2-digit", minute: "2-digit" })}
+                </span>
+              </div>
               <div className="text-muted-foreground">Мастер: {selected.masters?.name}</div>
-              <div className="font-medium">{Number(selected.price).toLocaleString("ru-RU")} сом</div>
+              <div className="font-medium">
+                {Number(selected.price).toLocaleString("ru-RU")} сом
+              </div>
               <AppointmentAddons appointmentId={selected.id} />
               {!lockedMaster && <ConfirmationBadge appt={selected} />}
-              {selected.client_notes && <div className="p-2 rounded bg-muted text-muted-foreground">{selected.client_notes}</div>}
+              {selected.client_notes && (
+                <div className="p-2 rounded bg-muted text-muted-foreground">
+                  {selected.client_notes}
+                </div>
+              )}
               {selected.status === "cancelled" && (
                 <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 p-3 text-amber-900 dark:text-amber-200 text-xs space-y-1">
                   <div className="font-semibold">Запись отменена</div>
@@ -494,42 +706,71 @@ function CalendarPage() {
                     {selected.status === "no_show" ? "❌ Клиент не пришёл" : "✅ Визит состоялся"}
                   </span>
                   {!lockedMaster && (
-                    <Button size="sm" variant="ghost" onClick={() => markStatus(selected.id, "confirmed")}>
-                      <RotateCcw className="h-4 w-4 mr-1" />Вернуть
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => markStatus(selected.id, "confirmed")}
+                    >
+                      <RotateCcw className="h-4 w-4 mr-1" />
+                      Вернуть
                     </Button>
                   )}
                 </div>
               )}
               {/* Attendance controls appear once the visit time has passed, so no-shows can be logged. */}
-              {!lockedMaster && selected.status === "confirmed" && new Date(selected.starts_at).getTime() < Date.now() && (
-                <div className="flex gap-2">
-                  <Button size="sm" variant="outline" className="flex-1" onClick={() => markStatus(selected.id, "completed")}>
-                    <Check className="h-4 w-4 mr-1" />Пришёл
-                  </Button>
-                  <Button size="sm" variant="outline" className="flex-1" onClick={() => markStatus(selected.id, "no_show")}>
-                    <UserX className="h-4 w-4 mr-1" />Не пришёл
-                  </Button>
-                </div>
-              )}
+              {!lockedMaster &&
+                selected.status === "confirmed" &&
+                new Date(selected.starts_at).getTime() < Date.now() && (
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => markStatus(selected.id, "completed")}
+                    >
+                      <Check className="h-4 w-4 mr-1" />
+                      Пришёл
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => markStatus(selected.id, "no_show")}
+                    >
+                      <UserX className="h-4 w-4 mr-1" />
+                      Не пришёл
+                    </Button>
+                  </div>
+                )}
               {!lockedMaster && <AppointmentHistory appointmentId={selected.id} />}
               <div className="flex flex-wrap justify-end gap-2 pt-2">
-                <Button variant="outline" onClick={() => setSelected(null)}>Закрыть</Button>
-                {selected.status === "cancelled" ? (
-                  !lockedMaster && (
-                    <Button onClick={() => setRestoreTarget(selected)}>
-                      <RotateCcw className="h-4 w-4 mr-2" />Восстановить
-                    </Button>
-                  )
-                ) : (
-                  !lockedMaster && (
-                    <>
-                      <Button variant="secondary" onClick={() => { setMoveTarget(selected); setSelected(null); }}>
-                        <ArrowRightLeft className="h-4 w-4 mr-2" />Перенести
+                <Button variant="outline" onClick={() => setSelected(null)}>
+                  Закрыть
+                </Button>
+                {selected.status === "cancelled"
+                  ? !lockedMaster && (
+                      <Button onClick={() => setRestoreTarget(selected)}>
+                        <RotateCcw className="h-4 w-4 mr-2" />
+                        Восстановить
                       </Button>
-                      <Button variant="destructive" onClick={() => cancelAppt(selected.id)}>Удалить</Button>
-                    </>
-                  )
-                )}
+                    )
+                  : !lockedMaster && (
+                      <>
+                        <Button
+                          variant="secondary"
+                          onClick={() => {
+                            setMoveTarget(selected);
+                            setSelected(null);
+                          }}
+                        >
+                          <ArrowRightLeft className="h-4 w-4 mr-2" />
+                          Перенести
+                        </Button>
+                        <Button variant="destructive" onClick={() => cancelAppt(selected.id)}>
+                          Удалить
+                        </Button>
+                      </>
+                    )}
               </div>
             </div>
           )}
@@ -547,7 +788,10 @@ function CalendarPage() {
                   {" — "}
                   {restoreTarget.services?.name ?? "услуга"}
                   {", "}
-                  {formatInTz(restoreTarget.starts_at, tz, { dateStyle: "short", timeStyle: "short" })}
+                  {formatInTz(restoreTarget.starts_at, tz, {
+                    dateStyle: "short",
+                    timeStyle: "short",
+                  })}
                   {" – "}
                   {formatInTz(restoreTarget.ends_at, tz, { hour: "2-digit", minute: "2-digit" })}
                   {". После восстановления статус снова станет «Подтверждена»."}
@@ -557,7 +801,9 @@ function CalendarPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Отмена</AlertDialogCancel>
-            <AlertDialogAction onClick={() => restoreTarget && restoreAppt(restoreTarget)}>Восстановить</AlertDialogAction>
+            <AlertDialogAction onClick={() => restoreTarget && restoreAppt(restoreTarget)}>
+              Восстановить
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -571,11 +817,13 @@ function CalendarPage() {
                 <>
                   На это время у мастера уже стоит другая запись:{" "}
                   <span className="font-medium text-foreground">{conflictInfo.client_name}</span>
-                  {" ("}{conflictInfo.service}{") "}
-                  с {formatInTz(conflictInfo.starts_at, tz, { hour: "2-digit", minute: "2-digit" })}
+                  {" ("}
+                  {conflictInfo.service}
+                  {") "}с{" "}
+                  {formatInTz(conflictInfo.starts_at, tz, { hour: "2-digit", minute: "2-digit" })}
                   {" до "}
-                  {formatInTz(conflictInfo.ends_at, tz, { hour: "2-digit", minute: "2-digit" })}
-                  . Восстановить нельзя — сначала отмените или перенесите конфликтующую запись.
+                  {formatInTz(conflictInfo.ends_at, tz, { hour: "2-digit", minute: "2-digit" })}.
+                  Восстановить нельзя — сначала отмените или перенесите конфликтующую запись.
                 </>
               )}
             </AlertDialogDescription>
@@ -607,9 +855,16 @@ function CalendarPage() {
           // Same validated, client-notifying server path as drag-to-move above.
           try {
             const res = await rescheduleAppointment({
-              data: { appointmentId: moveTarget.id, newStartsAt: newStart.toISOString(), newMasterId: null },
+              data: {
+                appointmentId: moveTarget.id,
+                newStartsAt: newStart.toISOString(),
+                newMasterId: null,
+              },
             });
-            if (!res.ok) { toast.error(res.error); return; }
+            if (!res.ok) {
+              toast.error(res.error);
+              return;
+            }
             toast.success("Запись перенесена");
             loadAppointments();
           } catch (e) {
@@ -622,9 +877,14 @@ function CalendarPage() {
 }
 
 function AppointmentAddons({ appointmentId }: { appointmentId: string }) {
-  const [items, setItems] = useState<{ id: string; name_snapshot: string; price_snapshot: number; duration_snapshot: number }[]>([]);
+  const [items, setItems] = useState<
+    { id: string; name_snapshot: string; price_snapshot: number; duration_snapshot: number }[]
+  >([]);
   useEffect(() => {
-    supabase.from("appointment_addons").select("id, name_snapshot, price_snapshot, duration_snapshot").eq("appointment_id", appointmentId)
+    supabase
+      .from("appointment_addons")
+      .select("id, name_snapshot, price_snapshot, duration_snapshot")
+      .eq("appointment_id", appointmentId)
       .then(({ data }) => setItems((data ?? []) as any));
   }, [appointmentId]);
   if (items.length === 0) return null;
@@ -638,7 +898,10 @@ function AppointmentAddons({ appointmentId }: { appointmentId: string }) {
           <span>+{Number(a.price_snapshot).toLocaleString("ru-RU")}</span>
         </div>
       ))}
-      <div className="flex justify-between pt-1 border-t font-medium"><span>Сумма доп.</span><span>+{total.toLocaleString("ru-RU")}</span></div>
+      <div className="flex justify-between pt-1 border-t font-medium">
+        <span>Сумма доп.</span>
+        <span>+{total.toLocaleString("ru-RU")}</span>
+      </div>
     </div>
   );
 }
@@ -658,7 +921,9 @@ function ConfirmationBadge({ appt }: { appt: any }) {
       <div className="rounded-md border border-red-300 bg-red-50 dark:bg-red-950/30 p-3 text-red-900 dark:text-red-200 text-xs space-y-1">
         <div className="font-semibold">Клиент не получил подтверждение</div>
         <div>{appt.confirmation_detail || "Сообщение не доставлено."}</div>
-        <div className="opacity-80">Свяжитесь с клиентом другим способом — он не знает, что записан.</div>
+        <div className="opacity-80">
+          Свяжитесь с клиентом другим способом — он не знает, что записан.
+        </div>
       </div>
     );
   }
@@ -736,7 +1001,9 @@ const AUDIT_STATUS_RU: Record<string, string> = {
 function describeAuditEntry(e: AuditEntry): string {
   const d = e.detail as any;
   const fmt = (v: unknown) =>
-    v ? new Date(String(v)).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" }) : "—";
+    v
+      ? new Date(String(v)).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" })
+      : "—";
   switch (e.action) {
     case "created":
       return `${e.actor}: запись создана (${d?.source ?? "?"})`;
@@ -755,13 +1022,25 @@ function describeAuditEntry(e: AuditEntry): string {
   }
 }
 
-function HoursColumn({ hours, totalPx, hourPx }: { hours: number[]; totalPx: number; hourPx: number }) {
+function HoursColumn({
+  hours,
+  totalPx,
+  hourPx,
+}: {
+  hours: number[];
+  totalPx: number;
+  hourPx: number;
+}) {
   return (
     <div className="border-r bg-card" style={{ width: 60 }}>
       <div className="h-10 border-b" />
       <div className="relative" style={{ height: totalPx }}>
         {hours.map((h, i) => (
-          <div key={h} className="absolute left-0 right-0 px-2 text-xs text-muted-foreground border-b" style={{ top: i * hourPx, height: hourPx }}>
+          <div
+            key={h}
+            className="absolute left-0 right-0 px-2 text-xs text-muted-foreground border-b"
+            style={{ top: i * hourPx, height: hourPx }}
+          >
             {String(h).padStart(2, "0")}:00
           </div>
         ))}
@@ -770,24 +1049,50 @@ function HoursColumn({ hours, totalPx, hourPx }: { hours: number[]; totalPx: num
   );
 }
 
-function ColumnBackground({ hours, totalPx, hourPx }: { hours: number[]; totalPx: number; hourPx: number }) {
+function ColumnBackground({
+  hours,
+  totalPx,
+  hourPx,
+}: {
+  hours: number[];
+  totalPx: number;
+  hourPx: number;
+}) {
   return (
     <>
       {hours.map((h, i) => (
-        <div key={h} className="absolute left-0 right-0 border-b pointer-events-none" style={{ top: i * hourPx, height: hourPx }} />
+        <div
+          key={h}
+          className="absolute left-0 right-0 border-b pointer-events-none"
+          style={{ top: i * hourPx, height: hourPx }}
+        />
       ))}
     </>
   );
 }
 
-function DropColumn({ children, onDropAt, dragRef, totalPx, hourPx }: { children: React.ReactNode; onDropAt: (minutesFromTop: number) => void; dragRef: React.MutableRefObject<DragData | null>; totalPx: number; hourPx: number }) {
+function DropColumn({
+  children,
+  onDropAt,
+  dragRef,
+  totalPx,
+  hourPx,
+}: {
+  children: React.ReactNode;
+  onDropAt: (minutesFromTop: number) => void;
+  dragRef: React.MutableRefObject<DragData | null>;
+  totalPx: number;
+  hourPx: number;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   return (
     <div
       ref={ref}
       className="relative"
       style={{ height: totalPx }}
-      onDragOver={(e) => { if (dragRef.current) e.preventDefault(); }}
+      onDragOver={(e) => {
+        if (dragRef.current) e.preventDefault();
+      }}
       onDrop={(e) => {
         e.preventDefault();
         if (!dragRef.current || !ref.current) return;
@@ -803,8 +1108,30 @@ function DropColumn({ children, onDropAt, dragRef, totalPx, hourPx }: { children
   );
 }
 
-function DayGrid({ masters, day, tz, hours, hourStart, totalPx, hourPx, appointments, addonsByAppt, onSelect, dragRef, onDropAt }: {
-  masters: any[]; day: Date; tz: string; hours: number[]; hourStart: number; totalPx: number; hourPx: number; appointments: any[]; addonsByAppt: Record<string, { name: string }[]>; onSelect: (a: any) => void;
+function DayGrid({
+  masters,
+  day,
+  tz,
+  hours,
+  hourStart,
+  totalPx,
+  hourPx,
+  appointments,
+  addonsByAppt,
+  onSelect,
+  dragRef,
+  onDropAt,
+}: {
+  masters: any[];
+  day: Date;
+  tz: string;
+  hours: number[];
+  hourStart: number;
+  totalPx: number;
+  hourPx: number;
+  appointments: any[];
+  addonsByAppt: Record<string, { name: string }[]>;
+  onSelect: (a: any) => void;
   dragRef: React.MutableRefObject<DragData | null>;
   onDropAt: (masterId: string, minutesFromTop: number) => void;
 }) {
@@ -813,13 +1140,37 @@ function DayGrid({ masters, day, tz, hours, hourStart, totalPx, hourPx, appointm
     <div className="flex">
       <HoursColumn hours={hours} totalPx={totalPx} hourPx={hourPx} />
       {masters.map((m) => {
-        const cellAppts = appointments.filter((a) => a.master_id === m.id && dayKeyInTz(a.starts_at, tz) === dayKey);
+        const cellAppts = appointments.filter(
+          (a) => a.master_id === m.id && dayKeyInTz(a.starts_at, tz) === dayKey,
+        );
         return (
-          <div key={m.id} className="border-r" style={{ minWidth: masters.length === 1 ? 0 : 140, flex: 1 }}>
-            <div className="h-10 border-b p-2 text-center font-medium text-sm truncate">{m.name}</div>
-            <DropColumn dragRef={dragRef} totalPx={totalPx} hourPx={hourPx} onDropAt={(min) => onDropAt(m.id, min)}>
+          <div
+            key={m.id}
+            className="border-r"
+            style={{ minWidth: masters.length === 1 ? 0 : 140, flex: 1 }}
+          >
+            <div className="h-10 border-b p-2 text-center font-medium text-sm truncate">
+              {m.name}
+            </div>
+            <DropColumn
+              dragRef={dragRef}
+              totalPx={totalPx}
+              hourPx={hourPx}
+              onDropAt={(min) => onDropAt(m.id, min)}
+            >
               <ColumnBackground hours={hours} totalPx={totalPx} hourPx={hourPx} />
-              {cellAppts.map((a) => <PositionedBlock key={a.id} a={a} tz={tz} hourStart={hourStart} hourPx={hourPx} onSelect={onSelect} dragRef={dragRef} addons={addonsByAppt[a.id]} />)}
+              {cellAppts.map((a) => (
+                <PositionedBlock
+                  key={a.id}
+                  a={a}
+                  tz={tz}
+                  hourStart={hourStart}
+                  hourPx={hourPx}
+                  onSelect={onSelect}
+                  dragRef={dragRef}
+                  addons={addonsByAppt[a.id]}
+                />
+              ))}
             </DropColumn>
           </div>
         );
@@ -828,8 +1179,28 @@ function DayGrid({ masters, day, tz, hours, hourStart, totalPx, hourPx, appointm
   );
 }
 
-function WeekGrid({ days, tz, hours, hourStart, totalPx, hourPx, appointments, addonsByAppt, onSelect, dragRef, onDropAt }: {
-  days: Date[]; tz: string; hours: number[]; hourStart: number; totalPx: number; hourPx: number; appointments: any[]; addonsByAppt: Record<string, { name: string }[]>; onSelect: (a: any) => void;
+function WeekGrid({
+  days,
+  tz,
+  hours,
+  hourStart,
+  totalPx,
+  hourPx,
+  appointments,
+  addonsByAppt,
+  onSelect,
+  dragRef,
+  onDropAt,
+}: {
+  days: Date[];
+  tz: string;
+  hours: number[];
+  hourStart: number;
+  totalPx: number;
+  hourPx: number;
+  appointments: any[];
+  addonsByAppt: Record<string, { name: string }[]>;
+  onSelect: (a: any) => void;
   dragRef: React.MutableRefObject<DragData | null>;
   onDropAt: (day: Date, minutesFromTop: number) => void;
 }) {
@@ -845,9 +1216,26 @@ function WeekGrid({ days, tz, hours, hourStart, totalPx, hourPx, appointments, a
               <div className="font-medium">{formatInTz(d, tz, { weekday: "short" })}</div>
               <div className="text-muted-foreground text-xs">{Number(dKey.slice(-2))}</div>
             </div>
-            <DropColumn dragRef={dragRef} totalPx={totalPx} hourPx={hourPx} onDropAt={(min) => onDropAt(d, min)}>
+            <DropColumn
+              dragRef={dragRef}
+              totalPx={totalPx}
+              hourPx={hourPx}
+              onDropAt={(min) => onDropAt(d, min)}
+            >
               <ColumnBackground hours={hours} totalPx={totalPx} hourPx={hourPx} />
-              {dayAppts.map((a) => <PositionedBlock key={a.id} a={a} tz={tz} hourStart={hourStart} hourPx={hourPx} onSelect={onSelect} dragRef={dragRef} addons={addonsByAppt[a.id]} compact />)}
+              {dayAppts.map((a) => (
+                <PositionedBlock
+                  key={a.id}
+                  a={a}
+                  tz={tz}
+                  hourStart={hourStart}
+                  hourPx={hourPx}
+                  onSelect={onSelect}
+                  dragRef={dragRef}
+                  addons={addonsByAppt[a.id]}
+                  compact
+                />
+              ))}
             </DropColumn>
           </div>
         );
@@ -856,8 +1244,24 @@ function WeekGrid({ days, tz, hours, hourStart, totalPx, hourPx, appointments, a
   );
 }
 
-function PositionedBlock({ a, tz, hourStart, hourPx, onSelect, dragRef, addons, compact }: {
-  a: any; tz: string; hourStart: number; hourPx: number; onSelect: (a: any) => void; dragRef: React.MutableRefObject<DragData | null>; addons?: { name: string }[]; compact?: boolean;
+function PositionedBlock({
+  a,
+  tz,
+  hourStart,
+  hourPx,
+  onSelect,
+  dragRef,
+  addons,
+  compact,
+}: {
+  a: any;
+  tz: string;
+  hourStart: number;
+  hourPx: number;
+  onSelect: (a: any) => void;
+  dragRef: React.MutableRefObject<DragData | null>;
+  addons?: { name: string }[];
+  compact?: boolean;
 }) {
   const start = new Date(a.starts_at);
   const end = new Date(a.ends_at);
@@ -871,18 +1275,35 @@ function PositionedBlock({ a, tz, hourStart, hourPx, onSelect, dragRef, addons, 
   const isNoShow = a.status === "no_show";
   const isPast = !isCancelled && end.getTime() < Date.now();
   const isDimmed = isCancelled || isPast;
-  const attendanceLabel = isNoShow ? " · не пришёл" : a.status === "completed" ? " · пришёл" : isCancelled ? " · отменено" : isPast ? " · завершено" : "";
-  const serviceText = (a.services?.name ?? "") + (addons && addons.length > 0 ? " + " + addons.map((x) => x.name).join(", ") : "");
+  const attendanceLabel = isNoShow
+    ? " · не пришёл"
+    : a.status === "completed"
+      ? " · пришёл"
+      : isCancelled
+        ? " · отменено"
+        : isPast
+          ? " · завершено"
+          : "";
+  const serviceText =
+    (a.services?.name ?? "") +
+    (addons && addons.length > 0 ? " + " + addons.map((x) => x.name).join(", ") : "");
   return (
     <div
       draggable={!isCancelled && !isPast}
       onDragStart={(e) => {
-        if (isCancelled || isPast) { e.preventDefault(); return; }
+        if (isCancelled || isPast) {
+          e.preventDefault();
+          return;
+        }
         dragRef.current = { id: a.id, durationMin, masterId: a.master_id, salonId: a.salon_id };
         e.dataTransfer.effectAllowed = "move";
-        try { e.dataTransfer.setData("text/plain", a.id); } catch {}
+        try {
+          e.dataTransfer.setData("text/plain", a.id);
+        } catch {}
       }}
-      onDragEnd={() => { dragRef.current = null; }}
+      onDragEnd={() => {
+        dragRef.current = null;
+      }}
       onClick={() => onSelect(a)}
       className={`absolute left-1 right-1 rounded p-1.5 text-xs text-left overflow-hidden select-none hover:opacity-90 ${isDimmed ? "cursor-pointer opacity-50 line-through" : "cursor-move"}`}
       style={{ top, height, background: color + "22", borderLeft: `3px solid ${color}` }}
@@ -890,11 +1311,15 @@ function PositionedBlock({ a, tz, hourStart, hourPx, onSelect, dragRef, addons, 
       tabIndex={0}
       title={serviceText}
     >
-      <div className="font-medium truncate">{a.client_name}{attendanceLabel}</div>
+      <div className="font-medium truncate">
+        {a.client_name}
+        {attendanceLabel}
+      </div>
       {!compact && <div className="text-muted-foreground truncate">{serviceText}</div>}
 
       <div className="text-muted-foreground">
-        {formatInTz(start, tz, { hour: "2-digit", minute: "2-digit" })}–{formatInTz(end, tz, { hour: "2-digit", minute: "2-digit" })}
+        {formatInTz(start, tz, { hour: "2-digit", minute: "2-digit" })}–
+        {formatInTz(end, tz, { hour: "2-digit", minute: "2-digit" })}
       </div>
     </div>
   );

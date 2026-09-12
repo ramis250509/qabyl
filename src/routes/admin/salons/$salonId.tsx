@@ -87,6 +87,7 @@ import { MasterDayOverrides } from "@/components/admin/MasterDayOverrides";
 import { SalonDayOverridesCard } from "@/components/admin/SalonDayOverridesCard";
 import { AiAssistantTab } from "@/components/admin/AiAssistantTab";
 import { ChannelsTab } from "@/components/admin/ChannelsTab";
+import { SkeletonBlock } from "@/components/ui/status";
 import { TeamAccessTab } from "@/components/admin/TeamAccessTab";
 import { PrepaymentTab } from "@/components/admin/PrepaymentTab";
 import { ScheduleImportTab } from "@/components/admin/ScheduleImportTab";
@@ -233,7 +234,18 @@ function SalonEdit() {
       .then(({ data }) => setSalon(data));
   }, [salonId]);
 
-  if (!salon) return <div className="p-8 text-muted-foreground">Загрузка...</div>;
+  // Скелет вместо слова «Загрузка»: он держит раскладку, и страница не прыгает, когда данные
+  // приходят. Голый текст на пустом экране читается как «ничего нет», а не «сейчас будет».
+  if (!salon) {
+    return (
+      <div className="space-y-6 p-4 sm:p-8">
+        <SkeletonBlock className="h-9 w-64" />
+        <SkeletonBlock className="h-24 w-full" />
+        <SkeletonBlock className="h-10 w-full max-w-xl" />
+        <SkeletonBlock className="h-64 w-full" />
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 sm:p-8 space-y-6">
@@ -252,24 +264,30 @@ function SalonEdit() {
       <div ref={tabsRef} className="scroll-mt-4">
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+            {/* Порядок вкладок — это порядок вопросов, которые владелец задаёт себе сам:
+                  1. кто мы и что делаем      — Салон, Услуги, Мастера, Команда;
+                  2. как мы говорим с клиентом — Каналы, Ассистент, Переписки;
+                  3. что клиент видит          — Сайт, Предоплата.
+                Раньше «Сайт» стоял между «Мастерами» и «Каналами», а «Команда» — в самом конце
+                за «Предоплатой», и найти доступы сотрудников можно было только перебором. */}
             <TabsList className="w-max">
               <TabsTrigger value="salon">Салон</TabsTrigger>
               <TabsTrigger value="services">Услуги</TabsTrigger>
               <TabsTrigger value="masters">Мастера</TabsTrigger>
-              <TabsTrigger value="site">Сайт</TabsTrigger>
+              <TabsTrigger value="team" data-tour="tab-team">
+                Команда
+              </TabsTrigger>
               <TabsTrigger value="channels" data-tour="tab-channels">
                 Каналы
               </TabsTrigger>
-              <TabsTrigger value="chats">Переписки</TabsTrigger>
-              <TabsTrigger value="prepayment">Предоплата</TabsTrigger>
               {(isSuperAdmin || salon.ai_assistant_enabled) && (
                 <TabsTrigger value="ai" data-tour="tab-ai">
                   Ассистент
                 </TabsTrigger>
               )}
-              <TabsTrigger value="team" data-tour="tab-team">
-                Команда
-              </TabsTrigger>
+              <TabsTrigger value="chats">Переписки</TabsTrigger>
+              <TabsTrigger value="site">Сайт</TabsTrigger>
+              <TabsTrigger value="prepayment">Предоплата</TabsTrigger>
               {isSuperAdmin && <TabsTrigger value="access">Доступ</TabsTrigger>}
               {isSuperAdmin && <TabsTrigger value="import">Импорт</TabsTrigger>}
             </TabsList>

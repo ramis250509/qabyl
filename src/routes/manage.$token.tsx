@@ -3,7 +3,18 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { CalendarDays, Clock, MapPin, Phone, Scissors, User, CheckCircle2, XCircle, ArrowLeft } from "lucide-react";
+import { SkeletonBlock } from "@/components/ui/status";
+import {
+  CalendarDays,
+  Clock,
+  MapPin,
+  Phone,
+  Scissors,
+  User,
+  CheckCircle2,
+  XCircle,
+  ArrowLeft,
+} from "lucide-react";
 
 export const Route = createFileRoute("/manage/$token")({
   head: () => ({ meta: [{ title: "Моя запись — Qabyl" }] }),
@@ -44,7 +55,9 @@ function ManagePage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase.rpc("get_appointment_by_token" as any, { _token: token });
+    const { data, error } = await supabase.rpc("get_appointment_by_token" as any, {
+      _token: token,
+    });
     setSnap(error ? { found: false } : (data as unknown as Snapshot));
     setLoading(false);
   }, [token]);
@@ -58,9 +71,18 @@ function ManagePage() {
   const fmt = useMemo(
     () => ({
       date: (iso: string) =>
-        new Date(iso).toLocaleDateString("ru-RU", { weekday: "long", day: "numeric", month: "long", timeZone: tz }),
+        new Date(iso).toLocaleDateString("ru-RU", {
+          weekday: "long",
+          day: "numeric",
+          month: "long",
+          timeZone: tz,
+        }),
       time: (iso: string) =>
-        new Date(iso).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", timeZone: tz }),
+        new Date(iso).toLocaleTimeString("ru-RU", {
+          hour: "2-digit",
+          minute: "2-digit",
+          timeZone: tz,
+        }),
     }),
     [tz],
   );
@@ -68,7 +90,11 @@ function ManagePage() {
   if (loading) {
     return (
       <Shell>
-        <p className="text-muted-foreground text-center py-12">Загрузка…</p>
+        <div className="space-y-3 py-6">
+          <SkeletonBlock className="h-6 w-40" />
+          <SkeletonBlock className="h-24 w-full" />
+          <SkeletonBlock className="h-10 w-full" />
+        </div>
       </Shell>
     );
   }
@@ -92,7 +118,9 @@ function ManagePage() {
 
   async function doCancel() {
     if (!confirm("Отменить запись? Это действие нельзя отменить.")) return;
-    const { data, error } = await supabase.rpc("cancel_appointment_by_token" as any, { _token: token });
+    const { data, error } = await supabase.rpc("cancel_appointment_by_token" as any, {
+      _token: token,
+    });
     const res = (data ?? {}) as { ok?: boolean; error?: string };
     if (error || !res.ok) {
       setToast({ kind: "err", text: res.error || "Не удалось отменить запись. Попробуйте позже." });
@@ -110,7 +138,11 @@ function ManagePage() {
             toast.kind === "ok" ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-600"
           }`}
         >
-          {toast.kind === "ok" ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
+          {toast.kind === "ok" ? (
+            <CheckCircle2 className="h-4 w-4" />
+          ) : (
+            <XCircle className="h-4 w-4" />
+          )}
           {toast.text}
         </div>
       )}
@@ -121,7 +153,9 @@ function ManagePage() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-sm text-muted-foreground">
-                  {snap.client_first_name ? `${snap.client_first_name}, ваша запись` : "Ваша запись"}
+                  {snap.client_first_name
+                    ? `${snap.client_first_name}, ваша запись`
+                    : "Ваша запись"}
                 </p>
                 <h1 className="text-xl font-bold">{snap.salon_name}</h1>
               </div>
@@ -164,7 +198,8 @@ function ManagePage() {
             <p className="text-sm text-muted-foreground text-center">Запись завершена.</p>
           ) : (
             <p className="text-sm text-muted-foreground text-center">
-              До визита осталось меньше {snap.cutoff_hours} ч — перенос и отмена доступны только через салон
+              До визита осталось меньше {snap.cutoff_hours} ч — перенос и отмена доступны только
+              через салон
               {snap.salon_phone ? ` (${snap.salon_phone})` : ""}.
             </p>
           )}
@@ -295,9 +330,13 @@ function Reschedule({
                 active ? "bg-primary text-primary-foreground border-primary" : ""
               }`}
             >
-              <span className="text-xs">{d.label.toLocaleDateString("ru-RU", { weekday: "short", timeZone: "UTC" })}</span>
+              <span className="text-xs">
+                {d.label.toLocaleDateString("ru-RU", { weekday: "short", timeZone: "UTC" })}
+              </span>
               <span className="font-bold">{d.label.getUTCDate()}</span>
-              <span className="text-xs">{d.label.toLocaleDateString("ru-RU", { month: "short", timeZone: "UTC" })}</span>
+              <span className="text-xs">
+                {d.label.toLocaleDateString("ru-RU", { month: "short", timeZone: "UTC" })}
+              </span>
             </button>
           );
         })}
@@ -306,7 +345,9 @@ function Reschedule({
       {loading ? (
         <p className="text-muted-foreground">Загрузка свободного времени…</p>
       ) : filtered.length === 0 ? (
-        <p className="text-muted-foreground">На этот день свободного времени нет. Выберите другой день.</p>
+        <p className="text-muted-foreground">
+          На этот день свободного времени нет. Выберите другой день.
+        </p>
       ) : (
         <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
           {filtered.map((s) => (
@@ -316,7 +357,11 @@ function Reschedule({
               disabled={submitting}
               onClick={() => pick(s.slot_start)}
             >
-              {new Date(s.slot_start).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", timeZone: tz })}
+              {new Date(s.slot_start).toLocaleTimeString("ru-RU", {
+                hour: "2-digit",
+                minute: "2-digit",
+                timeZone: tz,
+              })}
             </Button>
           ))}
         </div>
@@ -350,5 +395,9 @@ function StatusBadge({ status }: { status?: string }) {
     no_show: { text: "Не пришёл", cls: "bg-muted text-muted-foreground" },
   };
   const s = map[status ?? ""] ?? { text: status ?? "", cls: "bg-muted text-muted-foreground" };
-  return <span className={`text-xs px-2.5 py-1 rounded-full font-medium shrink-0 ${s.cls}`}>{s.text}</span>;
+  return (
+    <span className={`text-xs px-2.5 py-1 rounded-full font-medium shrink-0 ${s.cls}`}>
+      {s.text}
+    </span>
+  );
 }

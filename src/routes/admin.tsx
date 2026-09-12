@@ -252,8 +252,18 @@ function AdminLayout() {
         {SidebarContent}
       </aside>
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="md:hidden h-14 border-b bg-card flex items-center justify-between px-4 sticky top-0 z-30">
-          <div className="font-bold">Qabyl</div>
+        {/* На телефоне шапка показывала только слово «Qabyl». После перехода вглубь (запись,
+            настройки, переписка) понять, где ты находишься, было можно только по содержимому
+            экрана. Название раздела стоит одной строки и снимает этот вопрос. */}
+        <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b bg-card px-4 md:hidden">
+          <div className="min-w-0">
+            <div className="truncate font-semibold leading-tight">
+              {navItems.find((i) =>
+                (i as any).exact ? location.pathname === i.to : location.pathname.startsWith(i.to),
+              )?.label ?? "Qabyl"}
+            </div>
+            <div className="text-[11px] leading-tight text-muted-foreground">Qabyl</div>
+          </div>
           <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
             <SheetTrigger asChild>
               <Button variant="ghost" size="icon">

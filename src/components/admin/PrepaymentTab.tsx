@@ -13,6 +13,7 @@
 import { useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
+import { SkeletonBlock } from "@/components/ui/status";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -234,7 +235,12 @@ export function PrepaymentTab({ salonId }: { salonId: string }) {
   }
 
   if (loading) {
-    return <div className="p-6 text-sm text-muted-foreground">Загрузка…</div>;
+    return (
+      <div className="space-y-4">
+        <SkeletonBlock className="h-28" />
+        <SkeletonBlock className="h-48" />
+      </div>
+    );
   }
 
   const off = !form.enabled;
