@@ -1,0 +1,157 @@
+// Мира и шина событий: разбор ответа модели и правила связи между агентами.
+//
+// Запуск: bun test ops-agents.test.ts
+
+import { describe, expect, test } from "bun:test";
+import {
+  contentPlanAction,
+  fallbackContentPlan,
+  formatContentPlan,
+  parseContentPlan,
+  type PlatformFacts,
+} from "./src/lib/ops-content";
+import { MAX_HOPS, planEventFanout } from "./src/lib/ops-routes";
+
+const facts: PlatformFacts = {
+  salons: 3,
+  newSalons30d: 0,
+  industries: ["beauty"],
+  bookings7d: 17,
+  aiBookings7d: 9,
+  topServices: ["Наращивание ресниц", "Маникюр"],
+  noShowRate30d: 12,
+};
+
+const goodPlan = JSON.stringify({
+  posts: [
+    { format: "Пост", hook: "Заголовок", caption: "Текст поста про пользу.", cta: "Написать" },
+    { format: "Сторис", hook: "Второй", caption: "Ещё текст.", cta: "Свайп" },
+  ],
+  promo: {
+    title: "Первый месяц",
+    audience: "Салоны",
+    offer: "30 дней бесплатно",
+    why: "Вход без риска",
+  },
+});
+
+describe("разбор ответа модели", () => {
+  test("чистый JSON", () => {
+    const p = parseContentPlan(goodPlan);
+    expect(p?.posts).toHaveLength(2);
+    expect(p?.promo?.title).toBe("Первый месяц");
+  });
+
+  test("JSON в markdown-заборе и с болтовнёй вокруг", () => {
+    const raw = "Конечно! Вот план:\n```json\n" + goodPlan + "\n```\nГотово.";
+    expect(parseContentPlan(raw)?.posts).toHaveLength(2);
+  });
+
+  test("мусор вместо JSON — null, вызывающий возьмёт запасной план", () => {
+    expect(parseContentPlan("извините, не могу")).toBeNull();
+    expect(parseContentPlan("")).toBeNull();
+    expect(parseContentPlan("{сломанный")).toBeNull();
+  });
+
+  test("посты без текста выбрасываются, годные остаются", () => {
+    const raw = JSON.stringify({
+      posts: [
+        { format: "Пост", hook: "", caption: "нет заголовка" },
+        { format: "Пост", hook: "есть", caption: "и текст есть" },
+      ],
+    });
+    const p = parseContentPlan(raw);
+    expect(p?.posts).toHaveLength(1);
+    expect(p?.promo).toBeNull();
+  });
+
+  test("больше трёх постов не берём", () => {
+    const raw = JSON.stringify({
+      posts: Array.from({ length: 6 }, (_, i) => ({ hook: `h${i}`, caption: `c${i}` })),
+    });
+    expect(parseContentPlan(raw)?.posts).toHaveLength(3);
+  });
+
+  test("промо без предложения не считается промо", () => {
+    const raw = JSON.stringify({
+      posts: [{ hook: "h", caption: "c" }],
+      promo: { title: "Есть заголовок", offer: "" },
+    });
+    expect(parseContentPlan(raw)?.promo).toBeNull();
+  });
+
+  test("длинный текст обрезается, а не ломает сообщение", () => {
+    const raw = JSON.stringify({
+      posts: [{ hook: "x".repeat(500), caption: "y".repeat(5000) }],
+    });
+    const p = parseContentPlan(raw)!;
+    expect(p.posts[0].hook.length).toBeLessThanOrEqual(120);
+    expect(p.posts[0].caption.length).toBeLessThanOrEqual(700);
+  });
+});
+
+describe("запасной план", () => {
+  test("строится из фактов", () => {
+    const p = fallbackContentPlan(facts);
+    expect(p.posts.length).toBe(3);
+    expect(p.posts[0].caption).toContain("17");
+    expect(p.posts[0].hook).toContain("9");
+  });
+
+  test("промо предлагается, когда новых салонов за месяц не было", () => {
+    expect(fallbackContentPlan(facts).promo).not.toBeNull();
+    expect(fallbackContentPlan({ ...facts, newSalons30d: 4 }).promo).toBeNull();
+  });
+});
+
+describe("сообщение владельцу", () => {
+  test("содержит все посты и промо", () => {
+    const plan = parseContentPlan(goodPlan)!;
+    const text = formatContentPlan(plan, facts);
+    expect(text).toContain("Заголовок");
+    expect(text).toContain("Второй");
+    expect(text).toContain("Первый месяц");
+  });
+
+  test("без технических слов", () => {
+    const text = formatContentPlan(fallbackContentPlan(facts), facts);
+    expect(text).not.toMatch(/Gemini|Meta|API|токен|webhook|промпт/i);
+  });
+
+  test("действие для кнопки не тащит в базу простыни текста", () => {
+    const action = contentPlanAction(parseContentPlan(goodPlan)!);
+    expect(JSON.stringify(action).length).toBeLessThan(500);
+    expect((action as any).posts[0].caption).toBeUndefined();
+  });
+});
+
+describe("шина событий", () => {
+  test("одобренное промо доходит до продажника и Кэпа", () => {
+    const f = planEventFanout("promo.approved", { title: "Первый месяц", offer: "30 дней" }, 0);
+    expect(f.tasks.map((t) => t.agent).sort()).toEqual(["chief", "sales"]);
+    expect(f.tasks[0].title).toContain("Первый месяц");
+  });
+
+  test("цепочка обрывается на пределе прыжков", () => {
+    const f = planEventFanout("promo.approved", { title: "X" }, MAX_HOPS);
+    expect(f.tasks).toHaveLength(0);
+    expect(f.stop).toBe("max_hops");
+  });
+
+  test("неизвестное событие никого не будит", () => {
+    const f = planEventFanout("что-то.новое", {}, 0);
+    expect(f.tasks).toHaveLength(0);
+    expect(f.stop).toBe("unknown_type");
+  });
+
+  test("публикация контента задач не плодит — они созданы при одобрении", () => {
+    const f = planEventFanout("content.approved", { posts: 3 }, 0);
+    expect(f.tasks).toHaveLength(0);
+    expect(f.stop).toBeUndefined();
+  });
+
+  test("лид без имени опознаётся по телефону", () => {
+    const f = planEventFanout("lead.qualified", { phone: "996700112233" }, 1);
+    expect(f.tasks[0].title).toContain("996700112233");
+  });
+});

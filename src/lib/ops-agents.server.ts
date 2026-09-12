@@ -64,12 +64,12 @@ export async function audit(
 
 // ---- KV cursors ------------------------------------------------------------
 
-async function kvGet(key: string): Promise<any | null> {
+export async function kvGet(key: string): Promise<any | null> {
   const { data } = await db().from("ops_kv").select("value").eq("key", key).maybeSingle();
   return data?.value ?? null;
 }
 
-async function kvSet(key: string, value: unknown): Promise<void> {
+export async function kvSet(key: string, value: unknown): Promise<void> {
   await db()
     .from("ops_kv")
     .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: "key" });
@@ -216,4 +216,36 @@ export async function errorReport(sinceMinutes = 24 * 60): Promise<string> {
     groups,
     (t) => `🛠 <b>${severityLabel(t)}</b> — ошибки за ${hours}ч (${t})`,
   );
+}
+
+// ---- Реестр агентов: пауза по одному -------------------------------------
+
+export type OpsAgentRow = {
+  key: string;
+  name: string;
+  role_title: string;
+  enabled: boolean;
+  paused: boolean;
+};
+
+export async function listAgents(): Promise<OpsAgentRow[]> {
+  const { data } = await db()
+    .from("ops_agents")
+    .select("key, name, role_title, enabled, paused")
+    .order("key");
+  return (data ?? []) as OpsAgentRow[];
+}
+
+/**
+ * Пауза одного агента. Отдельно от общего kill-switch: Мира может молчать неделю, пока Деби
+ * продолжает сканировать ошибки, — «выключить всех» для этого слишком грубо.
+ */
+export async function setAgentPaused(key: string, paused: boolean, by: string): Promise<boolean> {
+  const { error } = await db().from("ops_agents").update({ paused }).eq("key", key);
+  if (error) {
+    console.error(`[ops] setAgentPaused ${key}: ${error.message}`);
+    return false;
+  }
+  await audit(by, paused ? "agent.paused" : "agent.resumed", { agent: key });
+  return true;
 }

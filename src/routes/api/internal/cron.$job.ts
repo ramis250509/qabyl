@@ -134,7 +134,33 @@ export const Route = createFileRoute("/api/internal/cron/$job")({
               text,
             });
             await audit("cron", "digest.sent");
-            return json({ ok: true });
+
+            // Понедельник — Мира приносит план недели кнопкой одобрения. В остальные дни молчит:
+            // ежедневный контент-план перестают читать на третий день.
+            const weekday = new Date().toLocaleDateString("en-US", {
+              weekday: "short",
+              timeZone: "Asia/Bishkek",
+            });
+            let marketer: string | null = null;
+            if (weekday === "Mon" && (await isAgentActive("marketer"))) {
+              const { buildWeeklyPlan } = await import("@/lib/ops-marketer.server");
+              const { requestApproval } = await import("@/lib/ops-approvals.server");
+              const plan = await buildWeeklyPlan();
+              const id = await requestApproval({
+                agent: "marketer",
+                kind: "content_plan",
+                summary: plan.text,
+                action: plan.action as any,
+                chatId,
+                threadId: topicId("TELEGRAM_TOPIC_MARKETER") ?? topicId("TELEGRAM_TOPIC_CHIEF"),
+              });
+              marketer = id ? `plan_${id}` : "plan_failed";
+            }
+
+            // Разобрать события, накопившиеся за сутки: задачи из них появляются на доске.
+            const { routeEvents } = await import("@/lib/ops-bus.server");
+            const bus = await routeEvents();
+            return json({ ok: true, marketer, bus });
           }
 
           if (job === "sre-scan") {

@@ -30,18 +30,70 @@ import {
   fetchDigestSnapshot,
   formatDigest,
   errorReport,
+  isAgentActive,
+  listAgents,
+  setAgentPaused,
 } from "@/lib/ops-agents.server";
+import { buildWeeklyPlan } from "@/lib/ops-marketer.server";
+import { executeApproval, pendingApprovals, requestApproval } from "@/lib/ops-approvals.server";
+import { closeTask, listOpenTasks } from "@/lib/ops-bus.server";
+
+/** Владелец пишет «мира», а в базе ключ «marketer» — имена для людей, ключи для кода. */
+const AGENT_ALIASES: Record<string, string> = {
+  мира: "marketer",
+  mira: "marketer",
+  marketer: "marketer",
+  айдар: "sales",
+  aidar: "sales",
+  sales: "sales",
+  деби: "sre",
+  debi: "sre",
+  sre: "sre",
+  кэп: "chief",
+  kep: "chief",
+  chief: "chief",
+};
+
+const AGENT_NAMES: Record<string, string> = {
+  marketer: "📣 Мира",
+  sales: "🤝 Айдар",
+  sre: "🛠 Деби",
+  chief: "🧭 Кэп",
+  bus: "🔁 Шина",
+};
+
+function agentLabel(key: string): string {
+  return AGENT_NAMES[key] ?? key;
+}
+
+/** Заголовки задач приходят из плана модели — в HTML-режиме их надо обезвредить. */
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
 
 const HELP = [
   "🤖 <b>Команда агентов Qabyl</b>",
   "",
+  "<b>Сводки</b>",
   "/status — быстрая проверка здоровья бизнеса",
   "/digest — полная сводка Кэпа сейчас",
   "/errors — недавние ошибки (Деби)",
-  "/stopall — аварийная остановка всех агентов",
-  "/resume — включить агентов обратно",
+  "",
+  "<b>Мира (маркетинг)</b>",
+  "/mira — план контента на неделю с кнопкой одобрения",
+  "",
+  "<b>Доска и одобрения</b>",
+  "/tasks — что в работе у агентов",
+  "/done 12 — закрыть задачу №12",
+  "/approvals — что ждёт твоего решения",
+  "",
+  "<b>Управление</b>",
+  "/agents — кто включён",
+  "/pause mira — остановить одного агента",
+  "/unpause mira — включить обратно",
+  "/stopall — аварийная остановка всех",
+  "/resume — включить всех",
   "/whoami — показать мой Telegram id",
-  "/help — эта справка",
 ].join("\n");
 
 function ok() {
@@ -193,6 +245,126 @@ async function handleUpdate(update: TgUpdate): Promise<void> {
     return;
   }
 
+  // ---- Мира: план недели под одобрение ----------------------------------
+  if (cmd === "/mira") {
+    if (!(await isAgentActive("marketer"))) {
+      await sendMessage({
+        chatId,
+        threadId,
+        text: "⏸ Мира на паузе. Включить: /unpause marketer",
+      });
+      return;
+    }
+    await sendMessage({ chatId, threadId, text: "📣 Мира собирает план недели…" });
+    const plan = await buildWeeklyPlan();
+    const id = await requestApproval({
+      agent: "marketer",
+      kind: "content_plan",
+      summary: plan.text,
+      action: plan.action as any,
+      chatId,
+      threadId,
+    });
+    if (!id) {
+      await sendMessage({ chatId, threadId, text: "Не удалось сохранить план. Ошибки: /errors" });
+    }
+    await audit("owner", "cmd.mira", { from_model: plan.fromModel });
+    return;
+  }
+
+  // ---- Доска задач ------------------------------------------------------
+  if (cmd === "/tasks") {
+    const tasks = await listOpenTasks(12);
+    await sendMessage({
+      chatId,
+      threadId,
+      parseMode: "HTML",
+      text: tasks.length
+        ? [
+            "📋 <b>В работе</b>",
+            "",
+            ...tasks.map((t) => `#${t.id} · ${agentLabel(t.agent)} — ${escapeHtml(t.title)}`),
+            "",
+            "Закрыть: /done 12",
+          ].join("\n")
+        : "📋 Доска пустая — у агентов нет открытых задач.",
+    });
+    return;
+  }
+
+  if (cmd === "/done") {
+    const id = Number(text.split(/\s+/)[1]);
+    if (!Number.isFinite(id)) {
+      await sendMessage({ chatId, threadId, text: "Укажи номер задачи: /done 12" });
+      return;
+    }
+    const ok2 = await closeTask(id, "owner");
+    await sendMessage({
+      chatId,
+      threadId,
+      text: ok2 ? `✅ Задача #${id} закрыта.` : `Не нашёл задачу #${id}.`,
+    });
+    return;
+  }
+
+  if (cmd === "/approvals") {
+    const list = await pendingApprovals(5);
+    await sendMessage({
+      chatId,
+      threadId,
+      parseMode: "HTML",
+      text: list.length
+        ? [
+            "⏳ <b>Ждут решения</b>",
+            "",
+            ...list.map((a) => `#${a.id} · ${agentLabel(a.agent)} · ${escapeHtml(a.kind)}`),
+            "",
+            "Кнопки — в сообщении, где агент это предложил.",
+          ].join("\n")
+        : "✅ Ничего не ждёт одобрения.",
+    });
+    return;
+  }
+
+  // ---- Управление агентами ---------------------------------------------
+  if (cmd === "/agents") {
+    const list = await listAgents();
+    await sendMessage({
+      chatId,
+      threadId,
+      parseMode: "HTML",
+      text: [
+        "👥 <b>Команда</b>",
+        "",
+        ...list.map(
+          (a) =>
+            `${a.paused || !a.enabled ? "⏸" : "🟢"} ${a.name} — ${escapeHtml(a.role_title)} <code>${a.key}</code>`,
+        ),
+        "",
+        "Пауза: /pause sales · Включить: /unpause sales",
+      ].join("\n"),
+    });
+    return;
+  }
+
+  if (cmd === "/pause" || cmd === "/unpause") {
+    const raw = (text.split(/\s+/)[1] ?? "").toLowerCase();
+    const key = AGENT_ALIASES[raw] ?? raw;
+    if (!key) {
+      await sendMessage({ chatId, threadId, text: "Кого? /pause mira, /pause sales, /pause sre" });
+      return;
+    }
+    const okAgent = await setAgentPaused(key, cmd === "/pause", "owner");
+    await sendMessage({
+      chatId,
+      threadId,
+      text: okAgent
+        ? `${cmd === "/pause" ? "⏸ Остановил" : "🟢 Включил"}: ${key}`
+        : `Не знаю агента «${key}». Список: /agents`,
+    });
+    return;
+  }
+
   await sendMessage({ chatId, threadId, text: "Не понял команду. /help — список." });
 }
 
@@ -249,15 +421,20 @@ async function handleCallback(cq: {
     },
   );
 
-  // NOTE (phase 2): on 'approved' a worker reads ops_approvals.action and executes it,
-  // then sets status='executed'. Phase 1 has no executable actions yet.
+  // Одобренное исполняется сразу: действие лежит в ops_approvals.action, кнопка несла только id.
+  let tail = decided === "approved" ? "✅ Одобрено" : "❌ Отклонено";
+  if (decided === "approved") {
+    const res = await executeApproval(approvalId);
+    tail = res.ok ? `✅ Одобрено — ${res.note}` : `⚠️ Одобрено, но не выполнилось: ${res.note}`;
+  }
 
   await answerCallbackQuery(cq.id, decided === "approved" ? "Одобрено ✅" : "Отклонено ❌");
   if (cq.message) {
     await editMessageText({
       chatId: cq.message.chat.id,
       messageId: cq.message.message_id,
-      text: `${appr.summary}\n\n${decided === "approved" ? "✅ Одобрено" : "❌ Отклонено"}`,
+      parseMode: "HTML",
+      text: `${appr.summary}\n\n${tail}`,
     });
   }
 }
