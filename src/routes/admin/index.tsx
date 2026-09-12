@@ -34,7 +34,7 @@ import { toast } from "sonner";
 import { useAdminFilters } from "@/hooks/use-branch-filter";
 import { BranchFilterBar } from "@/components/admin/BranchFilterBar";
 import { useAuth } from "@/lib/auth-client";
-import { useSalonTimezone, startOfDayInTz, addDaysInTz } from "@/lib/tz";
+import { useSalonTimezone, startOfDayInTz, addDaysInTz, dayKeyInTz } from "@/lib/tz";
 import { useRegisterRefresh } from "@/lib/refresh-context";
 import { getOnboardingProgress } from "@/lib/onboarding.functions";
 import { SetupChecklist } from "@/components/admin/SetupChecklist";
@@ -58,7 +58,7 @@ function ChannelStrip({ progress, salonId }: { progress: Progress; salonId: stri
   const items = [
     {
       label: "WhatsApp",
-      tab: "integrations",
+      tab: "channels",
       tone: progress.whatsapp.level,
       text: progress.whatsapp.connected
         ? progress.whatsapp.level === "ok"
@@ -95,7 +95,7 @@ function ChannelStrip({ progress, salonId }: { progress: Progress; salonId: stri
           key={it.label}
           to={settings as any}
           search={{ tab: it.tab } as any}
-          className="rounded-xl border bg-card p-4 transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="qb-card-interactive rounded-xl border bg-card p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <div className="flex items-center justify-between gap-2">
             <span className="text-sm font-medium">{it.label}</span>
@@ -256,14 +256,70 @@ function Dashboard() {
     };
   }, [salonId, loadProgress]);
 
-  const cards = [
+  // Каждая карточка — кнопка, а не число.
+  //
+  // ЗАЧЕМ. «4 записи сегодня» — это не ответ, а начало вопроса: какие именно? Раньше владелец
+  // читал число, шёл в календарь и заново выбирал сегодняшний день — то есть делал руками ровно
+  // то, что уже сообщила карточка. Каждая ведёт туда, где лежит её содержимое, и приводит уже с
+  // нужным фильтром.
+  //
+  // Карточка без осмысленного адреса остаётся просто карточкой: ложная кликабельность хуже
+  // честной статики.
+  const settings = salonId !== "all" ? `/admin/salons/${salonId}` : null;
+  const todayKey = dayKeyInTz(new Date(), tz);
+  const cards: {
+    label: string;
+    value: number;
+    icon: typeof Calendar;
+    tone: string;
+    to?: string;
+    search?: Record<string, string>;
+    hint?: string;
+  }[] = [
     ...(isSuperAdmin
-      ? [{ label: "Салонов", value: stats.salons, icon: Building2, tone: "text-info" }]
+      ? [
+          {
+            label: "Салонов",
+            value: stats.salons,
+            icon: Building2,
+            tone: "text-info",
+            to: "/admin/salons",
+            hint: "Все салоны платформы",
+          },
+        ]
       : []),
-    { label: "Записей сегодня", value: stats.today, icon: Calendar, tone: "text-success" },
-    { label: "Записей за 7 дней", value: stats.week, icon: TrendingUp, tone: "text-warning" },
-    { label: "Диалогов за неделю", value: stats.chats, icon: MessageCircle, tone: "text-info" },
-    { label: "Мастеров", value: stats.masters, icon: Users, tone: "text-muted-foreground" },
+    {
+      label: "Записей сегодня",
+      value: stats.today,
+      icon: Calendar,
+      tone: "text-success",
+      to: "/admin/calendar",
+      search: { view: "day", date: todayKey },
+      hint: "Открыть календарь на сегодня",
+    },
+    {
+      label: "Записей за 7 дней",
+      value: stats.week,
+      icon: TrendingUp,
+      tone: "text-warning",
+      to: "/admin/calendar",
+      search: { view: "week", date: todayKey },
+      hint: "Открыть календарь на неделю",
+    },
+    {
+      label: "Диалогов за неделю",
+      value: stats.chats,
+      icon: MessageCircle,
+      tone: "text-info",
+      ...(settings ? { to: settings, search: { tab: "chats" }, hint: "Открыть переписки" } : {}),
+    },
+    {
+      label: "Мастеров",
+      value: stats.masters,
+      icon: Users,
+      tone: "text-muted-foreground",
+      ...(settings ? { to: settings, search: { tab: "masters" }, hint: "Открыть список мастеров" } : {}),
+    },
   ];
 
   const brokenChannel =
@@ -292,7 +348,7 @@ function Dashboard() {
             {
               label: "Открыть настройки WhatsApp",
               onClick: () => {
-                window.location.href = `/admin/salons/${salonId}?tab=integrations`;
+                window.location.href = `/admin/salons/${salonId}?tab=channels`;
               },
             },
           ]}
@@ -313,8 +369,8 @@ function Dashboard() {
       {progress && salonId !== "all" && <SetupChecklist progress={progress} salonId={salonId} />}
 
       <div className="qb-stagger grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {cards.map((c) => (
-          <Card key={c.label} className="p-5">
+        {cards.map((c) => {
+          const body = (
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <p className="truncate text-sm text-muted-foreground">{c.label}</p>
@@ -322,8 +378,27 @@ function Dashboard() {
               </div>
               <c.icon className={`h-6 w-6 shrink-0 ${c.tone}`} />
             </div>
-          </Card>
-        ))}
+          );
+          if (!c.to) {
+            return (
+              <Card key={c.label} className="p-5">
+                {body}
+              </Card>
+            );
+          }
+          return (
+            <Link
+              key={c.label}
+              to={c.to as any}
+              search={(c.search ?? {}) as any}
+              aria-label={c.hint ?? c.label}
+              title={c.hint}
+              className="qb-card-interactive rounded-xl border bg-card p-5 text-card-foreground shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {body}
+            </Link>
+          );
+        })}
       </div>
 
       {/* Пустое место должно помогать, а не констатировать. Ноль записей у настроенного салона

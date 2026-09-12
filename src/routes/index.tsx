@@ -147,7 +147,9 @@ function Landing() {
         <div className="container mx-auto flex h-16 items-center justify-between px-4">
           <div className="text-lg font-semibold">Qabyl</div>
           <div className="flex gap-2">
-            <Link to="/auth">
+            {/* Вход — второстепенное действие и ведёт сразу в форму входа: для того, кто
+                уже клиент, лишний клик по «Уже есть аккаунт?» — это просто лишний клик. */}
+            <Link to="/auth" search={{ mode: "login" } as any}>
               <Button variant="ghost">Войти</Button>
             </Link>
             <Link to="/auth">

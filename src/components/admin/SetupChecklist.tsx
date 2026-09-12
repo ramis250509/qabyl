@@ -63,7 +63,7 @@ function buildSetupSteps(p: Progress, salonId: string): Step[] {
       title: "Подключите WhatsApp",
       why: "Ассистент будет отвечать клиентам и записывать их даже ночью.",
       to: settings,
-      tab: "integrations",
+      tab: "channels",
       cta: "Подключить",
     },
     {

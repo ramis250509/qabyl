@@ -26,9 +26,46 @@ import { Check, Eye, EyeOff, Mail } from "lucide-react";
 import { SkeletonBlock } from "@/components/ui/status";
 
 export const Route = createFileRoute("/auth")({
-  head: () => ({ meta: [{ title: "Вход — Qabyl" }] }),
+  head: () => ({ meta: [{ title: "Регистрация — Qabyl" }] }),
+  // `?mode=login` — для ссылки «Войти» с посадочной и из писем. Поле возвращается только когда
+  // оно есть: обязательный параметр потребовал бы дописывать его в каждую существующую ссылку.
+  validateSearch: (search: Record<string, unknown>): { mode?: "login" } =>
+    search.mode === "login" ? { mode: "login" } : {},
   component: AuthPage,
 });
+
+/**
+ * Кто к нам пришёл: новый человек или тот, кто уже заходил.
+ *
+ * ЗАЧЕМ. Экран по умолчанию показывал «Вход». Для человека, который первый раз открыл Qabyl по
+ * ссылке из рекламы, это тупик наоборот: форма просит пароль, которого у него нет, а ссылка
+ * «Нет аккаунта? Создать» — самая мелкая надпись на странице. Первый экран продукта должен
+ * предлагать начать, а не доказывать, что ты уже клиент.
+ *
+ * ПОЧЕМУ НЕ ПРОСТО «ВСЕГДА РЕГИСТРАЦИЯ». Владелица заходит в кабинет каждый день, и подсовывать
+ * ей форму регистрации — это тот же промах, только в другую сторону. Отметка ставится после
+ * первого успешного входа и живёт в браузере: на своём телефоне человек видит «Вход», на чужом
+ * или новом — «Создайте аккаунт».
+ */
+const RETURNING_KEY = "qb_returning";
+
+function isReturningVisitor(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return localStorage.getItem(RETURNING_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function rememberVisitor() {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(RETURNING_KEY, "1");
+  } catch {
+    // Приватный режим. Человек просто увидит регистрацию — не поломка.
+  }
+}
 
 type Mode = "login" | "signup" | "forgot" | "reset" | "check-inbox";
 
@@ -49,7 +86,10 @@ function humanAuthError(message: string): string {
 
 function AuthPage() {
   const navigate = useNavigate();
-  const [mode, setMode] = useState<Mode>("login");
+  const { mode: modeFromUrl } = Route.useSearch();
+  const [mode, setMode] = useState<Mode>(() =>
+    modeFromUrl === "login" || isReturningVisitor() ? "login" : "signup",
+  );
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -71,8 +111,12 @@ function AuthPage() {
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (cancelled) return;
-      if (session) navigate({ to: "/admin", replace: true });
-      else setChecking(false);
+      if (session) {
+        rememberVisitor();
+        navigate({ to: "/admin", replace: true });
+        return;
+      }
+      setChecking(false);
     });
     return () => {
       cancelled = true;
@@ -84,6 +128,7 @@ function AuthPage() {
     setLoading(true);
     try {
       if (mode === "signup") {
+        rememberVisitor();
         const { data, error } = await supabase.auth.signUp({
           email: email.trim(),
           password,
@@ -123,6 +168,7 @@ function AuthPage() {
 
       const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
       if (error) throw error;
+      rememberVisitor();
       navigate({ to: "/admin", replace: true });
     } catch (err: any) {
       toast.error(humanAuthError(err?.message ?? String(err)));
@@ -184,7 +230,7 @@ function AuthPage() {
     signup: {
       title: "Создайте аккаунт",
       subtitle: "Пять минут — и салон принимает записи онлайн",
-      submit: "Создать аккаунт",
+      submit: "Начать бесплатно",
     },
     forgot: {
       title: "Восстановление пароля",

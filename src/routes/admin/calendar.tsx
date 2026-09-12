@@ -22,7 +22,25 @@ import {
   type AuditEntry,
 } from "@/lib/appointments.functions";
 
+/**
+ * Календарь умеет открываться сразу на нужном дне и в нужном виде.
+ *
+ * ЗАЧЕМ. Карточки дашборда («Записей сегодня», «Записей за 7 дней») обязаны быть кнопкой, а не
+ * числом: человек видит «4 записи сегодня» и хочет посмотреть какие. Без параметров в адресе
+ * такая ссылка приводит в календарь «вообще», и день ему приходится выбирать заново —
+ * то есть ровно то же самое, что и до нажатия.
+ *
+ * Поля возвращаются ТОЛЬКО когда они есть: обязательные search-параметры сломали бы все
+ * существующие ссылки на календарь (роутер потребовал бы писать их явно в каждом Link).
+ */
 export const Route = createFileRoute("/admin/calendar")({
+  validateSearch: (search: Record<string, unknown>): { view?: "day" | "week"; date?: string } => {
+    const out: { view?: "day" | "week"; date?: string } = {};
+    if (search.view === "day" || search.view === "week") out.view = search.view;
+    if (typeof search.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(search.date))
+      out.date = search.date;
+    return out;
+  },
   component: CalendarPage,
 });
 
@@ -46,6 +64,7 @@ function parseHour(t: string): number {
 }
 
 function CalendarPage() {
+  const { view: viewFromUrl, date: dateFromUrl } = Route.useSearch();
   const { isMaster, isSuperAdmin, branchId: ownBranchId } = useAuth();
   const lockedMaster = isMaster && !isSuperAdmin;
   const isMobile = useIsMobile();
@@ -59,7 +78,7 @@ function CalendarPage() {
   const [masters, setMasters] = useState<any[]>([]);
   const [schedules, setSchedules] = useState<any[]>([]);
   const [selectedMasterId, setSelectedMasterId] = useState<string>("all");
-  const [view, setView] = useState<"day" | "week">("day");
+  const [view, setView] = useState<"day" | "week">(viewFromUrl ?? "day");
   const [density, setDensity] = useState<Density>(() => {
     if (typeof window === "undefined") return "comfortable";
     const v = window.localStorage.getItem("qabyl.calendar.density") as Density | null;
@@ -74,7 +93,15 @@ function CalendarPage() {
     const next = DENSITY_ORDER[Math.max(0, Math.min(DENSITY_ORDER.length - 1, idx + delta))];
     setDensity(next);
   }
-  const [date, setDate] = useState<Date>(() => startOfDayInTz(new Date(), null));
+  const [date, setDate] = useState<Date>(() => {
+    // Дата из адреса — это «покажи мне вот этот день». Разбираем её как локальный полдень:
+    // new Date("2026-09-12") — полночь UTC, и в часовом поясе западнее Гринвича это вчера.
+    if (dateFromUrl) {
+      const [y, m, d] = dateFromUrl.split("-").map(Number);
+      return startOfDayInTz(new Date(y, m - 1, d, 12, 0, 0), null);
+    }
+    return startOfDayInTz(new Date(), null);
+  });
   const [appointments, setAppointments] = useState<any[]>([]);
   const [selected, setSelected] = useState<any | null>(null);
   const [restoreTarget, setRestoreTarget] = useState<any | null>(null);
