@@ -46,7 +46,16 @@ const RULES: { match: RegExp; text: string }[] = [
     match: /password should be at least|weak password/i,
     text: "Пароль слишком короткий — нужно минимум 8 символов.",
   },
-  { match: /rate limit|too many requests/i, text: "Слишком много попыток. Подождите минуту." },
+  {
+    // «Подождите минуту» здесь было неправдой: почтовый лимит у Supabase часовой, и человек,
+    // подождавший минуту, упирался в то же самое и решал, что сломано.
+    match: /for security purposes|after \d+ seconds?/i,
+    text: "Уже отправлено. Повторить можно через минуту.",
+  },
+  {
+    match: /rate limit|too many requests/i,
+    text: "Слишком много попыток за последний час. Попробуйте позже.",
+  },
   { match: /unable to validate email/i, text: "Проверьте, правильно ли написан email." },
 
   // ── Наши серверные функции ───────────────────────────────────────────────
