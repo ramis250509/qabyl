@@ -144,6 +144,12 @@ describe("шина событий", () => {
     expect(f.stop).toBe("unknown_type");
   });
 
+  test("инцидент не дублируется: Деби уже положил его на доску", () => {
+    const f = planEventFanout("incident.opened", { summary: "followups падает" }, 0);
+    expect(f.tasks).toHaveLength(0);
+    expect(f.stop).toBeUndefined();
+  });
+
   test("публикация контента задач не плодит — они созданы при одобрении", () => {
     const f = planEventFanout("content.approved", { posts: 3 }, 0);
     expect(f.tasks).toHaveLength(0);
