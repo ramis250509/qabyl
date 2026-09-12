@@ -1,8 +1,8 @@
 // Деби (Dev/SRE) — ТОЛЬКО СЕРВЕР. Находит проблемы и лечит те, что можно лечить без человека.
 //
 // ГРАНИЦА ПОЛНОМОЧИЙ. Деби не деплоит, не меняет код, не удаляет данные и не пишет клиентам
-// салонов. Его лечение — это возврат СОСТОЯНИЯ в норму: снять зависший замок обработки, разобрать
-// очередь событий, прогнать цикл оплаты вне расписания. Каждое такое действие идемпотентно и
+// салонов. Его лечение — это возврат СОСТОЯНИЯ в норму: разобрать очередь событий шины,
+// прогнать цикл оплаты вне расписания. Каждое такое действие идемпотентно и
 // проверяемо: после него тот же признак пересчитывается заново, и в отчёт идёт факт, а не надежда.
 //
 // Всё, что лечится только правкой кода (задача расписания не укладывается во время) или руками
@@ -14,7 +14,8 @@ import { createTask, emitEvent, routeEvents } from "@/lib/ops-bus.server";
 import { diagnose, formatHealingReport, type Finding, type Signals } from "@/lib/ops-sre-playbooks";
 
 const db = () => supabaseAdmin as any;
-const LOCK_GRACE_MS = 10 * 60_000;
+/** Пятнадцать минут: дольше этого необработанное сообщение клиента — уже не задержка, а поломка. */
+const STUCK_INBOUND_MS = 15 * 60_000;
 
 // ---------------------------------------------------------------------------
 // Сбор признаков
@@ -40,12 +41,21 @@ function cronJobFromMessage(message: string): string | null {
 export async function collectSignals(): Promise<Signals> {
   const dayAgo = new Date(Date.now() - 86_400_000).toISOString();
   const hourAgo = new Date(Date.now() - 3_600_000).toISOString();
-  const lockCutoff = new Date(Date.now() - LOCK_GRACE_MS).toISOString();
+  const stuckCutoff = new Date(Date.now() - STUCK_INBOUND_MS).toISOString();
+  const twoDaysAgo = new Date(Date.now() - 2 * 86_400_000).toISOString();
 
-  const [{ data: errors }, staleLocks, unhandledEvents, pendingInvoicesDue, { data: groups }] =
+  const [{ data: errors }, stuckInbound, unhandledEvents, pendingInvoicesDue, { data: groups }] =
     await Promise.all([
       db().from("error_logs").select("message").gte("ts", dayAgo).limit(2000),
-      countRows("wa_conversations", (q: any) => q.lt("processing_lock_until", lockCutoff)),
+      // Необработанные входящие: замок обработки сюда не входит — он истекает сам, и следующая
+      // попытка его игнорирует, так что «зависший замок» ничего не означает.
+      countRows("wa_messages", (q: any) =>
+        q
+          .eq("direction", "in")
+          .is("processed_at", null)
+          .lt("created_at", stuckCutoff)
+          .gte("created_at", twoDaysAgo),
+      ),
       countRows("ops_events", (q: any) => q.is("handled_at", null).lt("at", hourAgo)),
       countRows("billing_invoices", (q: any) =>
         q.eq("status", "pending").lte("next_attempt_at", new Date().toISOString()),
@@ -65,7 +75,7 @@ export async function collectSignals(): Promise<Signals> {
 
   return {
     cronTimeouts: [...timeouts.entries()].map(([job, count]) => ({ job, count })),
-    staleLocks,
+    stuckInbound,
     unhandledEvents,
     pendingInvoicesDue,
     waTokenErrors: messages.filter((m) => /code=190|OAuthException/i.test(m)).length,
@@ -87,18 +97,6 @@ export async function collectSignals(): Promise<Signals> {
 type RemedyResult = { ok: boolean; note: string };
 
 const REMEDIES: Record<string, () => Promise<RemedyResult>> = {
-  /** Снять истёкшие замки обработки: ассистент снова сможет взять ход в этих переписках. */
-  clear_stale_locks: async () => {
-    const cutoff = new Date(Date.now() - LOCK_GRACE_MS).toISOString();
-    const { data, error } = await db()
-      .from("wa_conversations")
-      .update({ processing_lock_until: null, processing_lock_id: null })
-      .lt("processing_lock_until", cutoff)
-      .select("id");
-    if (error) return { ok: false, note: `не удалось снять замки: ${error.message}` };
-    return { ok: true, note: `замки сняты: ${(data ?? []).length}` };
-  },
-
   /** Разобрать очередь событий — задачи агентов появятся на доске. */
   route_events: async () => {
     const res = await routeEvents(50);

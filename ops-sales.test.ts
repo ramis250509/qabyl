@@ -36,7 +36,7 @@ function lead(over: Partial<Lead> = {}): Lead {
 
 const noSignals: Signals = {
   cronTimeouts: [],
-  staleLocks: 0,
+  stuckInbound: 0,
   unhandledEvents: 0,
   pendingInvoicesDue: 0,
   waTokenErrors: 0,
@@ -129,11 +129,18 @@ describe("Деби: что чинить самому", () => {
     expect(formatHealingReport([], [])).toContain("всё чисто");
   });
 
-  test("зависшие замки, события и счета — лечит сам", () => {
-    const f = diagnose({ ...noSignals, staleLocks: 3, unhandledEvents: 5, pendingInvoicesDue: 1 });
-    expect(f).toHaveLength(3);
+  test("события шины и просроченные счета — лечит сам", () => {
+    const f = diagnose({ ...noSignals, unhandledEvents: 5, pendingInvoicesDue: 1 });
+    expect(f).toHaveLength(2);
     expect(f.every((x) => x.remedy === "auto")).toBe(true);
-    expect(f[0].detail).toContain("Снимаю замок");
+  });
+
+  test("сообщение клиента без ответа — инцидент, а не «сейчас поправлю»", () => {
+    const f = diagnose({ ...noSignals, stuckInbound: 4 });
+    expect(f).toHaveLength(1);
+    expect(f[0].key).toBe("stuck_inbound");
+    expect(f[0].remedy).toBe("none");
+    expect(f[0].title).toContain("4");
   });
 
   test("истёкший доступ салона и шаблоны — только руками", () => {
@@ -160,9 +167,9 @@ describe("Деби: что чинить самому", () => {
   });
 
   test("отчёт называет, что сделал сам и что осталось человеку", () => {
-    const findings = diagnose({ ...noSignals, staleLocks: 2, waTokenErrors: 1 });
+    const findings = diagnose({ ...noSignals, unhandledEvents: 2, waTokenErrors: 1 });
     const text = formatHealingReport(findings, [
-      { key: "clear_stale_locks", ok: true, note: "замки сняты: 2" },
+      { key: "route_events", ok: true, note: "разобрано событий: 2" },
     ]);
     expect(text).toContain("Починил сам: 1");
     expect(text).toContain("нужна твоя рука: 1");
