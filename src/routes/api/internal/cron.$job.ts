@@ -3,6 +3,7 @@
 //   /api/internal/cron/sre-scan            → SRE new-error scan (Деби)
 //   /api/internal/cron/prepayment-expired  → tell the client their held slot was released
 //   /api/internal/cron/wa-health           → проверка подключений WhatsApp у всех салонов
+//   /api/internal/cron/wa-reconcile        → перезапуск входящих, оставшихся без обработки
 //   /api/internal/cron/billing             → цикл биллинга: продление, отсрочка, блокировка
 //
 // Called by pg_cron via net.http_post with header x-cron-secret (see migrations
@@ -86,6 +87,18 @@ export const Route = createFileRoute("/api/internal/cron/$job")({
             const { runBillingCycle } = await import("@/lib/billing.server");
             const report = await runBillingCycle();
             console.log(`[cron billing] ${JSON.stringify(report)}`);
+            return json({ ok: true, ...report });
+          }
+
+          // Перезапуск потерянных сообщений: вебхук Meta приходит один раз, и если тот запрос
+          // упал, клиент остался бы без ответа навсегда. К Telegram и ops-агентам отношения не
+          // имеет — поэтому до их проверок.
+          if (job === "wa-reconcile") {
+            const { runWaReconcile } = await import("@/lib/wa-reconcile.server");
+            const report = await runWaReconcile();
+            if (report.stuckMessages > 0 || report.errors.length > 0) {
+              console.log(`[cron wa-reconcile] ${JSON.stringify(report)}`);
+            }
             return json({ ok: true, ...report });
           }
 

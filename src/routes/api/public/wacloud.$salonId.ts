@@ -995,6 +995,16 @@ export async function processWaCloudPayload(opts: {
   /** Короткий идентификатор запроса — сшивает строки логов одного вебхука. */
   rid: string;
   /**
+   * Разговоры, которые нужно прогнать, даже если в этой доставке для них ничего нет.
+   *
+   * Единственный потребитель — перезапуск потерянных сообщений (wa-reconcile.server.ts). Вебхук
+   * Meta приходит один раз, и если тот запрос упал, сообщение клиента остаётся необработанным
+   * навсегда. Повторно «доставить» его нельзя: дедупликация по wamid справедливо считает его
+   * дублем и ничего не запускает. Поэтому перезапуск не притворяется доставкой, а честно говорит,
+   * какие разговоры прогнать — дальше всё идёт обычным путём: замок, слив очереди, агент.
+   */
+  forceConversationIds?: string[];
+  /**
    * Чем отвечать клиенту. По умолчанию — Cloud API на реквизитах салона; маршрут моста
    * подставляет сюда Make. Пайплайн ниже про это не знает и знать не должен.
    */
@@ -1105,10 +1115,11 @@ export async function processWaCloudPayload(opts: {
     await handleEcho({ db: supabaseAdmin, salonId, echo, log, errLog });
   }
 
-  if (events.length === 0) return ack();
+  const forced = opts.forceConversationIds ?? [];
+  if (events.length === 0 && forced.length === 0) return ack();
 
   // ---- Ingest each client message, then run at most one agent turn per conversation.
-  const toRun = new Set<string>();
+  const toRun = new Set<string>(forced);
   for (const ev of events) {
     const convId = await ingestEvent({
       db: supabaseAdmin,
