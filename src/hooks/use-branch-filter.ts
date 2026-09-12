@@ -120,5 +120,10 @@ export function useAdminFilters() {
     setSalonId, setBranchId,
     currentSalon, currentBranch,
     isSuperAdmin, isMaster,
+    // Сеть или одна точка. Пока точка одна, интерфейс не произносит слово «филиал»:
+    // выпадающий список из одного пункта и «Все филиалы» ничего не выбирают, а объяснять
+    // владелице одной студии чужой термин — брать с неё плату за нашу схему базы.
+    // См. src/hooks/use-salon-shape.ts — там то же правило для экранов настроек.
+    multiBranch: branches.length > 1,
   };
 }

@@ -33,6 +33,8 @@ import {
   revokeEmployeeAccess,
   setStaffIsolation,
 } from "@/lib/rbac.functions";
+import { useSalonShape } from "@/hooks/use-salon-shape";
+import { SharedMasterLoginsCard } from "@/components/admin/SharedMasterLoginsCard";
 
 type Employee = Awaited<ReturnType<typeof listSalonEmployees>>[number];
 type Role = "salon_admin" | "manager" | "master";
@@ -53,7 +55,7 @@ const ROLES: { value: Role; label: string; desc: string }[] = [
   {
     value: "master",
     label: "Мастер",
-    desc: "Только свой филиал: календарь и свои записи.",
+    desc: "Календарь и свои записи. Без цен, настроек и статистики.",
   },
   {
     value: "salon_admin",
@@ -72,8 +74,10 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
   const revoke = useServerFn(revokeEmployeeAccess);
   const setIsolation = useServerFn(setStaffIsolation);
 
+  // Филиалы читаются общим хуком: он же решает, произносит ли интерфейс слово «филиал».
+  const { branches, isMulti } = useSalonShape(salonId);
+
   const [rows, setRows] = useState<Employee[] | null>(null);
-  const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
   const [isolation, setIsolationState] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -83,15 +87,11 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
 
   const load = useCallback(async () => {
     try {
-      const [emp, br, salon] = await Promise.all([
+      const [emp, salon] = await Promise.all([
         list({ data: { salonId } }),
-        supabase.from("branches").select("id, name").eq("salon_id", salonId).order("sort_order"),
         supabase.from("salons").select("staff_isolation").eq("id", salonId).maybeSingle(),
       ]);
       setRows(emp);
-      const brList = (br.data ?? []) as { id: string; name: string }[];
-      setBranches(brList);
-      if (!branchId && brList[0]) setBranchId(brList[0].id);
       setIsolationState(Boolean((salon.data as any)?.staff_isolation));
     } catch (e: any) {
       toast.error(e?.message ?? "Не удалось загрузить список сотрудников");
@@ -103,13 +103,23 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
     void load();
   }, [load]);
 
+  // Первая точка подставляется сама: у салона с одной точкой выбирать нечего, а сервер всё равно
+  // требует branch_id для роли мастера.
+  useEffect(() => {
+    if (!branchId && branches[0]) setBranchId(branches[0].id);
+  }, [branches, branchId]);
+
   async function onInvite() {
     const value = email.trim();
     if (!value) return toast.error("Введите email сотрудника");
     // Мастеру филиал обязателен: без него сервер откажет валидацией, а владельцу останется
     // непонятное «branchId required». Проверяем здесь, где можно сказать по-человечески.
     if (role === "master" && !branchId) {
-      return toast.error("Выберите филиал — мастер работает в конкретном филиале");
+      return toast.error(
+        isMulti
+          ? "Выберите точку — мастер работает в конкретной точке"
+          : "Не удалось определить салон. Обновите страницу и попробуйте снова.",
+      );
     }
 
     setBusy(true);
@@ -158,7 +168,7 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
       toast.success(
         next
           ? "Мастера теперь видят только свои записи"
-          : "Мастера снова видят календарь всего филиала",
+          : "Мастера снова видят весь календарь",
       );
     } catch (e: any) {
       setIsolationState(prev);
@@ -210,7 +220,9 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
 
         <p className="text-xs text-muted-foreground">{selectedRole.desc}</p>
 
-        {role === "master" && branches.length > 0 && (
+        {/* Точку спрашиваем только у сети. У салона с одной точкой ответ известен заранее —
+            он подставлен выше, и лишний вопрос тут только пугает. */}
+        {role === "master" && isMulti && (
           <div className="space-y-1.5">
             <Label>Филиал</Label>
             <Select value={branchId} onValueChange={setBranchId}>
@@ -284,14 +296,17 @@ export function TeamAccessTab({ salonId }: { salonId: string }) {
           <div className="min-w-0">
             <h2 className="font-semibold">Мастер видит только свои записи</h2>
             <p className="mt-0.5 text-sm text-muted-foreground">
-              Обычно мастер видит календарь всего филиала — так удобнее подменять друг друга. В
-              клиниках и там, где записи считаются личными, это стоит выключить: тогда каждый видит
-              только то, что записано на него.
+              Обычно мастер видит весь календарь — так удобнее подменять друг друга. В клиниках и
+              там, где записи считаются личными, это стоит выключить: тогда каждый видит только то,
+              что записано на него.
             </p>
           </div>
           <Switch checked={isolation} onCheckedChange={onToggleIsolation} />
         </div>
       </Card>
+
+      {/* Переехало из «Салон → Филиалы»: все доступы теперь в одном месте. */}
+      <SharedMasterLoginsCard salonId={salonId} branches={branches} isMulti={isMulti} />
     </div>
   );
 }

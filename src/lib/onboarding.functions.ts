@@ -321,7 +321,9 @@ export const getOnboardingProgress = createServerFn({ method: "POST" })
       await Promise.all([
         supabaseAdmin
           .from("salons")
-          .select("id, name, slug, phone, address, ai_assistant_enabled, whatsapp_enabled")
+          .select(
+            "id, name, slug, phone, address, ai_assistant_enabled, whatsapp_enabled, instagram_enabled",
+          )
           .eq("id", data.salonId)
           .maybeSingle(),
         supabaseAdmin
@@ -366,5 +368,20 @@ export const getOnboardingProgress = createServerFn({ method: "POST" })
       whatsapp: computeWaStatus((secretsRes as any)?.data ?? null, {
         platformBilling: Boolean((process.env.YCLOUD_API_KEY ?? "").trim()),
       }),
+      // Instagram считается здесь же, а не отдельным запросом с экрана: «состояние канала» —
+      // один вопрос, и два разных ответа на него (дашборд говорит одно, вкладка «Каналы» другое)
+      // появятся ровно в тот момент, когда владелец смотрит на оба экрана сразу.
+      //
+      // Подключён = есть чем отвечать (токен + аккаунт) И чем проверить подпись вебхука
+      // (app secret). Без последнего маршрут /api/public/ig отказывает вообще всем — то есть
+      // канал выглядит настроенным и молчит.
+      instagram: {
+        connected: Boolean(
+          (secretsRes as any)?.data?.instagram_token &&
+            (secretsRes as any)?.data?.instagram_user_id &&
+            (secretsRes as any)?.data?.instagram_app_secret,
+        ),
+        enabled: Boolean(salon?.instagram_enabled),
+      },
     };
   });

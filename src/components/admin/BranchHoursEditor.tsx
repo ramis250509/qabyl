@@ -45,7 +45,19 @@ export function invalidHourDays(h: BranchHours | null | undefined): string[] {
   return bad;
 }
 
-export function BranchHoursEditor({ value, onChange }: { value: BranchHours | null | undefined; onChange: (v: BranchHours) => void }) {
+// Как назвать то, чей это график. Салон с одной точкой слова «филиал» не знает и знать не должен —
+// для него это просто «график работы». Сеть подставляет сюда имя точки.
+export function BranchHoursEditor({
+  value,
+  onChange,
+  label = "График работы",
+  hint = "Если в этот день не работаете — снимите галочку. Слоты записи учитывают эти часы.",
+}: {
+  value: BranchHours | null | undefined;
+  onChange: (v: BranchHours) => void;
+  label?: string;
+  hint?: string;
+}) {
   const hours: BranchHours = value && typeof value === "object" ? (value as BranchHours) : defaultBranchHours();
 
   function setDay(dow: number, intervals: { start: string; end: string }[]) {
@@ -67,12 +79,12 @@ export function BranchHoursEditor({ value, onChange }: { value: BranchHours | nu
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-2">
-        <Label>График работы филиала</Label>
+        <Label>{label}</Label>
         <Button type="button" size="sm" variant="outline" onClick={applyToAllDays}>
           Изменить все
         </Button>
       </div>
-      <p className="text-xs text-muted-foreground">Если филиал закрыт — снимите галочку. Слоты записи учитывают эти часы.</p>
+      <p className="text-xs text-muted-foreground">{hint}</p>
       <div className="rounded-lg border divide-y">
         {WEEKDAYS.map((d) => {
           const intervals = hours[String(d.dow)] ?? [];

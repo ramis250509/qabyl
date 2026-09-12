@@ -72,18 +72,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { toast } from "sonner";
 import { createSalonAdmin, listSalonAdmins, revokeSalonAdmin } from "@/lib/salon-admins.functions";
-import {
-  createBranchMaster,
-  listBranchMasters,
-  revokeBranchMaster,
-} from "@/lib/branch-masters.functions";
-import {
-  createSalonMaster,
-  listSalonMasters,
-  revokeSalonMaster,
-} from "@/lib/salon-masters.functions";
 import { getSalonSecrets, upsertSalonSecrets } from "@/lib/salon-secrets.functions";
-import { KeyRound } from "lucide-react";
 import { SiteTab } from "@/components/admin/SiteTab";
 import { SalonShareCard } from "@/components/admin/SalonShareCard";
 import { ReviewsTab } from "@/components/admin/ReviewsTab";
@@ -97,10 +86,8 @@ import {
 import { MasterDayOverrides } from "@/components/admin/MasterDayOverrides";
 import { SalonDayOverridesCard } from "@/components/admin/SalonDayOverridesCard";
 import { AiAssistantTab } from "@/components/admin/AiAssistantTab";
-import { InstagramTab } from "@/components/admin/InstagramTab";
-import { WhatsAppCard } from "@/components/admin/WhatsAppCard";
+import { ChannelsTab } from "@/components/admin/ChannelsTab";
 import { TeamAccessTab } from "@/components/admin/TeamAccessTab";
-import { GupshupCard } from "@/components/admin/GupshupCard";
 import { PrepaymentTab } from "@/components/admin/PrepaymentTab";
 import { ScheduleImportTab } from "@/components/admin/ScheduleImportTab";
 import { ServiceExportDialog } from "@/components/admin/ServiceExportDialog";
@@ -201,9 +188,24 @@ const TIMEZONES: { value: string; label: string }[] = [
   { value: "Europe/Istanbul", label: "Стамбул (UTC+3)" },
 ];
 
+/**
+ * Старые адреса вкладок продолжают работать.
+ *
+ * `?tab=integrations` и `?tab=instagram` разошлись по кабинету задолго до объединения: они стоят
+ * в чеклисте на дашборде, в полосе состояния каналов, в письмах поддержки и в закладках владельцев.
+ * Ломать их ради переименования — значит на пустом месте отправить человека на «Салон» вместо
+ * того, за чем он шёл.
+ */
+function normalizeTab(tab: string | undefined): string | undefined {
+  if (!tab) return undefined;
+  if (tab === "integrations" || tab === "instagram") return "channels";
+  return tab;
+}
+
 function SalonEdit() {
   const { salonId } = Route.useParams();
-  const { tab: tabFromUrl } = Route.useSearch();
+  const { tab: rawTab } = Route.useSearch();
+  const tabFromUrl = normalizeTab(rawTab);
   const navigate = useNavigate();
   const { isSuperAdmin } = useAuth();
   const [salon, setSalon] = useState<any>(null);
@@ -255,9 +257,8 @@ function SalonEdit() {
               <TabsTrigger value="services">Услуги</TabsTrigger>
               <TabsTrigger value="masters">Мастера</TabsTrigger>
               <TabsTrigger value="site">Сайт</TabsTrigger>
-              <TabsTrigger value="integrations">WhatsApp</TabsTrigger>
+              <TabsTrigger value="channels">Каналы</TabsTrigger>
               <TabsTrigger value="chats">Переписки</TabsTrigger>
-              <TabsTrigger value="instagram">Instagram</TabsTrigger>
               <TabsTrigger value="prepayment">Предоплата</TabsTrigger>
               {(isSuperAdmin || salon.ai_assistant_enabled) && (
                 <TabsTrigger value="ai">Ассистент</TabsTrigger>
@@ -303,16 +304,16 @@ function SalonEdit() {
             </div>
           </TabsContent>
 
-          <TabsContent value="integrations">
-            <IntegrationsTab salon={salon} onSaved={(s) => setSalon(s)} />
+          <TabsContent value="channels">
+            <ChannelsTab
+              salon={salon}
+              onSalonSaved={(s) => setSalon(s)}
+              initialChannel={rawTab === "instagram" ? "instagram" : "whatsapp"}
+            />
           </TabsContent>
 
           <TabsContent value="chats">
             <WaChatsTab salonId={salonId} />
-          </TabsContent>
-
-          <TabsContent value="instagram">
-            <InstagramTab salonId={salonId} salonName={salon.name} />
           </TabsContent>
 
           <TabsContent value="prepayment">
@@ -324,7 +325,7 @@ function SalonEdit() {
               <AiAssistantTab
                 salonId={salonId}
                 salonName={salon.name}
-                onOpenWhatsAppTab={() => setActiveTab("integrations")}
+                onOpenChannels={() => setActiveTab("channels")}
               />
             </TabsContent>
           )}
@@ -491,20 +492,8 @@ function SalonInfoTab({
           </div>
         </div>
         <p className="text-xs text-muted-foreground">
-          Конкретные адреса и телефоны точек настраиваются во вкладке «Филиалы».
+          Это основной адрес и телефон салона. Если точек несколько — у каждой будут свои, ниже.
         </p>
-        <div>
-          <Label>Кастомный домен</Label>
-          <Input
-            value={form.custom_domain ?? ""}
-            onChange={(e) => setForm({ ...form, custom_domain: e.target.value })}
-            placeholder="zapis.салон.com"
-          />
-          <p className="text-xs text-muted-foreground mt-1">
-            Без <code>https://</code> и без слэшей.
-          </p>
-        </div>
-
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <Label>Основной цвет</Label>
@@ -840,8 +829,6 @@ function SalonScheduleCard({
 function BranchesTab({ salonId }: { salonId: string }) {
   const [branches, setBranches] = useState<any[]>([]);
   const [editing, setEditing] = useState<any | null>(null);
-  const [mastersForBranch, setMastersForBranch] = useState<any | null>(null);
-  const [salonMastersOpen, setSalonMastersOpen] = useState(false);
 
   async function load() {
     const { data } = await supabase
@@ -902,14 +889,6 @@ function BranchesTab({ salonId }: { salonId: string }) {
                 </div>
               </div>
               <div className="flex gap-1 shrink-0">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  title="Логины мастеров филиала"
-                  onClick={() => setMastersForBranch(b)}
-                >
-                  <KeyRound className="h-4 w-4" />
-                </Button>
                 <Button size="sm" variant="ghost" onClick={() => setEditing(b)}>
                   <Edit className="h-4 w-4" />
                 </Button>
@@ -934,25 +913,7 @@ function BranchesTab({ salonId }: { salonId: string }) {
             </div>
           ))}
         </div>
-      ) : (
-        <div className="rounded-lg border border-dashed p-3 flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-sm font-medium">Логины мастеров салона</p>
-            <p className="text-xs text-muted-foreground">
-              Общий логин для мастеров — они видят только Календарь и Уведомления салона.
-            </p>
-          </div>
-          <Button
-            size="sm"
-            variant="outline"
-            className="shrink-0"
-            onClick={() => setSalonMastersOpen(true)}
-          >
-            <KeyRound className="h-4 w-4 mr-1" />
-            Управлять
-          </Button>
-        </div>
-      )}
+      ) : null}
 
       {editing && (
         <BranchDialog
@@ -964,297 +925,7 @@ function BranchesTab({ salonId }: { salonId: string }) {
           }}
         />
       )}
-      {mastersForBranch && (
-        <BranchMastersDialog branch={mastersForBranch} onClose={() => setMastersForBranch(null)} />
-      )}
-      {salonMastersOpen && (
-        <SalonMastersDialog salonId={salonId} onClose={() => setSalonMastersOpen(false)} />
-      )}
     </Card>
-  );
-}
-
-function BranchMastersDialog({ branch, onClose }: { branch: any; onClose: () => void }) {
-  const list = useServerFn(listBranchMasters);
-  const create = useServerFn(createBranchMaster);
-  const revoke = useServerFn(revokeBranchMaster);
-  const [items, setItems] = useState<any[]>([]);
-  const [email, setEmail] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [newCreds, setNewCreds] = useState<{ email: string; password: string } | null>(null);
-
-  async function load() {
-    try {
-      setItems(await list({ data: { branchId: branch.id } }));
-    } catch (e: any) {
-      toast.error(e.message);
-    }
-  }
-  useEffect(() => {
-    load();
-  }, [branch.id]);
-
-  async function onCreate() {
-    if (!email.trim()) return toast.error("Введите email");
-    setBusy(true);
-    try {
-      const res = await create({ data: { branchId: branch.id, email: email.trim() } });
-      if (res.alreadyExisted) toast.success("Пользователь уже существовал — доступ выдан");
-      else if (res.password) setNewCreds({ email: res.email, password: res.password });
-      setEmail("");
-      load();
-    } catch (e: any) {
-      toast.error(e.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onRevoke(roleId: string) {
-    if (!confirm("Отозвать доступ?")) return;
-    try {
-      await revoke({ data: { roleId } });
-      toast.success("Доступ отозван");
-      load();
-    } catch (e: any) {
-      toast.error(e.message);
-    }
-  }
-
-  return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Логины мастеров — {branch.name}</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3">
-          <p className="text-sm text-muted-foreground">
-            Создай общий логин для филиала. Все мастера филиала заходят под ним и видят только
-            календарь и уведомления своего филиала.
-          </p>
-          <div className="flex gap-2">
-            <Input
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="masters-aksakal@salon.com"
-              type="email"
-            />
-            <Button onClick={onCreate} disabled={busy}>
-              <UserPlus className="h-4 w-4 mr-1" />
-              {busy ? "..." : "Создать"}
-            </Button>
-          </div>
-          <div className="space-y-2">
-            {items.length === 0 && (
-              <p className="text-sm text-muted-foreground">Пока никто не имеет доступа</p>
-            )}
-            {items.map((a) => (
-              <div key={a.id} className="flex items-center justify-between p-3 border rounded-lg">
-                <div>
-                  <p className="text-sm font-medium">{a.email}</p>
-                  <p className="text-xs text-muted-foreground">
-                    Доступ с {new Date(a.createdAt).toLocaleDateString("ru-RU")}
-                  </p>
-                </div>
-                <Button size="sm" variant="ghost" onClick={() => onRevoke(a.id)}>
-                  <Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <Dialog open={!!newCreds} onOpenChange={(o) => !o && setNewCreds(null)}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Логин создан</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">
-                Передай эти данные мастерам филиала. Пароль показывается один раз!
-              </p>
-              <div>
-                <Label>Email</Label>
-                <div className="flex gap-2">
-                  <Input value={newCreds?.email ?? ""} readOnly />
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={() => {
-                      navigator.clipboard.writeText(newCreds?.email ?? "");
-                      toast.success("Скопировано");
-                    }}
-                  >
-                    <Copy className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-              <div>
-                <Label>Пароль</Label>
-                <div className="flex gap-2">
-                  <Input value={newCreds?.password ?? ""} readOnly className="font-mono" />
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={() => {
-                      navigator.clipboard.writeText(newCreds?.password ?? "");
-                      toast.success("Скопировано");
-                    }}
-                  >
-                    <Copy className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-              <Button className="w-full" onClick={() => setNewCreds(null)}>
-                Готово
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function SalonMastersDialog({ salonId, onClose }: { salonId: string; onClose: () => void }) {
-  const list = useServerFn(listSalonMasters);
-  const create = useServerFn(createSalonMaster);
-  const revoke = useServerFn(revokeSalonMaster);
-  const [items, setItems] = useState<any[]>([]);
-  const [email, setEmail] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [newCreds, setNewCreds] = useState<{ email: string; password: string } | null>(null);
-
-  async function load() {
-    try {
-      setItems(await list({ data: { salonId } }));
-    } catch (e: any) {
-      toast.error(e.message);
-    }
-  }
-  useEffect(() => {
-    load();
-  }, [salonId]);
-
-  async function onCreate() {
-    if (!email.trim()) return toast.error("Введите email");
-    setBusy(true);
-    try {
-      const res = await create({ data: { salonId, email: email.trim() } });
-      if (res.alreadyExisted) toast.success("Пользователь уже существовал — доступ выдан");
-      else if (res.password) setNewCreds({ email: res.email, password: res.password });
-      setEmail("");
-      load();
-    } catch (e: any) {
-      toast.error(e.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onRevoke(roleId: string) {
-    if (!confirm("Отозвать доступ?")) return;
-    try {
-      await revoke({ data: { roleId } });
-      toast.success("Доступ отозван");
-      load();
-    } catch (e: any) {
-      toast.error(e.message);
-    }
-  }
-
-  return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Логины мастеров салона</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3">
-          <p className="text-sm text-muted-foreground">
-            Создай общий логин для мастеров салона. Они зайдут под ним и увидят только Календарь и
-            Уведомления салона.
-          </p>
-          <div className="flex gap-2">
-            <Input
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="masters@salon.com"
-              type="email"
-            />
-            <Button onClick={onCreate} disabled={busy}>
-              <UserPlus className="h-4 w-4 mr-1" />
-              {busy ? "..." : "Создать"}
-            </Button>
-          </div>
-          <div className="space-y-2">
-            {items.length === 0 && (
-              <p className="text-sm text-muted-foreground">Пока никто не имеет доступа</p>
-            )}
-            {items.map((a) => (
-              <div key={a.id} className="flex items-center justify-between p-3 border rounded-lg">
-                <div>
-                  <p className="text-sm font-medium">{a.email}</p>
-                  <p className="text-xs text-muted-foreground">
-                    Доступ с {new Date(a.createdAt).toLocaleDateString("ru-RU")}
-                  </p>
-                </div>
-                <Button size="sm" variant="ghost" onClick={() => onRevoke(a.id)}>
-                  <Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <Dialog open={!!newCreds} onOpenChange={(o) => !o && setNewCreds(null)}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Логин создан</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">
-                Передай эти данные мастерам. Пароль показывается один раз!
-              </p>
-              <div>
-                <Label>Email</Label>
-                <div className="flex gap-2">
-                  <Input value={newCreds?.email ?? ""} readOnly />
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={() => {
-                      navigator.clipboard.writeText(newCreds?.email ?? "");
-                      toast.success("Скопировано");
-                    }}
-                  >
-                    <Copy className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-              <div>
-                <Label>Пароль</Label>
-                <div className="flex gap-2">
-                  <Input value={newCreds?.password ?? ""} readOnly className="font-mono" />
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={() => {
-                      navigator.clipboard.writeText(newCreds?.password ?? "");
-                      toast.success("Скопировано");
-                    }}
-                  >
-                    <Copy className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-              <Button className="w-full" onClick={() => setNewCreds(null)}>
-                Готово
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-      </DialogContent>
-    </Dialog>
   );
 }
 
@@ -1374,6 +1045,7 @@ function BranchDialog({
           <BranchHoursEditor
             value={form.working_hours}
             onChange={(wh) => setForm({ ...form, working_hours: wh })}
+            label={form.name ? `График работы — ${form.name}` : "График работы этой точки"}
           />
           <Button className="w-full" onClick={save}>
             Сохранить
@@ -1931,7 +1603,11 @@ function MasterDialog({
             </div>
           </div>
 
-          {branches.length > 0 && (
+          {/* Выбор точки нужен только сети. У салона с одной точкой мастер работает в ней по
+              определению, и branch_id остаётся NULL — «во всех точках», что для одной точки то же
+              самое. Показывать здесь список из одного пункта и «— Без филиала —» значит задавать
+              владелице вопрос, у которого нет неправильного ответа. */}
+          {branches.length > 1 && (
             <div>
               <Label>Филиал</Label>
               <Select
@@ -3261,146 +2937,6 @@ function ServiceDialog({
         </div>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function IntegrationsTab({ salon, onSaved }: { salon: any; onSaved: (s: any) => void }) {
-  const { isSuperAdmin } = useAuth();
-  const [ownerPhone, setOwnerPhone] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [waEnabled, setWaEnabled] = useState<boolean>(!!salon.whatsapp_enabled);
-  const [waBusy, setWaBusy] = useState(false);
-
-  useEffect(() => {
-    setWaEnabled(!!salon.whatsapp_enabled);
-  }, [salon.whatsapp_enabled]);
-
-  const loadSecrets = useServerFn(getSalonSecrets);
-  const saveSecrets = useServerFn(upsertSalonSecrets);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const data = await loadSecrets({ data: { salonId: salon.id } });
-        if (cancelled) return;
-        setOwnerPhone(data?.owner_notify_phone ?? "");
-      } catch (e: any) {
-        if (!cancelled) toast.error(e.message ?? "Не удалось загрузить настройки");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [salon.id]);
-
-  async function toggleWa(v: boolean) {
-    setWaBusy(true);
-    const prev = waEnabled;
-    setWaEnabled(v);
-    const { data, error } = await supabase
-      .from("salons")
-      .update({ whatsapp_enabled: v })
-      .eq("id", salon.id)
-      .select()
-      .single();
-    setWaBusy(false);
-    if (error) {
-      setWaEnabled(prev);
-      return toast.error(error.message);
-    }
-    toast.success(v ? "WhatsApp-уведомления включены" : "WhatsApp-уведомления выключены");
-    if (data) onSaved(data);
-  }
-
-  async function save() {
-    setSaving(true);
-    try {
-      await saveSecrets({
-        data: {
-          salonId: salon.id,
-          owner_notify_phone: ownerPhone.replace(/[^\d]/g, "") || null,
-        },
-      });
-      toast.success("Сохранено");
-    } catch (e: any) {
-      toast.error(e.message ?? "Не удалось сохранить");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div className="space-y-4 max-w-2xl">
-      <Card className="p-6 space-y-3">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <h2 className="font-semibold">Писать клиентам в WhatsApp</h2>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              Подтверждения записи, напоминания за два часа, сообщения о переносе и отмене. Если
-              выключить, Qabyl перестанет писать клиентам, а на странице записи исчезнут упоминания
-              WhatsApp. Ассистент, отвечающий на входящие, при этом продолжит работать.
-            </p>
-          </div>
-          <Switch checked={waEnabled} onCheckedChange={toggleWa} disabled={waBusy} />
-        </div>
-      </Card>
-
-      <Card className={`p-6 space-y-4 ${!waEnabled ? "opacity-60" : ""}`}>
-        <div className="flex items-center justify-between gap-2 flex-wrap">
-          <div>
-            <h2 className="font-semibold">Уведомления владельцу</h2>
-            <p className="text-sm text-muted-foreground">
-              Куда писать самому салону: о новой записи и о том, что ассистент передал диалог живому
-              администратору.
-            </p>
-          </div>
-          {!waEnabled && (
-            <span className="text-[11px] uppercase tracking-wide px-2 py-1 rounded bg-muted text-muted-foreground shrink-0">
-              Интеграция выключена
-            </span>
-          )}
-        </div>
-        <div>
-          <Label>Телефон владельца для уведомлений</Label>
-          <Input
-            value={ownerPhone}
-            onChange={(e) => setOwnerPhone(e.target.value)}
-            placeholder="996700123456"
-            disabled={loading}
-          />
-          <p className="text-xs text-muted-foreground mt-1">
-            При каждой новой записи владельцу салона придёт WhatsApp на этот номер. Формат: только
-            цифры с кодом страны.
-          </p>
-          {/* An empty field saves as NULL and silently disabled every escalation alert (and the
-              /restart test command). Make that consequence visible instead of losing it quietly. */}
-          {!loading && !ownerPhone.replace(/[^\d]/g, "") && (
-            <p className="text-xs text-amber-700 mt-1">
-              Номер не указан. WhatsApp-уведомления владельцу отправляться не будут — в том числе
-              когда ИИ передаёт диалог живому администратору. Такие случаи будут видны только во
-              вкладке «Уведомления».
-            </p>
-          )}
-        </div>
-        <Button onClick={save} disabled={saving || loading}>
-          {saving ? "..." : "Сохранить"}
-        </Button>
-      </Card>
-
-      {/* Подключение к официальному WhatsApp Cloud API. Транспорт теперь один: Green-API удалён,
-          выбирать больше не из чего. */}
-      <WhatsAppCard salonId={salon.id} />
-
-      {/* Подключение через BSP. Запасной путь для салона, которому Embedded Signup недоступен —
-          например, потому что его WABA принадлежит нашему же бизнес-портфолио. Владельцу салона не
-          показывается: выбор между прямым подключением и BSP делает платформа, а не он, и лишний
-          экран с чужими терминами тут только мешает. */}
-      {isSuperAdmin && <GupshupCard salonId={salon.id} />}
-    </div>
   );
 }
 

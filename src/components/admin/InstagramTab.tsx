@@ -584,23 +584,58 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
 
       <Card className="p-6 space-y-4">
         <div>
-          <h2 className="font-semibold">Шаг 2. Создайте приложение в Meta</h2>
+          <h2 className="font-semibold">Шаг 2. Получите доступ к API</h2>
           <p className="text-sm text-muted-foreground mt-1">
+            Два способа. Первый не имеет ограничений по числу салонов и живёт постоянно — берите
+            его, если у владельца есть аккаунт Facebook. Второй быстрее и Facebook не требует, но
+            его выдаёт Qabyl вручную, и число таких подключений ограничено.
+          </p>
+        </div>
+
+        {/* Вариант А. Салон — владелец своего приложения, поэтому его аккаунт имеет в нём роль,
+            и Standard Access покрывает переписку без App Review. Потолка нет: ограничение
+            «до 50/500» относится к ролям в ЧУЖОМ приложении, а здесь приложение своё. */}
+        <div className="rounded-md border p-4 space-y-2">
+          <div className="font-medium text-sm">Вариант А. Своё приложение салона</div>
+          <p className="text-sm text-muted-foreground">
             Откройте{" "}
             <a
               className="underline inline-flex items-center gap-1"
-              href="https://developers.facebook.com/apps"
+              href="https://developers.facebook.com/apps/create/"
               target="_blank"
               rel="noreferrer"
             >
-              developers.facebook.com/apps
+              developers.facebook.com/apps/create
               <ExternalLink className="h-3 w-3" />
             </a>{" "}
             → «Создать приложение» → продукт <b>Instagram</b> →{" "}
             <b>«API setup with Instagram login»</b> (именно этот пункт, не «with Facebook login»).
-            Там подключите свой Instagram-аккаунт и сгенерируйте токен доступа с правами{" "}
+            Там подключите Instagram-аккаунт салона и сгенерируйте токен доступа с правами{" "}
             <code className="text-xs">instagram_business_basic</code> и{" "}
             <code className="text-xs">instagram_business_manage_messages</code>.
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Владельцу нужен аккаунт Facebook — только чтобы создать приложение. Ни страница
+            Facebook, ни привязка к ней не требуются. App Review при этом не нужен никогда: аккаунт
+            салона имеет роль в своём же приложении.
+          </p>
+        </div>
+
+        {/* Вариант Б. Аккаунт салона добавляется тестировщиком в приложение Qabyl. Салону не
+            нужен ни Facebook, ни приложение — но это режим разработки, и роли конечны. */}
+        <div className="rounded-md border p-4 space-y-2">
+          <div className="font-medium text-sm">Вариант Б. Тестировщик в приложении Qabyl</div>
+          <p className="text-sm text-muted-foreground">
+            Салону не нужен ни Facebook, ни своё приложение — только принять приглашение. Напишите
+            нам имя Instagram-аккаунта, мы добавим его в роли и пришлём токен для полей ниже.
+          </p>
+          <p className="text-sm text-muted-foreground">
+            Владелец принимает приглашение в приложении Instagram: «Настройки» → «Для
+            профессионалов» → «Приложения и сайты» → «Приглашения тестировщиков» → «Принять».
+          </p>
+          <p className="text-xs text-amber-700">
+            Этот способ Meta предназначает для разработки и тестирования, и число ролей конечно. Для
+            постоянной работы салона лучше вариант А.
           </p>
         </div>
       </Card>

@@ -318,3 +318,109 @@
     }
   }
 }
+
+/*
+ * ---------------------------------------------------------------------------
+ * Motion-system: одни и те же длительности и кривые на весь продукт.
+ * ---------------------------------------------------------------------------
+ *
+ * Почему переменными, а не числами по месту. Раньше каждая анимация писалась
+ * заново: где-то 150 мс, где-то 300, где-то ease-in-out, где-то ничего. Глазу
+ * это читается как «сделано разными людьми в разное время» — ровно то ощущение,
+ * от которого продукт выглядит как MVP. Переменные дают один словарь:
+ *
+ *   --qb-fast   (120 мс) — то, что должно казаться мгновенным: нажатие, hover.
+ *   --qb-base   (200 мс) — обычный переход: появление, смена состояния.
+ *   --qb-slow   (320 мс) — то, что въезжает на экран: модалка, шторка.
+ *
+ *   --qb-ease   — «выход» без отскока, для почти всего.
+ *   --qb-spring — мягкий доводчик, для появления карточек и попапов.
+ *
+ * Всё держится на transform/opacity: они не заставляют браузер пересчитывать
+ * раскладку, поэтому не роняют скролл на дешёвом телефоне.
+ */
+:root {
+  --qb-fast: 120ms;
+  --qb-base: 200ms;
+  --qb-slow: 320ms;
+  --qb-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --qb-spring: cubic-bezier(0.34, 1.36, 0.64, 1);
+}
+
+@layer utilities {
+  /* Нажатие. Палец на телефоне не видит hover — ему нужен отклик именно на
+     нажатие, иначе кажется, что кнопка не сработала и её жмут второй раз. */
+  .qb-press {
+    transition:
+      transform var(--qb-fast) var(--qb-ease),
+      box-shadow var(--qb-fast) var(--qb-ease),
+      background-color var(--qb-fast) var(--qb-ease),
+      color var(--qb-fast) var(--qb-ease),
+      border-color var(--qb-fast) var(--qb-ease);
+  }
+  .qb-press:active:not(:disabled) { transform: scale(0.97); }
+
+  /* Кликабельная карточка. Подъём на 1px + тень — этого хватает, чтобы палец
+     и курсор поняли «сюда можно нажать», и мало, чтобы страница «дышала». */
+  .qb-card-interactive {
+    cursor: pointer;
+    transition:
+      transform var(--qb-base) var(--qb-ease),
+      box-shadow var(--qb-base) var(--qb-ease),
+      border-color var(--qb-base) var(--qb-ease);
+  }
+  @media (hover: hover) {
+    .qb-card-interactive:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px -12px rgb(0 0 0 / 0.18);
+      border-color: color-mix(in oklch, var(--color-primary), transparent 70%);
+    }
+  }
+  .qb-card-interactive:active { transform: translateY(0) scale(0.99); }
+
+  /* Появление содержимого вкладки. Radix сам ничего не анимирует. */
+  [data-state="active"].qb-tab-panel {
+    animation: qb-tab-in var(--qb-base) var(--qb-ease) both;
+  }
+  @keyframes qb-tab-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: none; }
+  }
+
+  /* Цифра, которая изменилась. Без этого счётчик на дашборде меняется
+     беззвучно, и обновление незаметно. */
+  @keyframes qb-bump {
+    0% { transform: none; }
+    40% { transform: translateY(-3px) scale(1.04); }
+    100% { transform: none; }
+  }
+  .qb-bump { animation: qb-bump var(--qb-slow) var(--qb-spring) both; }
+
+  /* Успех: галочка, которая «встала на место». */
+  @keyframes qb-check {
+    0% { opacity: 0; transform: scale(0.6) rotate(-12deg); }
+    100% { opacity: 1; transform: none; }
+  }
+  .qb-check { animation: qb-check var(--qb-slow) var(--qb-spring) both; }
+
+  /* Ошибка: короткое покачивание. Три пикселя, 240 мс — заметно и не раздражает. */
+  @keyframes qb-shake {
+    0%, 100% { transform: none; }
+    25% { transform: translateX(-3px); }
+    50% { transform: translateX(3px); }
+    75% { transform: translateX(-2px); }
+  }
+  .qb-shake { animation: qb-shake 240ms var(--qb-ease) both; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .qb-press,
+    .qb-card-interactive { transition: none !important; }
+    .qb-press:active:not(:disabled),
+    .qb-card-interactive:hover,
+    .qb-card-interactive:active { transform: none !important; }
+    [data-state="active"].qb-tab-panel,
+    .qb-bump,
+    .qb-check,
+    .qb-shake { animation: none !important; }
+  }
+}
