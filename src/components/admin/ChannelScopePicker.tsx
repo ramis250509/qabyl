@@ -20,8 +20,23 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Building2, MapPin } from "lucide-react";
-import { setChannelScope } from "@/lib/channels.functions";
+import {
+  assignHistoryToBranch,
+  countUnassignedConversations,
+  setChannelScope,
+} from "@/lib/channels.functions";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import type { SalonBranch } from "@/hooks/use-salon-shape";
+import { plural } from "@/lib/billing-logic";
 
 export function ChannelScopePicker({
   salonId,
@@ -37,6 +52,12 @@ export function ChannelScopePicker({
   initialBranchId?: string | null;
 }) {
   const save = useServerFn(setChannelScope);
+  const countOld = useServerFn(countUnassignedConversations);
+  const moveOld = useServerFn(assignHistoryToBranch);
+  // Предложение перенести историю. Появляется один раз — после того, как канал закрепили за
+  // точкой и выяснилось, что старые переписки остались без неё.
+  const [offer, setOffer] = useState<{ count: number; branchId: string } | null>(null);
+  const [moving, setMoving] = useState(false);
   const [scope, setScope] = useState<"salon" | "branch">(initialScope ?? "salon");
   const [branchId, setBranchId] = useState<string>(initialBranchId ?? "");
   const [busy, setBusy] = useState(false);
@@ -63,6 +84,19 @@ export function ChannelScopePicker({
           ? "Канал общий: ассистент спросит клиента, в какую точку записать"
           : `Канал закреплён за точкой «${branches.find((x) => x.id === b)?.name ?? ""}»`,
       );
+
+      // Старые переписки пришли тогда, когда точки ещё не различали, и остались без неё. Если
+      // их не тронуть, в статистике будет обрыв: до сегодня у точки ноль обращений, после —
+      // все. Спрашиваем, а не решаем за владельца: его прошлое, ему и решать.
+      if (next === "branch") {
+        try {
+          const { count } = await countOld({ data: { salonId, kind } });
+          if (count > 0) setOffer({ count, branchId: b });
+        } catch {
+          // Не смогли посчитать — молчим. Предложение переноса не стоит того, чтобы показывать
+          // ошибку поверх удачно сохранённой настройки.
+        }
+      }
     } catch (e: any) {
       toast.error(humanError(e, "Не удалось сохранить"));
     } finally {
@@ -146,6 +180,50 @@ export function ChannelScopePicker({
           </Select>
         </div>
       )}
+
+      <AlertDialog open={!!offer} onOpenChange={(o) => !o && setOffer(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Перенести прошлые переписки?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {offer?.count} {plural(offer?.count ?? 0, "переписка", "переписки", "переписок")} в
+              этом канале пришли до того, как вы закрепили его за точкой «
+              {branches.find((x) => x.id === offer?.branchId)?.name ?? ""}», и точки у них нет. Если
+              не перенести, в статистике будет разрыв: до сегодня у точки ноль обращений, после —
+              все.
+              <br />
+              <br />
+              Переписки, где клиент сам выбрал другую точку, останутся на своих местах.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={moving}>Оставить как есть</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={moving}
+              onClick={async (e) => {
+                e.preventDefault();
+                if (!offer) return;
+                setMoving(true);
+                try {
+                  const r = await moveOld({
+                    data: { salonId, kind, branchId: offer.branchId },
+                  });
+                  toast.success(
+                    `Перенесено: ${r.moved} ${plural(r.moved, "переписка", "переписки", "переписок")}`,
+                  );
+                  setOffer(null);
+                } catch (err: any) {
+                  toast.error(humanError(err, "Не удалось перенести"));
+                } finally {
+                  setMoving(false);
+                }
+              }}
+            >
+              {moving ? "Переносим…" : "Перенести"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }

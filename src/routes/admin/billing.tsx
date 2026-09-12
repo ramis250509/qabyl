@@ -8,9 +8,12 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { humanError } from "@/lib/human-error";
 import { CreditCard, Loader2, MessageSquare, ShieldCheck } from "lucide-react";
+import { useServerFn } from "@tanstack/react-start";
 import { useAuth } from "@/lib/auth-client";
 import { supabase } from "@/integrations/supabase/client";
 import { MbankPayment } from "@/components/billing/MbankPayment";
+import { getUsageByBranch } from "@/lib/billing.functions";
+import { useSalonShape } from "@/hooks/use-salon-shape";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -126,6 +129,28 @@ function BillingPage() {
   // Название нужно ровно для одного: подсказать, что писать в комментарии к переводу. Без него
   // у нас на счёте десяток одинаковых зачислений и ни одного способа понять, чьи они.
   const [salonName, setSalonName] = useState<string | null>(null);
+  // Разбивка расхода по точкам. Нужна только сети: у салона с одной точкой «кто потратил» —
+  // вопрос без содержания, а таблица из одной строки только занимает экран.
+  const { isMulti } = useSalonShape(salonId);
+  const loadByBranch = useServerFn(getUsageByBranch);
+  const [byBranch, setByBranch] = useState<Awaited<ReturnType<typeof getUsageByBranch>> | null>(
+    null,
+  );
+
+  useEffect(() => {
+    if (!salonId || !isMulti) return;
+    let cancelled = false;
+    loadByBranch({ data: { salonId } })
+      .then((r) => {
+        if (!cancelled) setByBranch(r);
+      })
+      .catch(() => {
+        // Разбивка — справка, а не условие работы экрана.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [salonId, isMulti, loadByBranch]);
 
   useEffect(() => {
     if (!salonId) return;
@@ -381,6 +406,47 @@ function BillingPage() {
             видны в переписках.
           </p>
         )}
+        {/* Кто из точек израсходовал общий лимит.
+
+            Котёл один на сеть — это дешевле, чем лимит на каждую точку, но порождает вопрос
+            «почему на тихой точке ассистент молчит». Ответ здесь: видно, что его съел центр. */}
+        {isMulti && byBranch && byBranch.total > 0 && (
+          <div className="space-y-2 rounded-lg border p-3">
+            <p className="text-sm font-medium">Кто израсходовал</p>
+            <ul className="space-y-1.5">
+              {byBranch.rows.map((r: { id: string; name: string; used: number }) => {
+                const pct = Math.round((r.used * 100) / Math.max(1, byBranch.total));
+                return (
+                  <li key={r.id} className="flex items-center gap-3 text-sm">
+                    <span className="min-w-0 flex-1 truncate">{r.name}</span>
+                    <span className="h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-muted">
+                      <span
+                        className="block h-full rounded-full bg-primary"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </span>
+                    <span className="w-20 shrink-0 text-right tabular-nums text-muted-foreground">
+                      {formatNumber(r.used)}
+                    </span>
+                  </li>
+                );
+              })}
+              {byBranch.unassigned > 0 && (
+                <li className="flex items-center gap-3 text-sm text-muted-foreground">
+                  <span className="min-w-0 flex-1 truncate">Точка не выбрана</span>
+                  <span className="w-20 shrink-0 text-right tabular-nums">
+                    {formatNumber(byBranch.unassigned)}
+                  </span>
+                </li>
+              )}
+            </ul>
+            <p className="text-xs text-muted-foreground">
+              Подсчёт по перепискам — может немного не сойтись с общим счётчиком выше. Он нужен,
+              чтобы понять, какая точка тратит больше, а не чтобы считать деньги.
+            </p>
+          </div>
+        )}
+
         {/* Докупка пакета — честно про то, как это работает сегодня.
 
             Здесь стоял переключатель «Докупать 500 сообщений автоматически, когда закончатся».

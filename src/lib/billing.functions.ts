@@ -307,3 +307,81 @@ export const setBillingEnforcement = createServerFn({ method: "POST" })
     });
     return { ok: true };
   });
+
+/**
+ * Кто из точек сети израсходовал сообщения в этом месяце.
+ *
+ * ═══ ЗАЧЕМ ═══════════════════════════════════════════════════════════════
+ *
+ * Лимит один на весь бизнес — общий котёл. Это дешевле для сети, чем лимит на каждую точку, но
+ * порождает вопрос, на который до сих пор нечем было ответить: центр съел пять тысяч, ассистент
+ * замолчал на всех трёх точках, включая тихие, и владелец звонит спросить, почему на Джале
+ * ничего не работает, когда там людей нет. Разбивка отвечает на это одной таблицей.
+ *
+ * ═══ ПОЧЕМУ СЧИТАЕМ ПО ПЕРЕПИСКАМ, А НЕ ОТДЕЛЬНЫМ СЧЁТЧИКОМ ══════════════
+ *
+ * Напрашивалось добавить точку в billing_usage и писать её при каждой отправке. Но учёт расхода —
+ * это то, что решает, отвечает ли ассистент вообще; лезть туда ради красивой таблицы значит
+ * рисковать связью ради статистики.
+ *
+ * Здесь другой путь: исходящие сообщения и так лежат в wa_messages, а точка — в переписке, к
+ * которой они относятся. Считаем по ним. Ничего не пишем, ничего не ломаем, и разбивка работает
+ * задним числом — включая месяцы до появления этой функции.
+ *
+ * Сумма по точкам может немного не сойтись с общим счётчиком: тот считает то, что принял
+ * провайдер. Это разбивка «кто сколько потратил», а не второй счёт — так и подписано на экране.
+ */
+export const getUsageByBranch = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => z.object({ salonId: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    await assertSalonAccess(context.supabase, context.userId, data.salonId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const sb = supabaseAdmin as any;
+
+    const { data: periodStart } = await sb.rpc("billing_current_period_start", {
+      _salon_id: data.salonId,
+    });
+    if (!periodStart) return { rows: [], unassigned: 0, total: 0 };
+
+    const [{ data: branches }, { data: convs }] = await Promise.all([
+      sb.from("branches").select("id, name").eq("salon_id", data.salonId).order("sort_order"),
+      sb.from("wa_conversations").select("id, selected_branch_id").eq("salon_id", data.salonId),
+    ]);
+
+    const branchByConv = new Map<string, string | null>(
+      (convs ?? []).map((c: any) => [c.id as string, (c.selected_branch_id as string) ?? null]),
+    );
+    if (branchByConv.size === 0) return { rows: [], unassigned: 0, total: 0 };
+
+    // Только исходящие: входящие клиенту бесплатны и в лимит не входят.
+    const { data: msgs } = await sb
+      .from("wa_messages")
+      .select("conversation_id")
+      .eq("salon_id", data.salonId)
+      .eq("direction", "out")
+      .gte("created_at", periodStart);
+
+    const counts = new Map<string, number>();
+    let unassigned = 0;
+    let total = 0;
+    for (const m of msgs ?? []) {
+      total += 1;
+      const b = branchByConv.get(m.conversation_id as string) ?? null;
+      if (!b) {
+        unassigned += 1;
+        continue;
+      }
+      counts.set(b, (counts.get(b) ?? 0) + 1);
+    }
+
+    const rows = (branches ?? [])
+      .map((b: any) => ({
+        id: b.id as string,
+        name: b.name as string,
+        used: counts.get(b.id) ?? 0,
+      }))
+      .sort((a: any, b: any) => b.used - a.used);
+
+    return { rows, unassigned, total };
+  });
