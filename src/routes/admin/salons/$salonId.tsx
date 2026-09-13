@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-client";
@@ -74,9 +74,7 @@ import { toast } from "sonner";
 import { humanError } from "@/lib/human-error";
 import { createSalonAdmin, listSalonAdmins, revokeSalonAdmin } from "@/lib/salon-admins.functions";
 import { getSalonSecrets, upsertSalonSecrets } from "@/lib/salon-secrets.functions";
-import { SiteTab } from "@/components/admin/SiteTab";
 import { SalonShareCard } from "@/components/admin/SalonShareCard";
-import { ReviewsTab } from "@/components/admin/ReviewsTab";
 import { formatPrice } from "@/lib/price";
 import {
   BranchHoursEditor,
@@ -86,12 +84,7 @@ import {
 } from "@/components/admin/BranchHoursEditor";
 import { MasterDayOverrides } from "@/components/admin/MasterDayOverrides";
 import { SalonDayOverridesCard } from "@/components/admin/SalonDayOverridesCard";
-import { AiAssistantTab } from "@/components/admin/AiAssistantTab";
-import { ChannelsTab } from "@/components/admin/ChannelsTab";
 import { SkeletonBlock } from "@/components/ui/status";
-import { TeamAccessTab } from "@/components/admin/TeamAccessTab";
-import { PrepaymentTab } from "@/components/admin/PrepaymentTab";
-import { ScheduleImportTab } from "@/components/admin/ScheduleImportTab";
 import { ServiceExportDialog } from "@/components/admin/ServiceExportDialog";
 import {
   INDUSTRIES_META,
@@ -102,7 +95,39 @@ import {
 import { SERVICE_CATALOG_TEMPLATES, colorForCategoryIndex } from "@/lib/service-catalog-templates";
 import { Share2 } from "lucide-react";
 import type { CatalogSalon } from "@/lib/catalog-share";
-import { WaChatsTab } from "@/components/admin/WaChatsTab";
+
+// Тяжёлые вкладки грузятся, только когда их открыли. Раньше все они ехали одним куском 335 кБ при
+// первом входе в настройки салона — владелец, открывший «Услуги», скачивал заодно переписки,
+// ассистента, сайт и импорт. Radix Tabs не монтирует неактивные вкладки, поэтому lazy срабатывает
+// ровно по клику.
+const SiteTab = lazy(() =>
+  import("@/components/admin/SiteTab").then((m) => ({ default: m.SiteTab })),
+);
+const ReviewsTab = lazy(() =>
+  import("@/components/admin/ReviewsTab").then((m) => ({ default: m.ReviewsTab })),
+);
+const AiAssistantTab = lazy(() =>
+  import("@/components/admin/AiAssistantTab").then((m) => ({ default: m.AiAssistantTab })),
+);
+const ChannelsTab = lazy(() =>
+  import("@/components/admin/ChannelsTab").then((m) => ({ default: m.ChannelsTab })),
+);
+const TeamAccessTab = lazy(() =>
+  import("@/components/admin/TeamAccessTab").then((m) => ({ default: m.TeamAccessTab })),
+);
+const PrepaymentTab = lazy(() =>
+  import("@/components/admin/PrepaymentTab").then((m) => ({ default: m.PrepaymentTab })),
+);
+const ScheduleImportTab = lazy(() =>
+  import("@/components/admin/ScheduleImportTab").then((m) => ({ default: m.ScheduleImportTab })),
+);
+const WaChatsTab = lazy(() =>
+  import("@/components/admin/WaChatsTab").then((m) => ({ default: m.WaChatsTab })),
+);
+
+function TabFallback() {
+  return <div className="h-48 w-full animate-pulse rounded-xl bg-muted" aria-busy="true" />;
+}
 
 // Business industry — the single source of truth chosen here in the "Салон" tab and read by the
 // whole cabinet (Assistant expertise, Site example copy, per-industry photo instructions). Stored
@@ -331,40 +356,52 @@ function SalonEdit() {
 
           <TabsContent value="site">
             <div className="space-y-6">
-              <SiteTab salon={salon} onSaved={(s) => setSalon(s)} />
-              <ReviewsTab salonId={salonId} />
+              <Suspense fallback={<TabFallback />}>
+                <SiteTab salon={salon} onSaved={(s) => setSalon(s)} />
+                <ReviewsTab salonId={salonId} />
+              </Suspense>
               <FaqTab salonId={salonId} />
             </div>
           </TabsContent>
 
           <TabsContent value="channels">
-            <ChannelsTab
-              salon={salon}
-              onSalonSaved={(s) => setSalon(s)}
-              initialChannel={rawTab === "instagram" ? "instagram" : "whatsapp"}
-            />
+            <Suspense fallback={<TabFallback />}>
+              <ChannelsTab
+                salon={salon}
+                onSalonSaved={(s) => setSalon(s)}
+                initialChannel={rawTab === "instagram" ? "instagram" : "whatsapp"}
+              />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="chats">
-            <WaChatsTab salonId={salonId} />
+            <Suspense fallback={<TabFallback />}>
+              <WaChatsTab salonId={salonId} />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="prepayment">
-            <PrepaymentTab salonId={salonId} />
+            <Suspense fallback={<TabFallback />}>
+              <PrepaymentTab salonId={salonId} />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="ai">
-            <AiAssistantTab
-              salonId={salonId}
-              salonName={salon.name}
-              onOpenChannels={() => setActiveTab("channels")}
-            />
+            <Suspense fallback={<TabFallback />}>
+              <AiAssistantTab
+                salonId={salonId}
+                salonName={salon.name}
+                onOpenChannels={() => setActiveTab("channels")}
+              />
+            </Suspense>
           </TabsContent>
           {/* Приглашение сотрудников принадлежит владельцу салона. Серверная часть (rbac.functions)
               была написана целиком и умела всё, но экрана к ней не существовало: дать доступ
               администратору на ресепшене можно было только письмом в поддержку. */}
           <TabsContent value="team">
-            <TeamAccessTab salonId={salonId} />
+            <Suspense fallback={<TabFallback />}>
+              <TeamAccessTab salonId={salonId} />
+            </Suspense>
           </TabsContent>
 
           {/* «Доступ» — выдача салону ВЛАДЕЛЬЦА, то есть операция платформы, а не салона. */}
@@ -377,7 +414,9 @@ function SalonEdit() {
               SCHEDULE_IMPORT_SALON_IDS, so hiding the tab is convenience, not the control. */}
           {isSuperAdmin && (
             <TabsContent value="import">
-              <ScheduleImportTab salonId={salonId} />
+              <Suspense fallback={<TabFallback />}>
+                <ScheduleImportTab salonId={salonId} />
+              </Suspense>
             </TabsContent>
           )}
         </Tabs>
