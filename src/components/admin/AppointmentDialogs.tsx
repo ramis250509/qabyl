@@ -17,6 +17,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { CalendarIcon } from "lucide-react";
 import { dayKeyInTz, zonedTimeToUtc, formatInTz, startOfDayKeyInTz } from "@/lib/tz";
+import { humanError } from "@/lib/human-error";
 
 type Master = { id: string; name: string };
 type Service = { id: string; name: string; duration_min: number; price: number };
@@ -334,7 +335,7 @@ export function CreateAppointmentDialog({
       onCreated();
       onOpenChange(false);
     } catch (e: any) {
-      toast.error(e.message ?? "Не удалось создать запись");
+      toast.error(humanError(e, "Не удалось создать запись"));
     } finally {
       setSaving(false);
     }

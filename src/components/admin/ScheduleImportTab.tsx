@@ -29,6 +29,7 @@ import {
   previewScheduleImport,
   rollbackScheduleImport,
 } from "@/lib/schedule-import.functions";
+import { humanError } from "@/lib/human-error";
 
 type Plan = Awaited<ReturnType<typeof previewScheduleImport>>;
 type Batch = Awaited<ReturnType<typeof listImportBatches>>[number];
@@ -75,7 +76,7 @@ export function ScheduleImportTab({ salonId }: { salonId: string }) {
       setAccepted(new Set(p.rows.filter((r) => r.verdict === "new").map((r) => r.importKey)));
       await refreshBatches();
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось прочитать таблицу");
+      toast.error(humanError(e, "Не удалось прочитать таблицу"));
     } finally {
       setBusy(null);
     }
@@ -103,7 +104,7 @@ export function ScheduleImportTab({ salonId }: { salonId: string }) {
       }
       await onPreview();
     } catch (e: any) {
-      toast.error(e?.message ?? "Импорт не выполнен");
+      toast.error(humanError(e, "Импорт не выполнен"));
     } finally {
       setBusy(null);
     }
@@ -118,7 +119,7 @@ export function ScheduleImportTab({ salonId }: { salonId: string }) {
       await refreshBatches();
       if (plan) await onPreview();
     } catch (e: any) {
-      toast.error(e?.message ?? "Откат не выполнен");
+      toast.error(humanError(e, "Откат не выполнен"));
     } finally {
       setBusy(null);
     }

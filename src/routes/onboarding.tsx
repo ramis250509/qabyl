@@ -717,7 +717,7 @@ function WhatsAppStep({
       // и отдельный тумблер на следующем экране — это шаг, который забывают.
       await supabase.from("salons").update({ whatsapp_enabled: true }).eq("id", salonId);
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось завершить подключение", { duration: 10000 });
+      toast.error(humanError(e, "Не удалось завершить подключение"), { duration: 10000 });
     } finally {
       setBusy(false);
     }

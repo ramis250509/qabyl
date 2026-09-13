@@ -14,6 +14,7 @@ import {
   findExcludedCandidates,
   type ExcludedCandidate,
 } from "@/lib/excluded-suggestions.functions";
+import { humanError } from "@/lib/human-error";
 
 const storageKey = (salonId: string) => `qabyl:not-excluded:${salonId}`;
 
@@ -59,7 +60,7 @@ export function ExcludedSuggestions({
       setScanned({ chats: r.scannedChats, truncated: r.truncated });
       setPhase("ready");
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось просмотреть переписки");
+      toast.error(humanError(e, "Не удалось просмотреть переписки"));
       setPhase("idle");
     }
   }

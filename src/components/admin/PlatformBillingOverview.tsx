@@ -14,6 +14,7 @@ import {
   setBillingEnforcement,
   setBillingExempt,
 } from "@/lib/billing.functions";
+import { humanError } from "@/lib/human-error";
 
 type Data = Awaited<ReturnType<typeof getPlatformBillingOverview>>;
 
@@ -38,7 +39,7 @@ export function PlatformBillingOverview() {
     try {
       setData(await getPlatformBillingOverview());
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось загрузить биллинг");
+      toast.error(humanError(e, "Не удалось загрузить биллинг"));
     }
   }, []);
 
@@ -53,7 +54,7 @@ export function PlatformBillingOverview() {
       toast.success(okText);
       await load();
     } catch (e: any) {
-      toast.error(e?.message ?? "Не получилось");
+      toast.error(humanError(e, "Не получилось"));
     } finally {
       setBusy(null);
     }

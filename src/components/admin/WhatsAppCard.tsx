@@ -42,6 +42,7 @@ import {
 } from "@/lib/wa-onboarding.functions";
 import { WaConnectButton, type SignupOutcome } from "@/components/admin/WaConnectButton";
 import { useAuth } from "@/lib/auth-client";
+import { humanError } from "@/lib/human-error";
 
 type Config = Awaited<ReturnType<typeof getWaCloudConfig>>;
 type Status = Config["status"];
@@ -129,7 +130,7 @@ function DiagnosticsBlock({ salonId, connected }: { salonId: string; connected: 
     try {
       setDiag(await load({ data: { salonId } }));
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось загрузить диагностику");
+      toast.error(humanError(e, "Не удалось загрузить диагностику"));
     } finally {
       setBusy(false);
     }
@@ -271,7 +272,7 @@ function AdvancedBlock({
       toast.success("Сохранено");
       onChanged();
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось сохранить");
+      toast.error(humanError(e, "Не удалось сохранить"));
     } finally {
       setBusy(false);
     }
@@ -405,7 +406,7 @@ export function WhatsAppCard({ salonId }: { salonId: string }) {
     try {
       setCfg(await loadConfig({ data: { salonId } }));
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось загрузить настройки WhatsApp");
+      toast.error(humanError(e, "Не удалось загрузить настройки WhatsApp"));
     } finally {
       setLoading(false);
     }
@@ -442,7 +443,7 @@ export function WhatsAppCard({ salonId }: { salonId: string }) {
       else toast.success(res.status.title);
       await reload();
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось завершить подключение", { duration: 10000 });
+      toast.error(humanError(e, "Не удалось завершить подключение"), { duration: 10000 });
       await reload();
     } finally {
       setBusy(null);
@@ -458,7 +459,7 @@ export function WhatsAppCard({ salonId }: { salonId: string }) {
         status.title,
       );
     } catch (e: any) {
-      toast.error(e?.message ?? "Проверка не удалась");
+      toast.error(humanError(e, "Проверка не удалась"));
     } finally {
       setBusy(null);
     }
@@ -479,7 +480,7 @@ export function WhatsAppCard({ salonId }: { salonId: string }) {
       }
       await reload();
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось создать тексты уведомлений");
+      toast.error(humanError(e, "Не удалось создать тексты уведомлений"));
     } finally {
       setBusy(null);
     }
@@ -498,7 +499,7 @@ export function WhatsAppCard({ salonId }: { salonId: string }) {
       toast.success("WhatsApp отключён");
       await reload();
     } catch (e: any) {
-      toast.error(e?.message ?? "Не удалось отключить");
+      toast.error(humanError(e, "Не удалось отключить"));
     } finally {
       setBusy(null);
     }

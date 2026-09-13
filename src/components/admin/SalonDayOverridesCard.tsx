@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Trash2, CalendarOff } from "lucide-react";
 import { toast } from "sonner";
+import { humanError } from "@/lib/human-error";
 
 // Быстрое изменение графика ВСЕГО салона на конкретные даты (вкладка «Информация»):
 // выходной или сокращённый день применяется одним действием ко всем активным мастерам —
@@ -134,7 +135,7 @@ export function SalonDayOverridesCard({
       .eq("salon_id", salonId)
       .eq("is_active", true);
     if (error) {
-      toast.error(error.message);
+      toast.error(humanError(error));
       return null;
     }
     const ids = (masters ?? []).map((m: any) => m.id);
@@ -170,7 +171,7 @@ export function SalonDayOverridesCard({
       .select("master_id, weekday, start_time, end_time")
       .in("master_id", ids);
     if (schedErr) {
-      toast.error(schedErr.message);
+      toast.error(humanError(schedErr));
       return null;
     }
     const byMasterDow = new Map<string, Array<{ start: string; end: string }>>();
@@ -271,7 +272,7 @@ export function SalonDayOverridesCard({
       setPendingRows(null);
       load();
     } catch (e: any) {
-      toast.error(e.message ?? "Не удалось применить");
+      toast.error(humanError(e, "Не удалось применить"));
     } finally {
       setApplying(false);
     }
@@ -314,7 +315,7 @@ export function SalonDayOverridesCard({
       .eq("note", BULK_NOTE)
       .eq("date", date)
       .in("master_id", masterIds);
-    if (error) return toast.error(error.message);
+    if (error) return toast.error(humanError(error));
     toast.success("Изменение отменено");
     load();
   }

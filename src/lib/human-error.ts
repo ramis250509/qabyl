@@ -58,6 +58,40 @@ const RULES: { match: RegExp; text: string }[] = [
   },
   { match: /unable to validate email/i, text: "Проверьте, правильно ли написан email." },
 
+  // ── Запись (create_appointment / reschedule_appointment_v2) ──────────────
+  // Эти тексты видит не только владелец, но и КЛИЕНТ на странице записи: английская строка из
+  // Postgres на экране «Подтвердить запись» выглядит как сломанный сайт, и человек уходит звонить.
+  {
+    match: /salon_billing_suspended/i,
+    text: "Онлайн-запись в этом салоне временно недоступна. Позвоните или напишите салону напрямую.",
+  },
+  {
+    match:
+      /no longer available|conflicting key value|exclusion constraint|appointments_no_overlap/i,
+    text: "Это время только что заняли — выберите другое.",
+  },
+  {
+    match: /cannot (book|reschedule) (in|to) the past/i,
+    text: "Это время уже прошло — выберите другое.",
+  },
+  {
+    match: /master cannot perform this service|master does not offer this service/i,
+    text: "Этот мастер не делает выбранную услугу — выберите другого мастера.",
+  },
+  {
+    match: /master does not work at this branch/i,
+    text: "Этот мастер работает в другом филиале.",
+  },
+  { match: /service not found/i, text: "Услуга больше недоступна — обновите страницу." },
+  { match: /invalid client phone/i, text: "Проверьте номер телефона." },
+  { match: /invalid client name/i, text: "Укажите имя." },
+  {
+    match: /only confirmed appointments can be rescheduled/i,
+    text: "Эту запись уже нельзя перенести — она отменена или завершена.",
+  },
+  { match: /price override/i, text: "Цена вне допустимого диапазона для этой услуги." },
+  { match: /hold minutes out of range/i, text: "Некорректное время удержания слота." },
+
   // ── Наши серверные функции ───────────────────────────────────────────────
   { match: /master not found/i, text: "Мастер не найден — обновите страницу." },
   {

@@ -6,6 +6,7 @@ import { ChevronUp, ChevronDown, EyeOff, Eye, RotateCcw, ListChecks } from "luci
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { formatPrice } from "@/lib/price";
+import { humanError } from "@/lib/human-error";
 
 const UNCATEGORIZED = "__uncategorized__";
 
@@ -87,7 +88,7 @@ export function AiServiceListEditor({ salonId }: { salonId: string }) {
     const { error } = await supabase
       .from("salon_ai_assistant")
       .upsert({ salon_id: salonId, ai_category_order: next }, { onConflict: "salon_id" });
-    if (error) toast.error(error.message);
+    if (error) toast.error(humanError(error));
   }
 
   async function persistHiddenCategories(next: string[]) {
@@ -95,7 +96,7 @@ export function AiServiceListEditor({ salonId }: { salonId: string }) {
     const { error } = await supabase
       .from("salon_ai_assistant")
       .upsert({ salon_id: salonId, ai_hidden_categories: next }, { onConflict: "salon_id" });
-    if (error) toast.error(error.message);
+    if (error) toast.error(humanError(error));
   }
 
   function moveCategory(cat: string, dir: -1 | 1) {
@@ -126,7 +127,7 @@ export function AiServiceListEditor({ salonId }: { salonId: string }) {
     const { error } = await supabase
       .from("ai_service_overrides")
       .upsert({ salon_id: salonId, ...merged }, { onConflict: "salon_id,service_id" });
-    if (error) toast.error(error.message);
+    if (error) toast.error(humanError(error));
   }
 
   function toggleServiceEnabled(s: ServiceRow) {
@@ -153,8 +154,8 @@ export function AiServiceListEditor({ salonId }: { salonId: string }) {
         .from("salon_ai_assistant")
         .upsert({ salon_id: salonId, ai_category_order: [], ai_hidden_categories: [] }, { onConflict: "salon_id" }),
     ]);
-    if (delErr) return toast.error(delErr.message);
-    if (upErr) return toast.error(upErr.message);
+    if (delErr) return toast.error(humanError(delErr));
+    if (upErr) return toast.error(humanError(upErr));
     toast.success("Список для Ассистента сброшен");
     load();
   }

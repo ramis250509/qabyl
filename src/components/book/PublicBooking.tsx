@@ -24,6 +24,7 @@ import { toast } from "sonner";
 import { formatPrice } from "@/lib/price";
 import { normalizeWhatsApp } from "@/lib/social";
 import { useT, LanguageSwitcher } from "@/lib/i18n";
+import { humanError } from "@/lib/human-error";
 
 type Salon = {
   id: string;
@@ -731,11 +732,7 @@ export function PublicBooking({
                   // WhatsApp confirmation is dispatched server-side via DB trigger.
                   setSuccess(true);
                 } catch (err: any) {
-                  toast.error(
-                    String(err?.message ?? "").includes("salon_billing_suspended")
-                      ? "Онлайн-запись в этом салоне временно недоступна. Позвоните или напишите салону напрямую."
-                      : err.message,
-                  );
+                  toast.error(humanError(err, "Не удалось записаться. Попробуйте другое время."));
                 } finally {
                   setSubmitting(false);
                 }
