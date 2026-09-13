@@ -90,6 +90,7 @@
     "format": "prettier --write .",
     "lint": "eslint .",
     "preview": "vite preview",
+    "test": "bun test --isolate",
     "qa:assistant": "bun --preload ./qa/assistant-sim/preload.ts ./qa/assistant-sim/run.ts"
   },
   "sideEffects": false,

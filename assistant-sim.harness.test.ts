@@ -8,7 +8,7 @@
 // bursts, the last-slot race, a model outage, a database fault, and the booking fixes of 13.09.2026.
 //
 // Run: bun test assistant-sim.harness
-import { test, expect, mock, beforeAll, describe } from "bun:test";
+import { test, expect, mock, beforeAll, beforeEach, describe } from "bun:test";
 import {
   SimWorld,
   ClientSession,
@@ -43,7 +43,7 @@ let brain: Brain = () => [{ text: "Здравствуйте!" }];
 let geminiDown = false;
 let geminiCalls = 0;
 const realFetch = globalThis.fetch;
-globalThis.fetch = (async (input: any, init?: any) => {
+const simFetch = (async (input: any, init?: any) => {
   const url = typeof input === "string" ? input : input.url;
   if (!url.includes("generativelanguage.googleapis.com")) return realFetch(input, init);
   geminiCalls++;
@@ -61,6 +61,16 @@ globalThis.fetch = (async (input: any, init?: any) => {
     status: 200,
   });
 }) as typeof fetch;
+
+// `bun test` loads every test file into ONE process, and other suites replace globalThis.fetch and
+// register their own client.server mock (a proxy onto globalThis.__WA_DB__) at import time. Standalone
+// this file passed; in the full run whichever file loaded last won. Re-assert our fetch before every
+// test and point both known DB globals at the fake, so the outcome no longer depends on file order.
+globalThis.fetch = simFetch;
+beforeEach(() => {
+  globalThis.fetch = simFetch;
+  (globalThis as any).__QABYL_SIM_DB__ = world.db;
+});
 
 let processWaCloudPayload: any;
 beforeAll(async () => {
@@ -180,6 +190,17 @@ describe("webhook pipeline under real-world delivery", () => {
     expect(localDateOf(appts[0].starts_at, h.tz)).toBe(day);
     expect(localTimeOf(appts[0].starts_at, h.tz)).toBe("18:00");
     expect(appts[0].source).toBe("ai_assistant");
+
+    // Observability: the outgoing message keeps what the model asked the booking tool and what the
+    // server answered — enough to answer «почему записали на это время» from the database alone.
+    const conv = world.conversationOf(h, "996700200001")!;
+    const trace = world.db
+      .table("wa_messages")
+      .filter((m) => m.conversation_id === conv.id && m.direction === "out")
+      .flatMap((m) => m.meta?.tool_trace ?? []);
+    const booking = trace.find((t: any) => t.name === "create_appointment");
+    expect(booking?.args).toMatchObject({ date: day, time: "18:00" });
+    expect(booking?.result).toMatchObject({ success: true });
   }, 30_000);
 
   test("Meta delivers the same message twice at once: stored once, answered once", async () => {

@@ -813,6 +813,9 @@ async function runAgentTurn(opts: {
           intent: result.debug.intent ?? null,
           actions: result.debug.actions,
           errors: result.debug.errors,
+          // What each tool was asked and answered — the evidence for "why was this client booked
+          // at that time". Compact by construction (see compactToolResult).
+          tool_trace: result.debug.toolTrace ?? undefined,
           state: result.nextState,
           duplicateSuppressed: isDuplicateReply || undefined,
         },

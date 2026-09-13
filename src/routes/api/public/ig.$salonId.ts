@@ -1517,6 +1517,8 @@ async function runConversationTurn(opts: {
           intent: result.debug.intent ?? null,
           actions: result.debug.actions,
           errors: result.debug.errors,
+          // Same evidence trail as the WhatsApp route — what each tool was asked and answered.
+          tool_trace: result.debug.toolTrace ?? undefined,
           state: result.nextState,
           duplicateSuppressed: isDuplicateReply || undefined,
         },

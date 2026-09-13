@@ -2357,6 +2357,25 @@ export async function executeV4Tool(
 // Agent loop
 // ============================================================
 
+// Tool results persisted for investigation, without the bulk: the model-facing `note` prose and
+// long slot arrays are what make a result large, and neither is needed to answer "what did the
+// calendar say". Free times are kept (truncated) because they ARE the evidence.
+export function compactToolResult(result: any): unknown {
+  if (!result || typeof result !== "object") return result;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(result)) {
+    if (k === "note" || k === "slots" || k === "instruction") continue;
+    if (Array.isArray(v)) {
+      out[k] = v.length > 12 ? [...v.slice(0, 12), `…+${v.length - 12}`] : v;
+    } else if (k === "services" || k === "masters" || k === "appointments") {
+      out[k] = v;
+    } else {
+      out[k] = typeof v === "string" && v.length > 300 ? `${v.slice(0, 300)}…` : v;
+    }
+  }
+  return out;
+}
+
 // Does the reply already open with some greeting? Used to avoid double-greeting when we
 // prepend the salon's template on first contact.
 const REPLY_GREETING_RE =
@@ -2438,7 +2457,7 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   const db = await getAdmin();
   const apiKey = process.env.GEMINI_API_KEY ?? "";
 
-  const debug: WaAgentResult["debug"] = { actions: [], errors: [] };
+  const debug: WaAgentResult["debug"] = { actions: [], errors: [], toolTrace: [] };
   const priorPhotoNotes: PhotoNote[] = Array.isArray((input.stateData as any).photo_notes)
     ? ((input.stateData as any).photo_notes as PhotoNote[])
     : [];
@@ -2898,8 +2917,15 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
           // One retry on transient throw (DB blip / cold Supabase / rare RPC race). Without
           // this, a single flaky call turns into a real "не получилось получить данные"
           // apology to the client — sometimes twice in a row for back-to-back messages.
+          const toolStartedAt = Date.now();
           try {
             const result = await executeV4Tool(name, args ?? {}, input, db, flags);
+            debug.toolTrace?.push({
+              name,
+              args: args ?? {},
+              result: compactToolResult(result),
+              ms: Date.now() - toolStartedAt,
+            });
             // Log SUSPICIOUS results to error_logs so /admin/errors surfaces exactly why the
             // model saw "нет слотов" — the root cause is almost always a data-side issue
             // (no masters linked to service, no schedule for that weekday, wrong branch) that

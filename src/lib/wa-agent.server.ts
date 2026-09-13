@@ -270,6 +270,12 @@ export type WaAgentResult = {
     entities?: unknown;
     actions: string[];
     errors: string[];
+    /**
+     * V4: what the model asked each tool and what the tool answered, compact. Persisted on the
+     * outgoing message so «ассистент вчера неправильно записал» can be reconstructed from the
+     * database: which date/time/master the model passed, and whether the server accepted it.
+     */
+    toolTrace?: Array<{ name: string; args: unknown; result: unknown; ms: number }>;
   };
   interactiveMessage?: WaInteractiveMessage; // V3: send as WhatsApp button/list instead of plain text
   // V3: relay the client's photo to the salon admin (owner_notify_phone) — set when photo
