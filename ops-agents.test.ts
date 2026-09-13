@@ -7,6 +7,7 @@ import {
   contentPlanAction,
   fallbackContentPlan,
   formatContentPlan,
+  formatPostBrief,
   parseContentPlan,
   type PlatformFacts,
 } from "./src/lib/ops-content";
@@ -160,5 +161,37 @@ describe("шина событий", () => {
   test("лид без имени опознаётся по телефону", () => {
     const f = planEventFanout("lead.qualified", { phone: "996700112233" }, 1);
     expect(f.tasks[0].title).toContain("996700112233");
+  });
+});
+
+describe("задание на пост", () => {
+  const post = {
+    format: "Рилс",
+    hook: "Клиент пишет в 23:40",
+    caption: "Ассистент отвечает ночью <и> днём & записывает",
+    cta: "Подключить",
+  };
+
+  test("есть промпт, подпись и хештеги", () => {
+    const text = formatPostBrief(post);
+    expect(text).toContain("Промпт для картинки");
+    expect(text).toContain("Подпись");
+    expect(text).toContain("#бишкек");
+    expect(text).toContain("Подключить");
+  });
+
+  test("символы разметки обезврежены — сообщение не разваливается", () => {
+    const text = formatPostBrief(post);
+    expect(text).toContain("&lt;и&gt;");
+    expect(text).toContain("&amp;");
+  });
+
+  test("вертикальному формату — свои указания по съёмке", () => {
+    expect(formatPostBrief(post)).toContain("9:16");
+    expect(formatPostBrief({ ...post, format: "Пост" })).toContain("1:1");
+  });
+
+  test("в промпте нет текста на картинке — модели пишут его с ошибками", () => {
+    expect(formatPostBrief(post)).toContain("БЕЗ текста");
   });
 });

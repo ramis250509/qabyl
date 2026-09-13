@@ -219,7 +219,41 @@ export function imagePromptForPost(post: {
   ].join(" ");
 }
 
-/** Оценка стоимости картинки в долларах — по тарифам gpt-image-2 на 13.09.2026. */
-export function imageCostUsd(quality: "low" | "medium" | "high"): number {
-  return quality === "low" ? 0.006 : quality === "medium" ? 0.053 : 0.211;
+const HASHTAGS = ["#бишкек", "#салонкрасотыбишкек", "#записьонлайн", "#бьютибизнес", "#qabyl"];
+
+/**
+ * Задание на пост: текст, промпт для картинки и как это снять.
+ *
+ * Владелец копирует промпт в ChatGPT и публикует сам, поэтому всё, что ему нужно, лежит в одном
+ * сообщении и в том порядке, в каком он будет это делать: сначала картинка, потом подпись.
+ * Промпт отдаётся отдельным блоком — в Telegram по нему нажимают и он копируется целиком.
+ */
+export function formatPostBrief(post: ContentPost): string {
+  const vertical = /сторис|рилс/i.test(post.format);
+  const caption = post.cta ? `${post.caption}\n\n${post.cta}` : post.caption;
+  return [
+    `📣 <b>${post.format}: ${post.hook}</b>`,
+    "",
+    "<b>1. Промпт для картинки</b> — нажмите, чтобы скопировать:",
+    `<code>${escapeForTelegram(imagePromptForPost(post))}</code>`,
+    "",
+    "<b>2. Как снять</b>",
+    vertical
+      ? "Вертикаль 9:16, крупный план, движение в первые 2 секунды."
+      : "Квадрат 1:1 или 4:5, главный объект по центру, воздух по краям.",
+    "Без текста на самой картинке — подпись всё скажет.",
+    "",
+    "<b>3. Подпись</b> — нажмите, чтобы скопировать:",
+    `<code>${escapeForTelegram(caption)}</code>`,
+    "",
+    `<b>4. Хештеги</b>`,
+    `<code>${HASHTAGS.join(" ")}</code>`,
+    "",
+    "Опубликовали — закройте задачу: /done ",
+  ].join("\n");
+}
+
+/** В HTML-режиме Telegram эти три символа ломают разметку сообщения. */
+export function escapeForTelegram(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

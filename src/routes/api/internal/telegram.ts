@@ -18,7 +18,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
   sendMessage,
-  sendPhoto,
   editMessageText,
   answerCallbackQuery,
   type TgUpdate,
@@ -38,9 +37,7 @@ import {
 import { buildWeeklyPlan } from "@/lib/ops-marketer.server";
 import { executeApproval, pendingApprovals, requestApproval } from "@/lib/ops-approvals.server";
 import { closeTask, getTask, listOpenTasks } from "@/lib/ops-bus.server";
-import { imagePromptForPost } from "@/lib/ops-content";
-import { generateImage, mediaConfigured, mediaSpendToday } from "@/lib/ops-media.server";
-import { igPublishConfigured } from "@/lib/ops-instagram.server";
+import { formatPostBrief } from "@/lib/ops-content";
 import {
   createLead,
   draftOutreach,
@@ -103,7 +100,7 @@ const HELP = [
   "",
   "<b>Мира (маркетинг)</b>",
   "/mira — план контента на неделю с кнопкой одобрения",
-  "/publish 12 — картинка к задаче и публикация в Instagram",
+  "/post 12 — промпт для картинки и готовая подпись",
   "",
   "<b>Айдар (продажи)</b>",
   "/lead 0700112233 Нурзат Lashes — добавить лида",
@@ -308,23 +305,13 @@ async function handleUpdate(update: TgUpdate): Promise<void> {
     return;
   }
 
-  // ---- Мира: картинка и публикация --------------------------------------
-  if (cmd === "/publish") {
+  // ---- Мира: задание на пост -------------------------------------------
+  // Картинку владелец делает сам в ChatGPT и публикует руками, поэтому Мира отдаёт готовый
+  // промпт и подпись одним сообщением, а не пытается ни рисовать, ни постить.
+  if (cmd === "/post") {
     const id = Number(text.split(/\s+/)[1]);
     if (!Number.isFinite(id)) {
-      await sendMessage({
-        chatId,
-        threadId,
-        text: "Так: /publish 12 — номер задачи из /tasks",
-      });
-      return;
-    }
-    if (!mediaConfigured()) {
-      await sendMessage({
-        chatId,
-        threadId,
-        text: "Картинки пока негде брать: не задан ключ OpenAI (OPENAI_API_KEY).",
-      });
+      await sendMessage({ chatId, threadId, text: "Так: /post 12 — номер задачи из /tasks" });
       return;
     }
     const task = await getTask(id);
@@ -336,51 +323,19 @@ async function handleUpdate(update: TgUpdate): Promise<void> {
       });
       return;
     }
-
-    const post = {
-      format: String(task.detail.format ?? "Пост"),
-      hook: String(task.detail.hook ?? task.title),
-      caption: String(task.detail.caption ?? ""),
-    };
-    const spend = await mediaSpendToday();
     await sendMessage({
       chatId,
       threadId,
-      text: `🎨 Рисую картинку к посту… Потрачено сегодня: ${spend.spentUsd.toFixed(2)} из ${spend.capUsd.toFixed(2)} $`,
+      parseMode: "HTML",
+      text:
+        formatPostBrief({
+          format: String(task.detail.format ?? "Пост"),
+          hook: String(task.detail.hook ?? task.title),
+          caption: String(task.detail.caption ?? ""),
+          cta: String(task.detail.cta ?? ""),
+        }) + String(id),
     });
-
-    const image = await generateImage({
-      prompt: imagePromptForPost(post),
-      vertical: /сторис|рилс/i.test(post.format),
-    });
-    if (!image.ok) {
-      await sendMessage({ chatId, threadId, text: `Не получилось: ${image.error}` });
-      return;
-    }
-
-    const caption = [post.caption, task.detail.cta ? `\n\n${task.detail.cta}` : ""].join("");
-    const approvalId = await requestApproval({
-      agent: "marketer",
-      kind: "publish_post",
-      summary:
-        `📣 <b>Пост готов</b>\n\n${escapeHtml(caption)}\n\n` +
-        (igPublishConfigured()
-          ? "Одобрить — опубликую в Instagram Qabyl."
-          : "⚠️ Доступ к Instagram не настроен: одобрение сохранит картинку и текст задачей."),
-      action: { type: "publish_post", taskId: id, caption, imageUrl: image.url },
-      chatId,
-      threadId,
-    });
-
-    // Картинку отдельным сообщением: в подписи к фото Telegram не даёт столько текста, а решение
-    // владелец принимает, глядя на кадр.
-    await sendPhoto({
-      chatId,
-      threadId,
-      photoUrl: image.url,
-      caption: `Картинка к посту · ${image.costUsd.toFixed(3)} $${approvalId ? "" : " (кнопки не ушли)"}`,
-    });
-    await audit("owner", "cmd.publish", { task: id, costUsd: image.costUsd });
+    await audit("owner", "cmd.post", { task: id });
     return;
   }
 
