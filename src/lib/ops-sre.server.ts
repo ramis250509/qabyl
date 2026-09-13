@@ -9,7 +9,7 @@
 // владельца салона (истёк доступ к WhatsApp), становится инцидентом с диагнозом и задачей на
 // доске. Агент, делающий вид, что починил, опаснее агента, который молчит.
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { audit, kvGet, kvSet } from "@/lib/ops-agents.server";
+import { audit } from "@/lib/ops-agents.server";
 import { createTask, emitEvent, routeEvents } from "@/lib/ops-bus.server";
 import { diagnose, formatHealingReport, type Finding, type Signals } from "@/lib/ops-sre-playbooks";
 
@@ -131,13 +131,22 @@ export async function executeRemedy(key: string): Promise<RemedyResult> {
   }
 }
 
-/** Инцидент заводится один раз в сутки на ключ — иначе доска превращается в поток дублей. */
+/**
+ * Инцидент заводится один раз на ключ, пока задача по нему ОТКРЫТА.
+ *
+ * Сначала дедупликация была по суткам — и на доске появлялась новая строка про ту же поломку
+ * каждый день, пока её не починят. Поток дублей читают ровно один раз, дальше перестают читать
+ * весь список. Закрыли задачу, а проблема осталась — Деби заведёт её снова: это уже не шум,
+ * а напоминание.
+ */
 async function openIncidentOnce(f: Finding): Promise<boolean> {
-  const today = new Date().toISOString().slice(0, 10);
-  const kvKey = `incident:${f.key}`;
-  const seen = (await kvGet(kvKey)) as { date?: string } | null;
-  if (seen?.date === today) return false;
-  await kvSet(kvKey, { date: today });
+  const { data: existing } = await db()
+    .from("ops_tasks")
+    .select("id")
+    .eq("detail->>key", f.key)
+    .in("status", ["proposed", "awaiting_approval", "approved", "in_progress"])
+    .limit(1);
+  if (existing && existing.length > 0) return false;
   await createTask("sre", f.title, { detail: f.detail, key: f.key });
   await emitEvent("incident.opened", "sre", { summary: f.title, fingerprint: f.key });
   await audit("sre", "incident.opened", { key: f.key });
