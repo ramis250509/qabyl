@@ -40,7 +40,13 @@ import {
   stillHoldingConversationLock,
 } from "@/lib/chat-lock.server";
 import { runWaAgentV4 } from "@/lib/wa-agent-v4.server";
-import { isExcludedContact } from "@/lib/excluded-contacts.server";
+import { addExcludedContact, isExcludedContact } from "@/lib/excluded-contacts.server";
+import {
+  hasPersonalTag,
+  isEngagedChat,
+  looksLikeClientMessage,
+  shouldHoldForOwner,
+} from "@/lib/personal-chat";
 import {
   greenApiSendMessage,
   isLikelyNativeGreetingRace,
@@ -212,6 +218,14 @@ async function handleEcho(opts: {
   const phone = normalizeChatIdToPhone(echo.clientPhone);
   const nowIso = new Date().toISOString();
 
+  // «#личный» с телефона: номер навсегда уходит в «Контакты без Админа». Раньше проверки ниже —
+  // владелица может пометить и того, кому ассистент ещё ни разу не писал. See src/lib/personal-chat.ts.
+  if (hasPersonalTag(echo.text)) {
+    const added = await addExcludedContact(db, salonId, phone, "Отмечено с телефона: #личный");
+    if (added.ok) log(`contact ${phone} excluded by the owner's #личный tag`);
+    else errLog(`#личный: could not exclude ${phone}`, added.error);
+  }
+
   const { data: conv } = await db
     .from("wa_conversations")
     .select("id, session_started_at")
@@ -335,6 +349,21 @@ async function ingestEvent(opts: {
   ]);
   if (dup) return null; // Meta redelivery — already stored and answered
 
+  // ---- Personal chat? Until the chat is a client conversation, the assistant answers only a message
+  // that looks like a client's; the rest stays with the owner. See src/lib/personal-chat.ts.
+  let chatAlreadyEngaged = false;
+  if (existingConv?.id) {
+    const { data: recent, error: recentErr } = await db
+      .from("wa_messages")
+      .select("direction, kind, meta")
+      .eq("conversation_id", existingConv.id)
+      .order("created_at", { ascending: false })
+      .limit(50);
+    // A failed read counts as engaged: staying silent to a client costs more than one reply to an
+    // acquaintance.
+    chatAlreadyEngaged = Boolean(recentErr) || isEngagedChat(recent ?? []);
+  }
+
   // ---- Rate limit. Only probe when messages arrive back-to-back: at conversational pace a flood is
   // impossible, and skipping the COUNT saves a round-trip on virtually every real message.
   const prevMsgAtMs = existingConv?.last_message_at
@@ -407,7 +436,13 @@ async function ingestEvent(opts: {
 
   // Blue ticks + «печатает…». Fired here, before the slow part of the turn, because that latency is
   // exactly what this fills. Not awaited — a cosmetic call must never delay the reply it announces.
-  if (ev.wamid) void tx.markReadAndTyping(ev.wamid);
+  // Not in a chat that may be personal: blue ticks and «печатает…» followed by silence would tell
+  // the owner's contact that a bot read their message.
+  const mayHold =
+    !chatAlreadyEngaged &&
+    !ev.imageMediaId &&
+    !looksLikeClientMessage({ text: ev.text, hasImage: false });
+  if (ev.wamid && !mayHold) void tx.markReadAndTyping(ev.wamid);
 
   // ---- Media. The webhook carries an id, so the bytes come from Graph and are copied straight into
   // our own private bucket.
@@ -493,6 +528,16 @@ async function ingestEvent(opts: {
 
   if (!textBody && !mediaPath) return null; // reaction, sticker, location — nothing to answer
 
+  const hold = shouldHoldForOwner({
+    chatAlreadyEngaged,
+    text: textBody,
+    hasImage: Boolean(mediaPath),
+  });
+  const meta = {
+    ...(ev.interactiveReplyId ? { selected_id: ev.interactiveReplyId } : {}),
+    ...(hold ? { personal_hold: true } : {}),
+  };
+
   await db.from("wa_messages").insert({
     conversation_id: convId,
     salon_id: salonId,
@@ -501,8 +546,13 @@ async function ingestEvent(opts: {
     text_body: textBody,
     media_path: mediaPath,
     green_api_message_id: ev.wamid,
-    ...(ev.interactiveReplyId ? { meta: { selected_id: ev.interactiveReplyId } } : {}),
+    ...(Object.keys(meta).length ? { meta } : {}),
   });
+  // A held message stays unprocessed on purpose and starts no turn. If a client-looking message
+  // follows, its turn drains this one too — so a client whose bubbles Meta delivered out of order
+  // still gets one reply that saw all of them. On its own it is never answered: wa-reconcile skips
+  // personal_hold rows.
+  if (hold) return null;
 
   // ---- A human is handling this chat right now: the message is stored (above) but stays pending,
   // so when the pause lapses it is picked up normally.
