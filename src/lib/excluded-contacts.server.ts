@@ -102,3 +102,32 @@ export async function isExcludedContact(
   }
   return isExcludedByLookup(lookup, phone);
 }
+
+/**
+ * Add a WhatsApp number to the list from code — today only the owner's «#личный» tag.
+ *
+ * Stores the normalised key, so the lookup above matches it whatever shape the phone arrived in.
+ * An existing row is left as is: the owner may already have given the contact a label.
+ */
+export async function addExcludedContact(
+  db: any,
+  salonId: string,
+  phone: string | null | undefined,
+  label: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const key = normalizeExcludedKey(phone);
+  // The table holds phone numbers only (CHECK phone ~ '^[0-9]+$').
+  if (!key || key.startsWith("ig:")) return { ok: false, error: "not a phone number" };
+  try {
+    const { error } = await db
+      .from("excluded_contacts")
+      .upsert(
+        { salon_id: salonId, phone: key, label },
+        { onConflict: "salon_id,phone", ignoreDuplicates: true },
+      );
+    if (error) return { ok: false, error: error.message ?? String(error) };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}

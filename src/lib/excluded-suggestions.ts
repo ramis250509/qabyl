@@ -39,7 +39,7 @@ export type ContactVerdict = {
 };
 
 /** Слова о записи и услугах — русский и кыргызский. Любое из них = это клиент или лид. */
-const BUSINESS_STEMS = [
+export const BUSINESS_STEMS = [
   "запис",
   "запиш",
   "свобод",

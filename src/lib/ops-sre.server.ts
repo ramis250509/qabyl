@@ -48,11 +48,13 @@ export async function collectSignals(): Promise<Signals> {
     await Promise.all([
       db().from("error_logs").select("message").gte("ts", dayAgo).limit(2000),
       // Необработанные входящие: замок обработки сюда не входит — он истекает сам, и следующая
-      // попытка его игнорирует, так что «зависший замок» ничего не означает.
+      // попытка его игнорирует, так что «зависший замок» ничего не означает. Отложенные как личные
+      // (meta.personal_hold, src/lib/personal-chat.ts) лежат необработанными намеренно — не сбой.
       countRows("wa_messages", (q: any) =>
         q
           .eq("direction", "in")
           .is("processed_at", null)
+          .is("meta->>personal_hold", null)
           .lt("created_at", stuckCutoff)
           .gte("created_at", twoDaysAgo),
       ),

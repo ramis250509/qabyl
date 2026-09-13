@@ -48,7 +48,7 @@ export async function runWaReconcile(nowMs = Date.now()): Promise<ReconcileRepor
 
   const { data: msgs, error } = await db
     .from("wa_messages")
-    .select("conversation_id, salon_id")
+    .select("conversation_id, salon_id, meta")
     .eq("direction", "in")
     .is("processed_at", null)
     .lt("created_at", stuckBefore)
@@ -59,11 +59,14 @@ export async function runWaReconcile(nowMs = Date.now()): Promise<ReconcileRepor
     report.errors.push(`выборка застрявших: ${error.message}`);
     return report;
   }
-  report.stuckMessages = (msgs ?? []).length;
+  // Отложенное как похожее на личное (src/lib/personal-chat.ts) не потеряно — его намеренно оставили
+  // владелице. Перезапуск ответил бы через 5 минут ровно туда, куда ассистент не должен писать.
+  const stuck = ((msgs ?? []) as any[]).filter((m) => !m.meta?.personal_hold);
+  report.stuckMessages = stuck.length;
   if (report.stuckMessages === 0) return report;
 
   const bySalon = new Map<string, Set<string>>();
-  for (const m of msgs as any[]) {
+  for (const m of stuck) {
     if (!m.salon_id || !m.conversation_id) continue;
     const set = bySalon.get(m.salon_id) ?? new Set<string>();
     if (set.size < MAX_CONVS_PER_SALON) set.add(m.conversation_id);
