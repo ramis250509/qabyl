@@ -2092,11 +2092,18 @@ export async function executeV4Tool(
     }
 
     case "cancel_appointment": {
+      // Scoped to THIS salon and to a live future visit. Without the salon filter a client's
+      // appointment in another Qabyl salon (same phone) was cancellable from here; without the
+      // status/time filter the model could "cancel" a visit that already happened, rewriting
+      // history the salon's stats and no-show tracking rely on.
       const { data: appt } = await db
         .from("appointments")
         .select("id, starts_at, client_phone")
         .eq("id", args.appointment_id)
+        .eq("salon_id", input.salon.salonId)
         .eq("client_phone", clientPhone)
+        .in("status", ["confirmed", "pending_payment"])
+        .gte("starts_at", new Date().toISOString())
         .maybeSingle();
       if (!appt) return { success: false, error: "not_found" };
       if (withinCutoff((appt as any).starts_at)) {
@@ -2183,22 +2190,19 @@ export async function executeV4Tool(
         };
       }
       const movingMaster = args.new_master_id && args.new_master_id !== (appt as any).master_id;
-      const { error } = movingMaster
-        ? await db.rpc(
-            "reschedule_appointment_v2" as any,
-            {
-              _appointment_id: args.appointment_id,
-              _new_starts_at: resolved.slotStart,
-              _new_master_id: args.new_master_id,
-            } as any,
-          )
-        : await db.rpc(
-            "reschedule_appointment" as any,
-            {
-              _appointment_id: args.appointment_id,
-              _new_starts_at: resolved.slotStart,
-            } as any,
-          );
+      // Always v2, also when the master stays the same. The old two-argument
+      // reschedule_appointment has no advisory lock, ignores prepayment holds (pending_payment),
+      // ignores cleanup buffers and master time off — so between our slot check above and the
+      // UPDATE a parallel booking could land in the same window and the move still went through.
+      // v2 with _new_master_id = NULL keeps the master and runs every check under the lock.
+      const { error } = await db.rpc(
+        "reschedule_appointment_v2" as any,
+        {
+          _appointment_id: args.appointment_id,
+          _new_starts_at: resolved.slotStart,
+          _new_master_id: movingMaster ? args.new_master_id : null,
+        } as any,
+      );
       if (error) return { success: false, error: error.message };
       return { success: true };
     }

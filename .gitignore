@@ -35,3 +35,9 @@ supabase/.temp/
 *.sw?
 .env
 supabase/.branches/
+
+# Отчёты прогонов AI Assistant Quality Test (содержат переписки, большие)
+qa/assistant-sim/reports/
+
+# Служебный кэш хуков Claude Code (журнал правок, флаги напоминаний)
+.claude/.cache/

@@ -89,7 +89,8 @@
     "dev": "vite dev",
     "format": "prettier --write .",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "qa:assistant": "bun --preload ./qa/assistant-sim/preload.ts ./qa/assistant-sim/run.ts"
   },
   "sideEffects": false,
   "type": "module"

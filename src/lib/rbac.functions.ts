@@ -10,6 +10,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { passwordResetDenial, type RoleRow } from "./rbac-rules";
 
 type AllowedRole = "salon_admin" | "manager" | "master";
 
@@ -341,18 +342,15 @@ export const resetEmployeePassword = createServerFn({ method: "POST" })
     const mod = await import("@/integrations/supabase/client.server");
     const supabaseAdmin = mod.supabaseAdmin as any;
 
+    // Роли человека ВО ВСЕХ салонах, а не только в этом. Раньше смотрели только этот салон, и
+    // это был захват любого аккаунта платформы: завести свой салон, «пригласить» чужую почту
+    // (inviteEmployee привязывает существующий аккаунт) и выдать ему новый пароль.
     const { data: roles } = await supabaseAdmin
       .from("user_roles")
-      .select("role")
-      .eq("user_id", data.userId)
-      .eq("salon_id", data.salonId);
-    const list = (roles ?? []).map((r: any) => r.role as string);
-    if (!list.length) throw new Error("У этого человека нет доступа к салону");
-    // Администратор меняет пароль только мастерам — иначе он сменит пароль владельцу и войдёт
-    // под ним.
-    if (level === "manager" && !list.every((r: string) => r === "master")) {
-      throw new Error("Администратор может менять пароль только мастерам");
-    }
+      .select("role, salon_id")
+      .eq("user_id", data.userId);
+    const denial = passwordResetDenial(level, data.salonId, (roles ?? []) as RoleRow[]);
+    if (denial) throw new Error(denial);
 
     const password = generateNumericPassword();
     const { error } = await supabaseAdmin.auth.admin.updateUserById(data.userId, { password });

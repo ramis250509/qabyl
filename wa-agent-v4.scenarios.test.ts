@@ -41,7 +41,13 @@ function makeDb(
     },
   ];
   const masters = opts.masters ?? [
-    { id: "22222222-2222-4222-8222-222222222222", name: "Айгуль", branch_id: null, sort_order: 0, service_ids: ["11111111-1111-4111-8111-111111111111"] },
+    {
+      id: "22222222-2222-4222-8222-222222222222",
+      name: "Айгуль",
+      branch_id: null,
+      sort_order: 0,
+      service_ids: ["11111111-1111-4111-8111-111111111111"],
+    },
   ];
   const appointments = opts.appointments ?? [];
 
@@ -89,6 +95,9 @@ function makeDb(
       return q;
     };
     q.gte = () => q;
+    // cancel_appointment filters by status IN (confirmed, pending_payment); the rows here are all
+    // confirmed, so — like gte/order above — the mock does not need to evaluate it.
+    q.in = () => q;
     q.order = () => q;
     q.limit = () => q;
     q.update = (patch: any) => {
@@ -243,7 +252,12 @@ test("полный цикл: tools get_services → get_available_slots → те
   (globalThis as any).__WA_DB__ = makeDb();
   geminiQueue = [
     [fc("get_services")],
-    [fc("get_available_slots", { service_id: "11111111-1111-4111-8111-111111111111", date: "2099-01-01" })],
+    [
+      fc("get_available_slots", {
+        service_id: "11111111-1111-4111-8111-111111111111",
+        date: "2099-01-01",
+      }),
+    ],
     [{ text: "Есть свободное время в 10:00 — записать вас?" }],
   ];
   const res = await runWaAgentV4(makeInput("Хочу маникюр завтра"));
@@ -459,8 +473,20 @@ test("занятый мастер, свободный другой: create_appoi
   // picked Айгуль, but Айгуль is actually booked at 17:00 while Айжан is free. The failure must
   // name Айжан so the assistant can offer the same time with the other master.
   const masters = [
-    { id: "22222222-2222-4222-8222-222222222222", name: "Айгуль", branch_id: null, sort_order: 0, service_ids: ["11111111-1111-4111-8111-111111111111"] },
-    { id: "33333333-3333-4333-8333-333333333333", name: "Айжан", branch_id: null, sort_order: 1, service_ids: ["11111111-1111-4111-8111-111111111111"] },
+    {
+      id: "22222222-2222-4222-8222-222222222222",
+      name: "Айгуль",
+      branch_id: null,
+      sort_order: 0,
+      service_ids: ["11111111-1111-4111-8111-111111111111"],
+    },
+    {
+      id: "33333333-3333-4333-8333-333333333333",
+      name: "Айжан",
+      branch_id: null,
+      sort_order: 1,
+      service_ids: ["11111111-1111-4111-8111-111111111111"],
+    },
   ];
   const db = makeDb({ masters });
   // 17:00 Bishkek (UTC+6) == 11:00 UTC. Айгуль (m1) only has 10:00; Айжан (m2) has 17:00.
@@ -468,7 +494,8 @@ test("занятый мастер, свободный другой: create_appoi
   const TEN = "2099-01-01T04:00:00.000Z";
   db.rpc = (async (name: string, args: any) => {
     if (name === "get_available_slots") {
-      const starts = args._master_id === "33333333-3333-4333-8333-333333333333" ? [SEVENTEEN] : [TEN];
+      const starts =
+        args._master_id === "33333333-3333-4333-8333-333333333333" ? [SEVENTEEN] : [TEN];
       return {
         data: starts.map((s) => ({
           slot_start: s,
@@ -511,11 +538,31 @@ test("выходной у выбранного мастера ≠ выходно
   const DATE = "2099-01-05";
   const dow = new Date(`${DATE}T12:00:00Z`).getUTCDay();
   const masters = [
-    { id: "22222222-2222-4222-8222-222222222222", name: "Айгуль", branch_id: null, sort_order: 0, service_ids: ["11111111-1111-4111-8111-111111111111"] },
-    { id: "33333333-3333-4333-8333-333333333333", name: "Айжан", branch_id: null, sort_order: 1, service_ids: ["11111111-1111-4111-8111-111111111111"] },
+    {
+      id: "22222222-2222-4222-8222-222222222222",
+      name: "Айгуль",
+      branch_id: null,
+      sort_order: 0,
+      service_ids: ["11111111-1111-4111-8111-111111111111"],
+    },
+    {
+      id: "33333333-3333-4333-8333-333333333333",
+      name: "Айжан",
+      branch_id: null,
+      sort_order: 1,
+      service_ids: ["11111111-1111-4111-8111-111111111111"],
+    },
   ];
   // Айгуль (m1) has an explicit day-off override on DATE; Айжан (m2) is scheduled that weekday.
-  const overrides = [{ master_id: "22222222-2222-4222-8222-222222222222", date: DATE, is_off: true, kind: "off", intervals: null }];
+  const overrides = [
+    {
+      master_id: "22222222-2222-4222-8222-222222222222",
+      date: DATE,
+      is_off: true,
+      kind: "off",
+      intervals: null,
+    },
+  ];
   const schedules = [{ master_id: "33333333-3333-4333-8333-333333333333", weekday: dow }];
 
   // A tiny query builder that honours .in()/.eq() filters and resolves an array.
@@ -557,7 +604,13 @@ test("выходной у выбранного мастера ≠ выходно
   };
   (globalThis as any).__WA_DB__ = db;
   geminiQueue = [
-    [fc("get_available_slots", { service_id: "11111111-1111-4111-8111-111111111111", date: DATE, master_id: "22222222-2222-4222-8222-222222222222" })],
+    [
+      fc("get_available_slots", {
+        service_id: "11111111-1111-4111-8111-111111111111",
+        date: DATE,
+        master_id: "22222222-2222-4222-8222-222222222222",
+      }),
+    ],
     [{ text: "У Айгуль в этот день выходной, но работает Айжан — записать к ней?" }],
   ];
   const res = await runWaAgentV4(makeInput("Хочу к Айгуль в этот день"));
@@ -639,7 +692,12 @@ test("tool retry: первый вызов падает, второй прохо�
   }) as any;
   (globalThis as any).__WA_DB__ = db;
   geminiQueue = [
-    [fc("get_available_slots", { service_id: "11111111-1111-4111-8111-111111111111", date: "2099-01-01" })],
+    [
+      fc("get_available_slots", {
+        service_id: "11111111-1111-4111-8111-111111111111",
+        date: "2099-01-01",
+      }),
+    ],
     [{ text: "На эту дату есть 10:00. Записать вас?" }],
   ];
   const res = await runWaAgentV4(makeInput("завтра свободно?"));
@@ -811,6 +869,11 @@ test("перенос записи: reschedule_appointment двигает starts_
   expect(res.reply).toContain("Перенесла");
 });
 
+// Явный таймаут вместо дефолтных 5с Bun. Тест намеренно роняет Gemini (пустая geminiQueue),
+// а движок на каждый неудачный вызов делает три попытки с паузами 400мс и 800мс. За ход
+// вызовов несколько, и на загруженной машине сумма пробивала 5с — тест падал через раз
+// (воспроизведено 2026-08-19 под нагрузкой). Проверяется язык ответа, а не скорость,
+// поэтому правильный ответ — дать времени, а не ускорять продакшн-ретраи.
 test("ошибка Gemini → эскалация к админу + вежливое «администратор ответит»", async () => {
   (globalThis as any).__WA_DB__ = makeDb();
   geminiQueue = []; // fetch mock returns 500
@@ -821,7 +884,7 @@ test("ошибка Gemini → эскалация к админу + вежлив�
   // Диалог помечается на эскалацию, чтобы админ узнал что AI лежит
   expect((res.nextStateData as any).needs_human).toBe(true);
   expect(res.debug.errors.length).toBeGreaterThan(0);
-});
+}, 20_000);
 
 test("промпт: правило «цена сразу» + мультиуслуга + абсолютный язык присутствуют", () => {
   const prompt = buildSystemPromptV4(makeInput("привет"));
@@ -855,13 +918,23 @@ test("история v4_history сохраняется и передаётся �
   expect((second.nextStateData as any).v4_history.length).toBe(4);
 });
 
+// Явный таймаут вместо дефолтных 5с Bun. Тест намеренно роняет Gemini (пустая geminiQueue),
+// а движок на каждый неудачный вызов делает три попытки с паузами 400мс и 800мс. За ход
+// вызовов несколько, и на загруженной машине сумма пробивала 5с — тест падал через раз
+// (воспроизведено 2026-08-19 под нагрузкой). Проверяется язык ответа, а не скорость,
+// поэтому правильный ответ — дать времени, а не ускорять продакшн-ретраи.
 test("кыргызский: язык из state сохраняется, ошибка Gemini отвечает по-кыргызски", async () => {
   (globalThis as any).__WA_DB__ = makeDb();
   geminiQueue = [];
   const res = await runWaAgentV4(makeInput("салам", { stateData: { language: "ky" } }));
   expect(res.reply).toContain("Кечиресиз");
-});
+}, 20_000);
 
+// Явный таймаут вместо дефолтных 5с Bun. Тест намеренно роняет Gemini (пустая geminiQueue),
+// а движок на каждый неудачный вызов делает три попытки с паузами 400мс и 800мс. За ход
+// вызовов несколько, и на загруженной машине сумма пробивала 5с — тест падал через раз
+// (воспроизведено 2026-08-19 под нагрузкой). Проверяется язык ответа, а не скорость,
+// поэтому правильный ответ — дать времени, а не ускорять продакшн-ретраи.
 test("залипший ru перебивается уверенным кыргызским в текущем сообщении (регрессия со скринов)", async () => {
   // Реальный баг: state.language once = 'ru' → кыргызский диалог получал русские ошибки.
   // Теперь уверенный кыргызский сигнал в текущем ходе перебивает залипший язык.
@@ -870,7 +943,7 @@ test("залипший ru перебивается уверенным кыргы
   const res = await runWaAgentV4(makeInput("Саат бешке жокпу", { stateData: { language: "ru" } }));
   expect(res.reply).toContain("Кечиресиз"); // KY, не русское «Извините»
   expect(res.nextStateData.language).toBe("ky");
-});
+}, 20_000);
 
 test("humanizeReply убирает markdown и превращает нумерованный список в прозу", () => {
   const input =
@@ -953,7 +1026,12 @@ test("get_available_slots возвращает ВЕСЬ день (не обре�
   );
   (globalThis as any).__WA_DB__ = makeDb({ daySlots });
   geminiQueue = [
-    [fc("get_available_slots", { service_id: "11111111-1111-4111-8111-111111111111", date: "2099-01-01" })],
+    [
+      fc("get_available_slots", {
+        service_id: "11111111-1111-4111-8111-111111111111",
+        date: "2099-01-01",
+      }),
+    ],
     [{ text: "Есть свободное время, что удобнее?" }],
   ];
   await runWaAgentV4(makeInput("какое время свободно завтра?"));
@@ -964,7 +1042,13 @@ test("get_available_slots возвращает ВЕСЬ день (не обре�
 test("check_time: запрошенное время свободно → available true", async () => {
   (globalThis as any).__WA_DB__ = makeDb(); // FREE_SLOT = 10:00 Bishkek
   geminiQueue = [
-    [fc("check_time", { service_id: "11111111-1111-4111-8111-111111111111", date: "2099-01-01", time: "10:00" })],
+    [
+      fc("check_time", {
+        service_id: "11111111-1111-4111-8111-111111111111",
+        date: "2099-01-01",
+        time: "10:00",
+      }),
+    ],
     [{ text: "Да, 10:00 свободно, записать?" }],
   ];
   await runWaAgentV4(makeInput("10:00 барбы?"));
@@ -976,7 +1060,13 @@ test("check_time: запрошенное время свободно → availab
 test("check_time: время НЕ в списке → available false, но с ближайшими", async () => {
   (globalThis as any).__WA_DB__ = makeDb(); // только 10:00 свободно
   geminiQueue = [
-    [fc("check_time", { service_id: "11111111-1111-4111-8111-111111111111", date: "2099-01-01", time: "17:00" })],
+    [
+      fc("check_time", {
+        service_id: "11111111-1111-4111-8111-111111111111",
+        date: "2099-01-01",
+        time: "17:00",
+      }),
+    ],
     [{ text: "17:00 занято, но есть 10:00 — подойдёт?" }],
   ];
   await runWaAgentV4(makeInput("17:00 барбы?"));
@@ -993,7 +1083,12 @@ test("зависание после «подождите»: агент дожи�
     // 1-й проход: модель «залипла» без вызова инструментов
     [{ text: "Секундочку, сейчас проверю расписание, подождите немного." }],
     // после наджа: вызывает инструмент…
-    [fc("get_available_slots", { service_id: "11111111-1111-4111-8111-111111111111", date: "2099-01-01" })],
+    [
+      fc("get_available_slots", {
+        service_id: "11111111-1111-4111-8111-111111111111",
+        date: "2099-01-01",
+      }),
+    ],
     // …и даёт готовый ответ
     [{ text: "Есть 10:00 — удобно?" }],
   ];
@@ -1120,9 +1215,7 @@ test("по умолчанию (режим не выбран) — лёгкие п
 // Salons configured before the sales_style migration have only the boolean. Their owners
 // picked "active" once and must not be silently downgraded to the calm style by a deploy.
 test("старый sales_mode=true всё ещё означает активные продажи", () => {
-  const prompt = buildSystemPromptV4(
-    makeInput("сколько стоит?", { config: { sales_mode: true } }),
-  );
+  const prompt = buildSystemPromptV4(makeInput("сколько стоит?", { config: { sales_mode: true } }));
   expect(prompt).toContain("СТИЛЬ ПРОДАЖ: АКТИВНЫЕ ПРОДАЖИ");
 });
 
@@ -1161,7 +1254,12 @@ test("мусор в sales_style не делает ассистента напо�
 test("выдуманные слоты: инструмент вернул 0 времён, а модель назвала времена → форс-ретрай", async () => {
   (globalThis as any).__WA_DB__ = makeDb({ daySlots: [] }); // календарь: свободного нет
   geminiQueue = [
-    [fc("get_available_slots", { service_id: "11111111-1111-4111-8111-111111111111", date: "2099-01-01" })],
+    [
+      fc("get_available_slots", {
+        service_id: "11111111-1111-4111-8111-111111111111",
+        date: "2099-01-01",
+      }),
+    ],
     // Модель выдумывает времена из справочных часов работы
     [{ text: "На завтра есть свободные окошки: 13:00, 15:00 и 17:00. Какое удобно?" }],
     // После наджа — честный ответ без выдуманных времён
@@ -1177,7 +1275,12 @@ test("выдуманные слоты: инструмент вернул 0 вр�
 test("НЕ ложное срабатывание: модель назвала время, которое инструмент реально вернул", async () => {
   (globalThis as any).__WA_DB__ = makeDb(); // FREE_SLOT = 10:00 Bishkek
   geminiQueue = [
-    [fc("get_available_slots", { service_id: "11111111-1111-4111-8111-111111111111", date: "2099-01-01" })],
+    [
+      fc("get_available_slots", {
+        service_id: "11111111-1111-4111-8111-111111111111",
+        date: "2099-01-01",
+      }),
+    ],
     [{ text: "Есть свободное окошко в 10:00 — записать вас?" }],
   ];
   const res = await runWaAgentV4(makeInput("какое время свободно?"));
@@ -1188,7 +1291,12 @@ test("НЕ ложное срабатывание: модель назвала в
 test("НЕ ложное срабатывание: справочные часы работы — не предложение слота", async () => {
   (globalThis as any).__WA_DB__ = makeDb({ daySlots: [] });
   geminiQueue = [
-    [fc("get_available_slots", { service_id: "11111111-1111-4111-8111-111111111111", date: "2099-01-01" })],
+    [
+      fc("get_available_slots", {
+        service_id: "11111111-1111-4111-8111-111111111111",
+        date: "2099-01-01",
+      }),
+    ],
     [{ text: "Мы работаем каждый день с 13:00 до 20:00." }],
   ];
   const res = await runWaAgentV4(makeInput("во сколько работаете?"));
@@ -1199,7 +1307,12 @@ test("НЕ ложное срабатывание: справочные часы 
 test("смешанный ответ: одно время из инструмента + справочные часы → не трогаем", async () => {
   (globalThis as any).__WA_DB__ = makeDb(); // 10:00 свободно
   geminiQueue = [
-    [fc("get_available_slots", { service_id: "11111111-1111-4111-8111-111111111111", date: "2099-01-01" })],
+    [
+      fc("get_available_slots", {
+        service_id: "11111111-1111-4111-8111-111111111111",
+        date: "2099-01-01",
+      }),
+    ],
     [{ text: "Свободно 10:00. Вообще работаем до 20:00, так что подберём удобное." }],
   ];
   const res = await runWaAgentV4(makeInput("когда можно?"));
