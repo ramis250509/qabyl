@@ -198,6 +198,22 @@ describe("задание на пост", () => {
     expect(text).toContain(post.cta);
   });
 
+  test("у ролика есть текст озвучки и настройки ElevenLabs", () => {
+    const text = formatPostBrief(post);
+    expect(text).toContain("ОЗВУЧКА");
+    expect(text).toContain("eleven_multilingual_v2");
+    expect(text).toContain("Stability: 45%");
+    // На 12-15 секунд влезает примерно 40 слов — длиннее диктор просто не успеет.
+    const script = text.split("ОЗВУЧКА")[1].split("Настройки")[0];
+    expect(script.split(/\s+/).length).toBeLessThan(60);
+  });
+
+  test("у статичного поста озвучки нет — её нечем озвучивать", () => {
+    const text = formatPostBrief({ ...post, format: "Пост" });
+    expect(text).not.toContain("ОЗВУЧКА");
+    expect(text).toContain("2. ПОДПИСЬ");
+  });
+
   test("пост получает промпт для картинки, а не сценарий", () => {
     const text = formatPostBrief({ ...post, format: "Пост" });
     expect(text).toContain("Фотореалистичный кадр");
