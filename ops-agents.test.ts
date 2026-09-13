@@ -116,7 +116,16 @@ describe("сообщение владельцу", () => {
 
   test("без технических слов", () => {
     const text = formatContentPlan(fallbackContentPlan(facts), facts);
-    expect(text).not.toMatch(/Gemini|Meta|API|токен|webhook|промпт/i);
+    expect(text).not.toMatch(/Gemini|Meta|API|токен|webhook/i);
+  });
+
+  test("посты отделены друг от друга — не стена текста", () => {
+    const text = formatContentPlan(fallbackContentPlan(facts), facts);
+    // Пустые строки между блоками владелец попросил отдельно: без них сообщение нечитаемо.
+    expect(text).toContain("\n\n");
+    expect(text.split("━━━").length).toBeGreaterThan(3);
+    // И никаких тройных переносов: воздух, а не дыры.
+    expect(text).not.toMatch(/\n{3}/);
   });
 
   test("действие для кнопки несёт одобренный текст поста — публикуется именно он", () => {
@@ -174,10 +183,25 @@ describe("задание на пост", () => {
 
   test("есть промпт, подпись и хештеги", () => {
     const text = formatPostBrief(post);
-    expect(text).toContain("Промпт для картинки");
-    expect(text).toContain("Подпись");
+    expect(text).toMatch(/ПРОМПТ ДЛЯ/);
+    expect(text).toContain("ПОДПИСЬ");
     expect(text).toContain("#бишкек");
     expect(text).toContain("Подключить");
+  });
+
+  test("рилс получает сценарий motion-графики по секундам, а не описание фото", () => {
+    const text = formatPostBrief(post);
+    expect(text).toContain("motion-graphics");
+    expect(text).toContain("Сцена 1 (0-3 с)");
+    expect(text).toContain("Сцена 3");
+    expect(text).toContain(post.hook);
+    expect(text).toContain(post.cta);
+  });
+
+  test("пост получает промпт для картинки, а не сценарий", () => {
+    const text = formatPostBrief({ ...post, format: "Пост" });
+    expect(text).toContain("Фотореалистичный кадр");
+    expect(text).not.toContain("Сцена 1");
   });
 
   test("символы разметки обезврежены — сообщение не разваливается", () => {
@@ -186,12 +210,13 @@ describe("задание на пост", () => {
     expect(text).toContain("&amp;");
   });
 
-  test("вертикальному формату — свои указания по съёмке", () => {
+  test("вертикальному формату — вертикальный кадр, статичному — квадрат", () => {
     expect(formatPostBrief(post)).toContain("9:16");
-    expect(formatPostBrief({ ...post, format: "Пост" })).toContain("1:1");
+    expect(formatPostBrief({ ...post, format: "Пост" })).toContain("квадратный");
   });
 
-  test("в промпте нет текста на картинке — модели пишут его с ошибками", () => {
-    expect(formatPostBrief(post)).toContain("БЕЗ текста");
+  test("текста в кадре мало: у картинки его нет совсем, у ролика — пара слов", () => {
+    expect(formatPostBrief({ ...post, format: "Пост" })).toContain("БЕЗ текста");
+    expect(formatPostBrief(post)).toContain("Текста на экране мало");
   });
 });

@@ -71,7 +71,7 @@ const EXECUTORS: Record<string, (action: ApprovalAction) => Promise<ExecResult>>
   /** План Миры: каждый пост — задача на публикацию, промо — событие для остальных агентов. */
   content_plan: async (action) => {
     const posts = Array.isArray(action.posts) ? (action.posts as any[]) : [];
-    let created = 0;
+    const ids: number[] = [];
     for (const p of posts.slice(0, 5)) {
       const id = await createTask(
         "marketer",
@@ -85,8 +85,9 @@ const EXECUTORS: Record<string, (action: ApprovalAction) => Promise<ExecResult>>
         },
         "approved",
       );
-      if (id) created++;
+      if (id) ids.push(id);
     }
+    const created = ids.length;
     const promo = action.promo as { title?: string; offer?: string } | null;
     if (promo?.title) {
       await emitEvent("promo.approved", "marketer", {
@@ -95,9 +96,13 @@ const EXECUTORS: Record<string, (action: ApprovalAction) => Promise<ExecResult>>
       });
     }
     await emitEvent("content.approved", "marketer", { posts: created });
+    // Номера задач прямо в ответе: без них владелец видит «задач: 3» и не знает, где взять промпт.
+    const commands = ids.map((id) => `/post ${id}`).join("  ");
     return {
       ok: true,
-      note: `Задач на публикацию: ${created}${promo?.title ? ", промо передано Айдару" : ""}`,
+      note:
+        `задач на публикацию: ${created}${promo?.title ? ", промо передано Айдару" : ""}` +
+        (commands ? `\n\nПромпт и подпись к каждому:\n${commands}` : ""),
     };
   },
 

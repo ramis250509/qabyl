@@ -103,7 +103,7 @@ export async function fetchDigestSnapshot(): Promise<DigestSnapshot | null> {
 export function formatDigest(s: DigestSnapshot, dateLabel: string): string {
   const health = s.errors_24h === 0 ? "🟢 всё зелёное" : `🔴 ошибок за сутки: ${s.errors_24h}`;
   const lines = [
-    `🧭 <b>Сводка на ${dateLabel}</b>`,
+    `🧭 <b>СВОДКА НА ${dateLabel.toUpperCase()}</b>`,
     ``,
     `💰 <b>Продажи (записи в салоны)</b>`,
     `   • Сегодня: ${s.bookings_today}`,
@@ -131,7 +131,8 @@ export async function buildDailyDigest(): Promise<string | null> {
   });
   await kvSet("digest_last_built", { at: new Date().toISOString() });
   await audit("chief", "digest.built", { snapshot: snap });
-  return formatDigest(snap, dateLabel);
+  const team = await agentsDaySummary();
+  return team ? `${formatDigest(snap, dateLabel)}\n\n${team}` : formatDigest(snap, dateLabel);
 }
 
 // ===========================================================================
@@ -248,4 +249,62 @@ export async function setAgentPaused(key: string, paused: boolean, by: string): 
   }
   await audit(by, paused ? "agent.paused" : "agent.resumed", { agent: key });
   return true;
+}
+
+// ---- Что команда сделала за сутки ------------------------------------------
+
+const AGENT_TITLES: Record<string, string> = {
+  chief: "🧭 Кэп",
+  sre: "🛠 Деби",
+  marketer: "📣 Мира",
+  sales: "🤝 Айдар",
+  bus: "🔁 Передачи между агентами",
+};
+
+const ACTION_WORDS: Record<string, string> = {
+  "marketer.plan_built": "собрал план контента",
+  "approval.executed": "выполнил одобренное",
+  "approval.requested": "спросил разрешения",
+  "lead.created": "завёл лида",
+  "lead.stage": "двинул лида по воронке",
+  "sre.fixed": "починил сам",
+  "incident.opened": "открыл инцидент",
+  "bus.routed": "передал дело другому агенту",
+  "task.done": "закрыл задачу",
+};
+
+/**
+ * Три строки в конец утренней сводки: кто из агентов что сделал за сутки.
+ *
+ * Владелец просил, чтобы было ВИДНО не только результат, но и то, как агенты передают дела друг
+ * другу. Журнал для этого уже есть — здесь он переводится на человеческий язык. Действия, которым
+ * нет перевода, молча пропускаются: сводка для владельца, а не список событий системы.
+ */
+async function agentsDaySummary(): Promise<string> {
+  const since = new Date(Date.now() - 86_400_000).toISOString();
+  const { data } = await db()
+    .from("ops_audit_log")
+    .select("actor, action")
+    .gte("at", since)
+    .limit(500);
+  const rows = (data ?? []) as { actor: string; action: string }[];
+
+  const byAgent = new Map<string, Map<string, number>>();
+  for (const r of rows) {
+    const word = ACTION_WORDS[r.action];
+    if (!word) continue;
+    const inner = byAgent.get(r.actor) ?? new Map<string, number>();
+    inner.set(word, (inner.get(word) ?? 0) + 1);
+    byAgent.set(r.actor, inner);
+  }
+  if (byAgent.size === 0) return "";
+
+  const lines = ["👥 <b>КОМАНДА ЗА СУТКИ</b>", ""];
+  for (const [actor, actions] of byAgent) {
+    const what = [...actions.entries()]
+      .map(([word, n]) => (n > 1 ? `${word} ×${n}` : word))
+      .join(", ");
+    lines.push(`${AGENT_TITLES[actor] ?? actor}: ${what}`);
+  }
+  return lines.join("\n");
 }
