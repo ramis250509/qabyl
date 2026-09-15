@@ -171,7 +171,7 @@ export async function draftOutreach(
   const facts = await platformFacts();
   const fallback = draftOutreachFallback(lead, { aiBookings7d: facts.aiBookings7d });
 
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = (process.env.Gemini_API_Key || process.env.GEMINI_API_KEY);
   if (!apiKey || !(await llmBudgetLeft())) return { text: fallback, fromModel: false };
 
   const history = await leadHistory(leadId);

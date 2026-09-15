@@ -2251,7 +2251,7 @@ function matchMasterByName(masters: DbMaster[], name: string | undefined): DbMas
 // ============================================================
 
 export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = (process.env.Gemini_API_Key || process.env.GEMINI_API_KEY);
   if (!apiKey) {
     return {
       reply: "Ассистент временно недоступен. Администратор салона ответит вам в ближайшее время.",
@@ -3923,7 +3923,7 @@ async function translateGreetingV3(
 
 export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> {
   const db = await getAdmin();
-  const apiKey = process.env.GEMINI_API_KEY ?? "";
+  const apiKey = (process.env.Gemini_API_Key || process.env.GEMINI_API_KEY) ?? "";
   const tz = input.salon.timezone;
   const debug: WaAgentResult["debug"] = { actions: [], errors: [] };
 

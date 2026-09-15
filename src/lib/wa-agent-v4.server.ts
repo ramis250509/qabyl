@@ -2320,7 +2320,7 @@ export async function executeV4Tool(
       // HTTP URLs (Green-API signed links) uniformly, with a 12s timeout.
       const dl = await downloadImageAsBase64(lastImage.media_signed_url);
       if ("error" in dl) return { error: `Не удалось получить фото: ${dl.error}` };
-      const apiKey = process.env.GEMINI_API_KEY ?? "";
+      const apiKey = (process.env.Gemini_API_Key || process.env.GEMINI_API_KEY) ?? "";
       if (!apiKey) return { error: "GEMINI_API_KEY not configured on server" };
       const priced = await priceFromPhoto({
         apiKey,
@@ -2455,7 +2455,7 @@ export function sanitizeGeminiHistory(history: GeminiV2Content[]): GeminiV2Conte
 
 export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> {
   const db = await getAdmin();
-  const apiKey = process.env.GEMINI_API_KEY ?? "";
+  const apiKey = (process.env.Gemini_API_Key || process.env.GEMINI_API_KEY) ?? "";
 
   const debug: WaAgentResult["debug"] = { actions: [], errors: [], toolTrace: [] };
   const priorPhotoNotes: PhotoNote[] = Array.isArray((input.stateData as any).photo_notes)

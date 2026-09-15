@@ -30,7 +30,7 @@ export const generateSiteContent = createServerFn({ method: "POST" })
     const industry = normalizeIndustry((ai as any)?.industry);
     const fallback = INDUSTRY_SITE[industry];
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = (process.env.Gemini_API_Key || process.env.GEMINI_API_KEY);
     if (!apiKey) return fallback;
 
     try {
