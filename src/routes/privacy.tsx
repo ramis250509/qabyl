@@ -1,7 +1,8 @@
+import { LegalLinks } from "@/components/billing/LegalLinks";
 import { createFileRoute, Link } from "@tanstack/react-router";
 
 const CONTACT_EMAIL = "support@qabyl.com";
-const LAST_UPDATED = "3 июля 2026";
+const LAST_UPDATED = "14 сентября 2026";
 
 export const Route = createFileRoute("/privacy")({
   head: () => ({
@@ -29,15 +30,30 @@ function PrivacyPolicy() {
         </Link>
       </div>
 
+      <LegalLinks />
       <h1 className="text-3xl font-bold tracking-tight">Политика конфиденциальности</h1>
       <p className="mt-2 text-sm text-muted-foreground">Последнее обновление: {LAST_UPDATED}</p>
 
       <div className="mt-10 space-y-8 text-sm leading-relaxed text-foreground/90">
         <section>
+          <h2 className="text-lg font-semibold">Данные об оплате</h2>
+          <p className="mt-3">
+            Для учёта оплаты Qabyl обрабатывает сумму, валюту, дату, результат операции,
+            идентификатор платежа и последние четыре цифры карты, если их передал платёжный
+            провайдер. После подключения сохранения карты безопасный идентификатор способа оплаты
+            будет доступен только серверу. Qabyl не хранит полный номер карты и код безопасности.
+            Данные, необходимые для проведения платежа, передаются Freedom Pay. Подробнее —{" "}
+            <a className="underline" href="/payments">
+              условия оплаты
+            </a>
+            .
+          </p>
+        </section>
+        <section>
           <p>
-            Qabyl — платформа онлайн-записи для сферы услуг. Мы уважаем вашу
-            конфиденциальность и обрабатываем персональные данные только в объёме,
-            необходимом для работы сервиса записи и общения через WhatsApp.
+            Qabyl — платформа онлайн-записи для сферы услуг. Мы уважаем вашу конфиденциальность и
+            обрабатываем персональные данные только в объёме, необходимом для работы сервиса записи
+            и общения через WhatsApp.
           </p>
         </section>
 
@@ -61,36 +77,33 @@ function PrivacyPolicy() {
             <li>Улучшение качества сервиса</li>
           </ul>
           <p className="mt-3">
-            Мы не продаём ваши данные третьим лицам и не используем их для сторонней
-            рекламы.
+            Мы не продаём ваши данные третьим лицам и не используем их для сторонней рекламы.
           </p>
         </section>
 
         <section>
           <h2 className="text-lg font-semibold">3. Передача данных</h2>
           <p className="mt-3">
-            Данные передаются только сервисам, обеспечивающим работу платформы:
-            WhatsApp (Meta Platforms) — для обмена сообщениями, и нашему поставщику
-            баз данных и хостинга. Эти сервисы обрабатывают данные исключительно для
-            предоставления своих функций.
+            Данные передаются только сервисам, обеспечивающим работу платформы: WhatsApp (Meta
+            Platforms) — для обмена сообщениями, и нашему поставщику баз данных и хостинга. Эти
+            сервисы обрабатывают данные исключительно для предоставления своих функций.
           </p>
         </section>
 
         <section>
           <h2 className="text-lg font-semibold">4. Хранение и удаление</h2>
           <p className="mt-3">
-            Мы храним данные ровно столько, сколько необходимо для работы сервиса. Вы
-            можете запросить удаление своих данных в любой момент — мы удалим их
-            незамедлительно. При закрытии аккаунта салона все связанные данные удаляются
-            в течение 30 дней.
+            Мы храним данные ровно столько, сколько необходимо для работы сервиса. Вы можете
+            запросить удаление своих данных в любой момент — мы удалим их незамедлительно. При
+            закрытии аккаунта салона все связанные данные удаляются в течение 30 дней.
           </p>
         </section>
 
         <section>
           <h2 className="text-lg font-semibold">5. Ваши права</h2>
           <p className="mt-3">
-            Вы имеете право запросить доступ к своим данным, их исправление или удаление.
-            Для этого напишите нам на{" "}
+            Вы имеете право запросить доступ к своим данным, их исправление или удаление. Для этого
+            напишите нам на{" "}
             <a href={`mailto:${CONTACT_EMAIL}`} className="underline">
               {CONTACT_EMAIL}
             </a>
@@ -117,9 +130,9 @@ function PrivacyPolicy() {
           <p className="text-xs text-muted-foreground">Last updated: July 3, 2026</p>
 
           <p>
-            Qabyl is an online booking platform for service businesses. We respect your
-            privacy and only process personal data to the extent necessary to run the
-            booking service and to communicate over WhatsApp.
+            Qabyl is an online booking platform for service businesses. We respect your privacy and
+            only process personal data to the extent necessary to run the booking service and to
+            communicate over WhatsApp.
           </p>
 
           <div>
@@ -142,35 +155,33 @@ function PrivacyPolicy() {
               <li>Improving the quality of the service</li>
             </ul>
             <p className="mt-2">
-              We do not sell your data to third parties and do not use it for
-              third-party advertising.
+              We do not sell your data to third parties and do not use it for third-party
+              advertising.
             </p>
           </div>
 
           <div>
             <h3 className="font-semibold">3. Data sharing</h3>
             <p className="mt-2">
-              Data is shared only with services that power the platform: WhatsApp (Meta
-              Platforms) for messaging, and our database and hosting provider. These
-              services process the data solely to provide their functionality.
+              Data is shared only with services that power the platform: WhatsApp (Meta Platforms)
+              for messaging, and our database and hosting provider. These services process the data
+              solely to provide their functionality.
             </p>
           </div>
 
           <div>
             <h3 className="font-semibold">4. Retention and deletion</h3>
             <p className="mt-2">
-              We keep data only as long as needed to operate the service. You may
-              request deletion of your data at any time and we will remove it promptly.
-              When a salon account is closed, all associated data is deleted within 30
-              days.
+              We keep data only as long as needed to operate the service. You may request deletion
+              of your data at any time and we will remove it promptly. When a salon account is
+              closed, all associated data is deleted within 30 days.
             </p>
           </div>
 
           <div>
             <h3 className="font-semibold">5. Your rights</h3>
             <p className="mt-2">
-              You may request access to, correction of, or deletion of your data by
-              emailing{" "}
+              You may request access to, correction of, or deletion of your data by emailing{" "}
               <a href={`mailto:${CONTACT_EMAIL}`} className="underline">
                 {CONTACT_EMAIL}
               </a>

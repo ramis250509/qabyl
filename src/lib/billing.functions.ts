@@ -6,13 +6,27 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
-async function assertSalonAccess(supabase: any, userId: string, salonId: string) {
+async function assertSalonAccess(supabase: any, userId: string, salonId: string, ownerOnly = true) {
   const { data, error } = await supabase.rpc("has_salon_access", {
     _user_id: userId,
     _salon_id: salonId,
   });
   if (error) throw new Error(error.message);
   if (!data) throw new Error("Forbidden");
+  if (!ownerOnly) return;
+  const { data: roles, error: roleError } = await supabase
+    .from("user_roles")
+    .select("role, salon_id")
+    .eq("user_id", userId);
+  if (
+    roleError ||
+    !roles?.some(
+      (r: { role: string; salon_id: string | null }) =>
+        r.role === "super_admin" || (r.role === "salon_admin" && r.salon_id === salonId),
+    )
+  ) {
+    throw new Error("Управление оплатой доступно владельцу салона");
+  }
 }
 
 async function assertSuperAdmin(supabase: any, userId: string) {
@@ -37,7 +51,7 @@ export const getBillingStatus = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => salonInput.parse(input))
   .handler(async ({ data, context }) => {
-    await assertSalonAccess(context.supabase, context.userId, data.salonId);
+    await assertSalonAccess(context.supabase, context.userId, data.salonId, false);
     const { getBillingState } = await import("@/lib/billing.server");
     return { state: await getBillingState(data.salonId) };
   });
@@ -51,7 +65,7 @@ export const getBillingOverview = createServerFn({ method: "POST" })
     const { getBillingState, loadPlans, loadConfig, currentFootprint } =
       await import("@/lib/billing.server");
     const { describePlan } = await import("@/lib/billing-logic");
-    const { freedomPayConfig } = await import("@/lib/freedompay.server");
+    const { paymentProvider } = await import("@/lib/payment-provider.server");
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
     const [state, plans, cfg, footprint, { data: invoices }] = await Promise.all([
@@ -65,12 +79,26 @@ export const getBillingOverview = createServerFn({ method: "POST" })
           "id, kind, amount_kgs, status, plan_code, period_start, period_end, paid_at, created_at",
         )
         .eq("salon_id", data.salonId)
-        .neq("status", "canceled")
         .order("created_at", { ascending: false })
         .limit(20),
     ]);
 
+    const { data: preferences, error: preferencesError } = await (supabaseAdmin as any)
+      .from("salon_subscriptions")
+      .select(
+        "auto_topup, auto_topup_threshold, auto_topup_packs, auto_topup_consent_at, renewal_consent_at",
+      )
+      .eq("salon_id", data.salonId)
+      .maybeSingle();
+    if (preferencesError) throw new Error("Раздел оплаты обновляется. Попробуйте позже.");
     return {
+      preferences: preferences as {
+        auto_topup: boolean;
+        auto_topup_threshold: number;
+        auto_topup_packs: number;
+        auto_topup_consent_at: string | null;
+        renewal_consent_at: string | null;
+      } | null,
       state,
       plans: plans.map((p) => ({
         code: p.code,
@@ -95,7 +123,13 @@ export const getBillingOverview = createServerFn({ method: "POST" })
         paid_at: string | null;
         created_at: string;
       }[],
-      paymentsEnabled: Boolean(freedomPayConfig()),
+      paymentsEnabled: Boolean(paymentProvider()),
+      paymentCapabilities: paymentProvider()?.capabilities ?? {
+        checkout: false,
+        recurring: false,
+        saveMethod: false,
+        refunds: false,
+      },
       manualInstructions: cfg.manual_payment_instructions ?? null,
       supportContact: cfg.support_contact ?? "support@qabyl.com",
       // Реквизиты ручной оплаты. Пока шлюза карт нет, это и есть касса Qabyl, и прятать её в
@@ -143,14 +177,30 @@ export const buyMessagesPack = createServerFn({ method: "POST" })
 export const setBillingAutoTopup = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) =>
-    z.object({ salonId: z.string().uuid(), enabled: z.boolean() }).parse(input),
+    z
+      .object({
+        salonId: z.string().uuid(),
+        enabled: z.boolean(),
+        threshold: z.union([z.literal(500), z.literal(1000)]).default(500),
+        packs: z.number().int().min(1).max(10).default(1),
+      })
+      .parse(input),
   )
   .handler(async ({ data, context }) => {
     await assertSalonAccess(context.supabase, context.userId, data.salonId);
+    const { paymentProvider } = await import("@/lib/payment-provider.server");
+    if (data.enabled && !paymentProvider()?.capabilities.recurring)
+      throw new Error("Автопополнение ещё не подключено");
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { error } = await (supabaseAdmin as any)
       .from("salon_subscriptions")
-      .update({ auto_topup: data.enabled, updated_at: new Date().toISOString() })
+      .update({
+        auto_topup: data.enabled,
+        auto_topup_threshold: data.threshold,
+        auto_topup_packs: data.packs,
+        auto_topup_consent_at: data.enabled ? new Date().toISOString() : null,
+        updated_at: new Date().toISOString(),
+      })
       .eq("salon_id", data.salonId);
     if (error) throw new Error(error.message);
     return { ok: true };

@@ -24,16 +24,43 @@ export const Route = createFileRoute("/api/public/billing/freedompay")({
         const cfg = freedomPayConfig();
         if (!cfg) return new Response("Payments not configured", { status: 503 });
 
-        const url = new URL(request.url);
-        const params: Record<string, string> = {};
-        url.searchParams.forEach((v, k) => (params[k] = v));
-        const raw = await request.text().catch(() => "");
-        new URLSearchParams(raw).forEach((v, k) => (params[k] = v));
+        if (
+          !request.headers
+            .get("content-type")
+            ?.toLowerCase()
+            .startsWith("application/x-www-form-urlencoded")
+        ) {
+          return new Response("Unsupported content type", { status: 415 });
+        }
+        const reader = request.body?.getReader();
+        if (!reader) return new Response("Empty request", { status: 400 });
+        const chunks: Uint8Array[] = [];
+        let size = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > 32768) {
+            await reader.cancel();
+            return new Response("Too large", { status: 413 });
+          }
+          chunks.push(value);
+        }
+        const bytes = new Uint8Array(size);
+        let offset = 0;
+        for (const chunk of chunks) {
+          bytes.set(chunk, offset);
+          offset += chunk.length;
+        }
+        const params: Record<string, string> = Object.create(null);
+        for (const [key, value] of new URLSearchParams(new TextDecoder().decode(bytes))) {
+          if (key in params || !/^pg_[a-z0-9_]+$/.test(key))
+            return new Response("Invalid fields", { status: 400 });
+          params[key] = value;
+        }
 
         if (!fpVerify(SCRIPT, params, cfg.secretKey)) {
-          console.error(
-            `[billing] Freedom Pay: подпись не сошлась, order=${params.pg_order_id ?? "?"}`,
-          );
+          console.error("[billing] Freedom Pay: invalid signature");
           return xml(fpCallbackResponse(SCRIPT, "rejected", "Bad signature", cfg.secretKey), 400);
         }
 

@@ -2,16 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "Dev Server (Vite + TanStack Start)",
+      "name": "qabyl-dev",
       "runtimeExecutable": "bun",
       "runtimeArgs": ["dev"],
       "port": 8080
-    },
-    {
-      "name": "Preview (production build)",
-      "runtimeExecutable": "bun",
-      "runtimeArgs": ["run", "preview"],
-      "port": 4173
     }
   ]
 }

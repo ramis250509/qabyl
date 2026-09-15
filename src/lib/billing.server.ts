@@ -18,6 +18,7 @@
 // заблокированным за неоплату.
 import {
   addMonths,
+  planDisplayName,
   decidePlanChange,
   normalizeConfig,
   nextLifecycleAction,
@@ -27,7 +28,7 @@ import {
   type PlanFeatures,
   type Subscription,
 } from "@/lib/billing-logic";
-import { freedomPayConfig, fpChargeRecurring, fpInitPayment } from "@/lib/freedompay.server";
+import { paymentProvider } from "@/lib/payment-provider.server";
 
 export type { BillingState };
 
@@ -52,7 +53,7 @@ export async function loadPlans(onlyPublic = false): Promise<Plan[]> {
   let q = sb.from("billing_plans").select("*").eq("is_active", true).order("sort_order");
   if (onlyPublic) q = q.eq("is_public", true);
   const { data } = await q;
-  return (data ?? []) as Plan[];
+  return ((data ?? []) as Plan[]).map((plan) => ({ ...plan, name: planDisplayName(plan) }));
 }
 
 export async function loadConfig(): Promise<BillingConfig> {
@@ -231,6 +232,9 @@ export async function assistantGate(
     const state = await getBillingState(salonId);
     if (!state || !state.has_subscription || state.exempt) return { allowed: true };
     if (state.blocked) return { allowed: false, reason: "подписка Qabyl не оплачена" };
+    if (state.auto_topup && paymentProvider()?.capabilities.recurring) {
+      await buyPack(salonId, "auto");
+    }
     if (!state.assistant_paused) return { allowed: true, features: state.features };
 
     if (state.auto_topup) {
@@ -269,10 +273,9 @@ async function createInvoice(
   },
 ): Promise<{ id: string }> {
   const sb = await db();
-  const { data, error } = await sb
-    .from("billing_invoices")
-    .insert({
-      salon_id: salonId,
+  const { data, error } = await sb.rpc("billing_reserve_invoice", {
+    _salon_id: salonId,
+    _invoice: {
       kind: p.kind,
       amount_kgs: p.amountKgs,
       provider: p.provider ?? "freedompay",
@@ -280,11 +283,10 @@ async function createInvoice(
       period_start: p.periodStart?.toISOString() ?? null,
       period_end: p.periodEnd?.toISOString() ?? null,
       metadata: p.metadata ?? {},
-    })
-    .select("id")
-    .single();
-  if (error) throw new Error(`Не удалось создать счёт: ${error.message}`);
-  return data as { id: string };
+    },
+  });
+  if (error) throw new Error(error.message);
+  return { id: data as string };
 }
 
 /**
@@ -352,27 +354,29 @@ export async function startCheckout(
     email?: string | null;
   },
 ): Promise<{ redirectUrl: string; invoiceId: string }> {
-  const cfg = freedomPayConfig();
+  const cfg = paymentProvider();
   if (!cfg) {
     throw new Error(
       "Оплата картой ещё не подключена. Чтобы оплатить или сменить тариф, напишите в поддержку — оформим переводом.",
     );
   }
+  const base = appBaseUrl();
+  if (new URL(base).protocol !== "https:")
+    throw new Error("Оплата требует защищённого адреса сайта");
   const invoice = await createInvoice(salonId, {
     ...p,
     metadata: { ...(p.metadata ?? {}), via: "checkout" },
   });
-  const base = appBaseUrl();
-  const res = await fpInitPayment(cfg, {
+  const res = await cfg.createPayment({
     orderId: invoice.id,
     amountKgs: p.amountKgs,
     description: p.description,
-    userId: p.userId,
+    userId: salonId,
     email: p.email,
     resultUrl: `${base}/api/public/billing/freedompay`,
     successUrl: `${base}/admin/billing?payment=success`,
     failureUrl: `${base}/admin/billing?payment=failed`,
-    recurring: true,
+    recurring: false,
   });
 
   const sb = await db();
@@ -380,18 +384,21 @@ export async function startCheckout(
     await sb
       .from("billing_invoices")
       .update({
-        status: "failed",
-        last_error: res.error,
+        last_error: "Ожидаем подтверждение банка. Не повторяйте оплату.",
         attempts: 1,
         updated_at: new Date().toISOString(),
       })
-      .eq("id", invoice.id);
-    throw new Error(`Не удалось открыть оплату: ${res.error}`);
+      .eq("id", invoice.id)
+      .eq("status", "pending");
+    throw new Error(
+      "Не удалось получить ответ банка. Проверьте историю оплаты перед повторной попыткой.",
+    );
   }
   await sb
     .from("billing_invoices")
     .update({
       provider_payment_id: res.paymentId || null,
+      checkout_url: res.redirectUrl,
       attempts: 1,
       updated_at: new Date().toISOString(),
     })
@@ -417,107 +424,37 @@ export async function chargeSavedCard(
   amountKgs: number,
   description: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  const cfg = freedomPayConfig();
-  if (!cfg) return { ok: false, error: "оплата картой не подключена" };
+  const provider = paymentProvider();
+  if (!provider?.capabilities.recurring)
+    return { ok: false, error: "Автоматические списания пока недоступны" };
   const sb = await db();
-  const { data: pm } = await sb
-    .from("billing_payment_methods")
-    .select("recurring_profile_id")
-    .eq("salon_id", salonId)
-    .maybeSingle();
-  if (!pm?.recurring_profile_id) return { ok: false, error: "карта не привязана" };
-
-  const conf = await loadConfig();
-  const { data: inv } = await sb
-    .from("billing_invoices")
-    .select("attempts, metadata")
-    .eq("id", invoiceId)
-    .single();
-  const attempts = (inv?.attempts ?? 0) + 1;
-  await sb
-    .from("billing_invoices")
-    .update({ metadata: { ...(inv?.metadata ?? {}), via: "recurring" } })
-    .eq("id", invoiceId);
-
-  const res = await fpChargeRecurring(cfg, {
-    recurringProfileId: pm.recurring_profile_id,
-    orderId: invoiceId,
-    amountKgs,
-    description,
-    resultUrl: `${appBaseUrl()}/api/public/billing/freedompay`,
+  const { data: claimed, error } = await sb.rpc("billing_claim_dispatch", {
+    _salon_id: salonId,
+    _id: invoiceId,
   });
-
-  if (!res.ok) {
-    await markInvoiceFailed(invoiceId, res.error, attempts, conf);
-    return { ok: false, error: res.error };
-  }
-
-  const st = res.status.toLowerCase();
-  if (st === "success" || st === "ok") {
-    await applyPaidInvoice(invoiceId, { paymentId: res.paymentId });
-    return { ok: true };
-  }
-  // Принято, но не подтверждено — ждём уведомления. Следующая попытка не раньше чем через сутки.
-  await sb
+  if (error) throw new Error("Не удалось проверить состояние оплаты");
+  if (!claimed) return { ok: false, error: "Операция уже отправлена или отменена" };
+  const { data: invoice, error: invoiceError } = await sb
     .from("billing_invoices")
-    .update({
-      provider_payment_id: res.paymentId || null,
-      attempts,
-      next_attempt_at: new Date(Date.now() + DAY).toISOString(),
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", invoiceId);
-  return { ok: false, error: "ожидает подтверждения банка" };
-}
-
-async function markInvoiceFailed(
-  invoiceId: string,
-  error: string,
-  attempts: number,
-  cfg: BillingConfig,
-): Promise<void> {
-  const sb = await db();
-  const { data: inv } = await sb.from("billing_invoices").select("*").eq("id", invoiceId).single();
-  if (!inv || inv.status === "paid") return;
-
-  const recurring = inv.metadata?.via === "recurring";
-  const retryDays = recurring ? cfg.dunning_retry_days[attempts - 1] : undefined;
-  const giveUp = retryDays === undefined;
-  await sb
-    .from("billing_invoices")
-    .update({
-      status: giveUp ? "failed" : "pending",
-      attempts,
-      last_error: error,
-      next_attempt_at: giveUp ? null : new Date(Date.now() + retryDays * DAY).toISOString(),
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", invoiceId);
-
-  // Отсрочку запускает только просроченное автопродление. Неудача на форме оплаты во время
-  // пробного периода не должна отнимать у салона оставшиеся бесплатные дни.
-  const due = inv.period_start ? new Date(inv.period_start).getTime() <= Date.now() : true;
-  if (!recurring || inv.kind !== "subscription" || !due) return;
-
-  const sub = await loadSubscription(inv.salon_id);
-  if (sub && (sub.status === "active" || sub.status === "trialing")) {
-    await sb
-      .from("salon_subscriptions")
-      .update({
-        status: "past_due",
-        grace_until: new Date(Date.now() + cfg.grace_days * DAY).toISOString(),
-        last_payment_error: error,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("salon_id", inv.salon_id);
-  }
-  await notifyOwnerOnce(
-    inv.salon_id,
-    `payment_failed:${invoiceId}`,
-    "Не удалось списать оплату Qabyl",
-    `Банк отклонил списание: ${error}. Оплатите в течение ${cfg.grace_days} дн. — иначе онлайн-запись и ассистент будут приостановлены.`,
-  );
-  await logBillingEvent(inv.salon_id, "payment_failed", { invoiceId, error, attempts });
+    .select("amount_kgs")
+    .eq("id", invoiceId)
+    .eq("salon_id", salonId)
+    .single();
+  const { data: method, error: methodError } = await sb
+    .from("billing_payment_methods")
+    .select("card_token, recurring_profile_id")
+    .eq("salon_id", salonId)
+    .single();
+  if (invoiceError || methodError) throw new Error("Не удалось подготовить оплату");
+  // No network retries after dispatch. A timeout requires status reconciliation.
+  await provider.chargeSavedMethod({
+    invoiceId,
+    salonId,
+    amountKgs: invoice.amount_kgs,
+    description,
+    method,
+  });
+  return { ok: false, error: "Ожидаем подтверждение банка" };
 }
 
 /**
@@ -537,86 +474,8 @@ export async function applyPaidInvoice(
   },
 ): Promise<void> {
   const sb = await db();
-  const { data: inv } = await sb.from("billing_invoices").select("*").eq("id", invoiceId).single();
-  if (!inv || inv.status === "paid") return;
-  const now = new Date();
-
-  await sb
-    .from("billing_invoices")
-    .update({
-      status: "paid",
-      paid_at: now.toISOString(),
-      provider_payment_id: info.paymentId || inv.provider_payment_id,
-      last_error: null,
-      next_attempt_at: null,
-      updated_at: now.toISOString(),
-    })
-    .eq("id", invoiceId);
-
-  if (info.recurringProfileId || info.cardToken) {
-    await sb.from("billing_payment_methods").upsert(
-      {
-        salon_id: inv.salon_id,
-        provider: inv.provider,
-        recurring_profile_id: info.recurringProfileId ?? null,
-        card_token: info.cardToken ?? null,
-        card_mask: info.cardMask ?? null,
-        updated_at: now.toISOString(),
-      },
-      { onConflict: "salon_id" },
-    );
-  }
-
-  const subPatch: Record<string, unknown> = { updated_at: now.toISOString() };
-  if (info.cardMask) subPatch.card_mask = info.cardMask;
-
-  if (inv.kind === "subscription") {
-    const start = inv.period_start ? new Date(inv.period_start) : now;
-    const end = inv.period_end ? new Date(inv.period_end) : addMonths(start, 1);
-    const sub = await loadSubscription(inv.salon_id);
-    const ahead =
-      start.getTime() > now.getTime() + 60_000 &&
-      (sub?.status === "trialing" || sub?.status === "active");
-    if (ahead) {
-      subPatch.cancel_at_period_end = false;
-      subPatch.last_payment_error = null;
-    } else {
-      Object.assign(subPatch, activationPatch(inv.plan_code, start, end));
-    }
-  } else if (inv.kind === "proration") {
-    subPatch.plan_code = inv.plan_code;
-  } else if (inv.kind === "overage_pack") {
-    const { data: period } = await sb.rpc("billing_current_period_start", {
-      _salon_id: inv.salon_id,
-    });
-    const messages = Number(inv.metadata?.messages ?? 0);
-    if (period && messages > 0) {
-      await sb.from("billing_credits").insert({
-        salon_id: inv.salon_id,
-        period_start: period,
-        messages,
-        source: "pack",
-        invoice_id: inv.id,
-      });
-    }
-  }
-
-  await sb.from("salon_subscriptions").update(subPatch).eq("salon_id", inv.salon_id);
-  await logBillingEvent(inv.salon_id, "payment_succeeded", {
-    invoiceId,
-    kind: inv.kind,
-    amount: inv.amount_kgs,
-    via: inv.metadata?.via ?? null,
-  });
-  await sb.from("notifications").insert({
-    salon_id: inv.salon_id,
-    type: "billing",
-    title: "Оплата прошла",
-    body:
-      inv.kind === "overage_pack"
-        ? "Пакет сообщений добавлен — ассистент снова отвечает клиентам."
-        : `Спасибо! Оплачено ${inv.amount_kgs} сом.`,
-  });
+  const { error } = await sb.rpc("billing_settle_invoice", { _id: invoiceId, _info: info });
+  if (error) throw new Error("Не удалось подтвердить оплату в базе");
 }
 
 /** Уведомление Freedom Pay о результате платежа. Подпись уже проверена маршрутом. */
@@ -625,38 +484,25 @@ export async function handleFreedomPayResult(
 ): Promise<{ status: "ok" | "rejected"; description: string }> {
   const sb = await db();
   const orderId = params.pg_order_id ?? "";
-  const { data: inv } = await sb
+  const { data: inv, error: invoiceError } = await sb
     .from("billing_invoices")
     .select("*")
     .eq("id", orderId)
     .maybeSingle();
+  if (invoiceError) throw new Error("Payment invoice read failed");
   if (!inv) return { status: "rejected", description: "Неизвестный заказ" };
 
-  if (params.pg_result === "1") {
-    const paid = Number(params.pg_amount ?? 0);
-    if (paid + 0.001 < Number(inv.amount_kgs)) {
-      await logBillingEvent(inv.salon_id, "payment_amount_mismatch", {
-        invoiceId: inv.id,
-        paid,
-        expected: inv.amount_kgs,
-      });
-      return { status: "rejected", description: "Сумма не совпадает со счётом" };
-    }
-    await applyPaidInvoice(inv.id, {
-      paymentId: params.pg_payment_id,
-      cardMask: params.pg_card_pan,
-      cardToken: params.pg_card_token,
-      recurringProfileId: params.pg_recurring_profile_id || params.pg_recurring_profile,
-    });
-    return { status: "ok", description: "Принято" };
-  }
-
-  await markInvoiceFailed(
-    inv.id,
-    params.pg_failure_description || "платёж не прошёл",
-    (inv.attempts ?? 0) + 1,
-    await loadConfig(),
-  );
+  const provider = paymentProvider(true);
+  if (!provider) throw new Error("Payments unavailable");
+  const event = provider.normalizeEvent(params, inv);
+  if (!event) return { status: "rejected", description: "Payment details mismatch" };
+  const { error } = await sb.rpc("billing_receive_event", {
+    _id: inv.id,
+    _key: event.key,
+    _outcome: event.outcome,
+    _info: event.info,
+  });
+  if (error) throw new Error("Payment event transaction failed");
   return { status: "ok", description: "Принято" };
 }
 
@@ -673,6 +519,15 @@ export async function buyPack(
   source: "auto" | "manual",
   who?: { userId: string; email?: string | null },
 ): Promise<{ ok: boolean; redirectUrl?: string; error?: string }> {
+  if (source === "auto") {
+    if (!paymentProvider()?.capabilities.recurring)
+      return { ok: false, error: "Автопополнение пока недоступно" };
+    const sb = await db();
+    const { data: id, error } = await sb.rpc("billing_reserve_topup", { _salon_id: salonId });
+    if (error) throw new Error("Не удалось подготовить пополнение");
+    if (!id) return { ok: false, error: "Покупка не требуется или уже обрабатывается" };
+    return chargeSavedCard(salonId, id, 0, "Qabyl: автопополнение сообщений");
+  }
   const sb = await db();
   const sub = await loadSubscription(salonId);
   if (!sub) return { ok: false, error: "нет подписки" };
@@ -681,38 +536,8 @@ export async function buyPack(
   const messages = plan.limits.overage_pack_messages;
   const price = plan.limits.overage_pack_price_kgs;
 
-  if (source === "auto") {
-    // Не больше одной автодокупки за 10 минут: иначе поток сообщений в пиковый час превращается
-    // в серию списаний раньше, чем первое подтверждено.
-    const since = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-    const { data: recent } = await sb
-      .from("billing_invoices")
-      .select("id")
-      .eq("salon_id", salonId)
-      .eq("kind", "overage_pack")
-      .gte("created_at", since)
-      .limit(1);
-    if (recent && recent.length) return { ok: false, error: "автодокупка уже в процессе" };
-  }
-
-  const { data: pm } = await sb
-    .from("billing_payment_methods")
-    .select("recurring_profile_id")
-    .eq("salon_id", salonId)
-    .maybeSingle();
-
   const description = `Qabyl: пакет ${messages} сообщений`;
-  if (pm?.recurring_profile_id) {
-    const inv = await createInvoice(salonId, {
-      kind: "overage_pack",
-      amountKgs: price,
-      metadata: { messages, source },
-    });
-    const res = await chargeSavedCard(salonId, inv.id, price, description);
-    return res.ok ? { ok: true } : { ok: false, error: res.error };
-  }
-
-  if (source === "auto" || !who) return { ok: false, error: "карта не привязана" };
+  if (!who) return { ok: false, error: "Войдите в кабинет для оплаты" };
   const { redirectUrl } = await startCheckout(salonId, {
     kind: "overage_pack",
     amountKgs: price,
@@ -777,21 +602,6 @@ export async function changePlan(
         return { result: "upgraded" };
       }
       const description = `Qabyl: переход на ${to.name}`;
-      const { data: pm } = await sb
-        .from("billing_payment_methods")
-        .select("recurring_profile_id")
-        .eq("salon_id", salonId)
-        .maybeSingle();
-      if (pm?.recurring_profile_id) {
-        const inv = await createInvoice(salonId, {
-          kind: "proration",
-          amountKgs: decision.chargeKgs,
-          planCode: to.code,
-        });
-        const res = await chargeSavedCard(salonId, inv.id, decision.chargeKgs, description);
-        if (res.ok) return { result: "upgraded" };
-        throw new Error(`Не удалось списать доплату: ${res.error}`);
-      }
       const { redirectUrl } = await startCheckout(salonId, {
         kind: "proration",
         amountKgs: decision.chargeKgs,
@@ -929,6 +739,7 @@ export async function runBillingCycle(now = new Date()): Promise<{
   if (!meteringAvailable()) return report;
 
   const sb = await db();
+  await reconcilePendingPayments();
   const cfg = await loadConfig();
   // Биллинг выключен для всех: никого не переводим в «нужна оплата» и не блокируем.
   if (cfg.enforcement_enabled === false) return report;
@@ -938,7 +749,7 @@ export async function runBillingCycle(now = new Date()): Promise<{
     .from("billing_payment_methods")
     .select("salon_id")
     .not("recurring_profile_id", "is", null);
-  const withCard = new Set((methods ?? []).map((m: any) => m.salon_id as string));
+  const withCard = new Set<string>(); // Recurring capability is unavailable until bank certification.
 
   // Месяцы, оплаченные вперёд (переводом или картой заранее): включаются в день начала.
   const { data: prepaidRows } = await sb
@@ -1071,7 +882,7 @@ export async function runBillingCycle(now = new Date()): Promise<{
     }
   }
 
-  // Повторные попытки автосписаний по расписанию dunning_retry_days.
+  // Dispatch is single-use. Uncertain outcomes require bank reconciliation, never another debit.
   const { data: retries } = await sb
     .from("billing_invoices")
     .select("*")
@@ -1090,15 +901,7 @@ export async function runBillingCycle(now = new Date()): Promise<{
     if (res.ok) report.charged++;
   }
 
-  // Брошенные формы оплаты. Ссылка шлюза живёт час; через сутки счёт точно никто не оплатит.
-  await sb
-    .from("billing_invoices")
-    .update({ status: "canceled", updated_at: now.toISOString() })
-    .eq("status", "pending")
-    .is("next_attempt_at", null)
-    .eq("metadata->>via", "checkout")
-    .lt("created_at", new Date(now.getTime() - DAY).toISOString());
-
+  // Pending payments are reconciled with the bank; never expire a dispatched charge by age.
   // Расход ≥ порога предупреждения — одно уведомление на период.
   for (const sub of (subs ?? []) as Subscription[]) {
     if (sub.billing_exempt) continue;
@@ -1118,4 +921,34 @@ export async function runBillingCycle(now = new Date()): Promise<{
   }
 
   return report;
+}
+
+/** Read-only bank reconciliation; a delayed notification must never cause a second charge. */
+export async function reconcilePendingPayments(): Promise<void> {
+  const provider = paymentProvider(true);
+  if (!provider) return;
+  const sb = await db();
+  const { data: invoices, error } = await sb
+    .from("billing_invoices")
+    .select("id, provider_payment_id, salon_id")
+    .eq("provider", "freedompay")
+    .eq("status", "pending")
+    .lt("created_at", new Date(Date.now() - 60_000).toISOString())
+    .order("created_at")
+    .limit(20);
+  if (error) throw new Error("Payment reconciliation read failed");
+  for (const invoice of invoices ?? []) {
+    const result = await provider.getPaymentStatus({
+      paymentId: invoice.provider_payment_id ?? undefined,
+      orderId: invoice.id,
+    });
+    if (!result.ok || !result.paid) continue;
+    // The signed status response must identify this payment and its currency explicitly.
+    if (!result.raw.pg_currency || result.raw.pg_captured === "0") continue;
+    await handleFreedomPayResult({
+      ...result.raw,
+      pg_order_id: result.raw.pg_order_id || invoice.id,
+      pg_result: "1",
+    });
+  }
 }

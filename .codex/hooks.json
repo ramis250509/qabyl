@@ -1,0 +1,76 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Read|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node 'C:\\Users\\Akbarov Ramis\\OneDrive\\Desktop\\Qabyl\\.codex\\hooks\\graphify-nudge.mjs'"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node 'C:\\Users\\Akbarov Ramis\\OneDrive\\Desktop\\Qabyl\\.codex\\hooks\\guard-branch-id.mjs'"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"C:/Users/Akbarov Ramis/.local/bin/headroom.EXE\" init hook ensure --profile init-qabyl-db3b5e11 --marker headroom-init-claude",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node 'C:\\Users\\Akbarov Ramis\\OneDrive\\Desktop\\Qabyl\\.codex\\hooks\\after-edit.mjs'"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash 'C:\\Users\\Akbarov Ramis\\OneDrive\\Desktop\\Qabyl\\.codex\\hooks\\session-start.sh'"
+          }
+        ]
+      },
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"C:/Users/Akbarov Ramis/.local/bin/headroom.EXE\" init hook ensure --profile init-qabyl-db3b5e11 --marker headroom-init-claude",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node 'C:\\Users\\Akbarov Ramis\\OneDrive\\Desktop\\Qabyl\\.codex\\hooks\\verify-changes.mjs'",
+            "timeout": 360
+          }
+        ]
+      }
+    ]
+  }
+}

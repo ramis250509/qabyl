@@ -11,6 +11,13 @@
 
 export type SubscriptionStatus = "trialing" | "active" | "past_due" | "suspended" | "canceled";
 
+/** Preserve stable tariff codes while the display-name migration rolls out. */
+export function planDisplayName(plan: { code: string; name: string; price_kgs: number }): string {
+  if (plan.code === "business" && plan.name === "Business" && plan.price_kgs === 6499) return "Pro";
+  if (plan.code === "pro" && plan.name === "Pro" && plan.price_kgs === 10499) return "Business";
+  return plan.name;
+}
+
 export type PlanLimits = {
   /** −1 = без лимита. См. миграцию 20260912140000: ноль уже занят под «лимита нет вообще». */
   messages_month: number;
@@ -403,9 +410,7 @@ export function describePlan(plan: Plan): string[] {
     // Каналы больше не отдельный лимит: правило одно — на каждую точку свой WhatsApp и свой
     // Instagram. Прежние строки («WhatsApp ИЛИ Instagram», «до 2 каналов») сталкивали клиента
     // с числом, которое не совпадало с числом точек, и объяснить это было нечем.
-    l.branches === 1
-      ? "WhatsApp и Instagram салона"
-      : "Свой WhatsApp и Instagram для каждой точки",
+    l.branches === 1 ? "WhatsApp и Instagram салона" : "Свой WhatsApp и Instagram для каждой точки",
     l.branches === 1
       ? "Одна точка"
       : `До ${l.branches} ${plural(l.branches, "точки", "точек", "точек")}`,

@@ -146,6 +146,14 @@ function Landing() {
       <header className="border-b">
         <div className="container mx-auto flex h-16 items-center justify-between px-4">
           <div className="text-lg font-semibold">Qabyl</div>
+          <p className="mt-3 flex gap-4 text-sm">
+            <a className="underline" href="/pricing">
+              Тарифы
+            </a>
+            <a className="underline" href="/payments">
+              Оплата и возврат
+            </a>
+          </p>
           <div className="flex gap-2">
             {/* Вход — второстепенное действие и ведёт сразу в форму входа: для того, кто
                 уже клиент, лишний клик по «Уже есть аккаунт?» — это просто лишний клик. */}
@@ -239,10 +247,33 @@ function Landing() {
         </div>
       </main>
 
+      <section className="container mx-auto px-4 py-12" aria-labelledby="pricing-title">
+        <h2 id="pricing-title" className="text-2xl font-semibold">
+          Тарифы Qabyl
+        </h2>
+        <p className="mt-3 text-muted-foreground">
+          Start — 4 499 сом · Pro — 6 499 сом · Business — 10 499 сом в месяц.
+        </p>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Онлайн-запись, команда и сообщения клиентам. Начните с бесплатного пробного периода без
+          карты.
+        </p>
+        <a className="mt-4 inline-block underline" href="/pricing">
+          Сравнить возможности и условия тарифов
+        </a>
+      </section>
       <footer className="border-t bg-muted/30">
         <div className="container mx-auto grid gap-8 px-4 py-12 md:grid-cols-2">
           <div>
             <div className="text-lg font-semibold">Qabyl</div>
+            <p className="mt-3 flex gap-4 text-sm">
+              <a className="underline" href="/pricing">
+                Тарифы
+              </a>
+              <a className="underline" href="/payments">
+                Оплата и возврат
+              </a>
+            </p>
             <p className="mt-2 max-w-sm text-sm text-muted-foreground">
               Платформа онлайн-записи для сферы услуг с WhatsApp-уведомлениями.
             </p>

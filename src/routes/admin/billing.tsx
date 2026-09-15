@@ -1,4 +1,4 @@
-// «Тариф и оплата» — кабинет владельца салона.
+// «Подписка и оплата» — кабинет владельца салона.
 //
 // Слова экрана — слова салона: сообщения, каналы, филиалы. Ни Meta, ни шлюза, ни токенов.
 // Владелец платформы открывает тот же экран для любого салона через ?salon=<id> и видит внизу
@@ -33,10 +33,12 @@ import {
   setBillingExempt,
 } from "@/lib/billing.functions";
 import { PlatformBillingOverview } from "@/components/admin/PlatformBillingOverview";
+import { PaymentSettings } from "@/components/billing/PaymentSettings";
+import { Skeleton } from "@/components/ui/skeleton";
 import { PlanCards } from "@/components/billing/PlanCards";
 
 export const Route = createFileRoute("/admin/billing")({
-  head: () => ({ meta: [{ title: "Тариф и оплата — Qabyl" }] }),
+  head: () => ({ meta: [{ title: "Подписка и оплата — Qabyl" }] }),
   validateSearch: (s: Record<string, unknown>): { payment?: string; salon?: string } => ({
     payment: typeof s.payment === "string" ? s.payment : undefined,
     salon: typeof s.salon === "string" ? s.salon : undefined,
@@ -117,6 +119,7 @@ const STATUS_LABEL: Record<string, string> = {
   pending: "Ожидает оплаты",
   failed: "Не прошёл",
   canceled: "Отменён",
+  refunded: "Возвращён",
 };
 
 function BillingPage() {
@@ -186,7 +189,7 @@ function BillingPage() {
   // секунд — перечитываем чуть позже, чтобы владелец увидел новый статус без перезагрузки.
   useEffect(() => {
     if (search.payment === "success") {
-      toast.success("Оплата принята. Статус обновится через несколько секунд.");
+      toast.info("Проверяем оплату. Подтверждённый результат появится в истории платежей.");
       const t = setTimeout(load, 6000);
       return () => clearTimeout(t);
     }
@@ -233,7 +236,14 @@ function BillingPage() {
       </div>
     );
   }
-  if (!data) return <FullScreenLoader />;
+  if (!data)
+    return (
+      <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-5" aria-label="Загружаем подписку">
+        <Skeleton className="h-10 w-64" />
+        <Skeleton className="h-44 w-full" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
 
   const s = data.state;
   if (!s?.has_subscription) {
@@ -279,7 +289,7 @@ function BillingPage() {
   return (
     <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-6 animate-in fade-in-0 duration-300">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold">Тариф и оплата</h1>
+        <h1 className="text-2xl font-semibold">Подписка и оплата</h1>
         <p className="text-sm text-muted-foreground">
           Сейчас:{" "}
           <span className="font-medium text-foreground">{currentPlan?.name ?? s.plan_name}</span>
@@ -303,8 +313,7 @@ function BillingPage() {
             <p className="text-sm text-muted-foreground">{view.text}</p>
             {s.card_mask && (
               <p className="text-sm text-muted-foreground flex items-center gap-2 pt-1">
-                <CreditCard className="h-4 w-4" aria-hidden /> Карта {s.card_mask} — продление
-                спишется автоматически
+                <CreditCard className="h-4 w-4" aria-hidden /> Карта {s.card_mask}
               </p>
             )}
           </div>
@@ -362,6 +371,66 @@ function BillingPage() {
         />
       )}
 
+      <Card className="p-4 sm:p-5 space-y-4">
+        <h2 className="font-semibold">Способ оплаты и продление</h2>
+        <dl className="grid gap-4 sm:grid-cols-3 text-sm">
+          <div>
+            <dt className="text-muted-foreground">Стоимость тарифа</dt>
+            <dd className="mt-1 font-medium">
+              {formatNumber(currentPlan?.price_kgs ?? s.price_kgs ?? 0)} сом / месяц
+            </dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">Следующее списание</dt>
+            <dd className="mt-1">
+              {data.paymentCapabilities.recurring &&
+              data.preferences?.renewal_consent_at &&
+              !s.cancel_at_period_end
+                ? fmtDate(s.current_period_end ?? s.trial_ends_at)
+                : "Не запланировано"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">Карта</dt>
+            <dd className="mt-1">{s.card_mask ?? "Не привязана"}</dd>
+          </div>
+        </dl>
+        <Button variant="outline" disabled title="Подключение сохранения карты ожидается">
+          {s.card_mask ? "Изменить карту" : "Привязать карту"}
+        </Button>
+        <p className="text-sm text-muted-foreground">
+          Привязка и замена карты станут доступны после подключения этой возможности. Qabyl не
+          запрашивает номер карты или код безопасности.
+        </p>
+        <div className="flex items-center gap-3">
+          <Switch id="renewal" checked={false} disabled />
+          <Label htmlFor="renewal">Автопродление пока недоступно</Label>
+        </div>
+        {search.payment && (
+          <p role="status" className="rounded-lg bg-muted p-3 text-sm">
+            Проверяйте результат в истории. Если деньги уже списаны, а подтверждение задерживается,
+            не оплачивайте повторно — напишите в поддержку.
+          </p>
+        )}
+        <a className="text-sm underline" href="/payments">
+          Условия оплаты и возврата
+        </a>
+      </Card>
+      {!s.exempt && currentPlan && (
+        <PaymentSettings
+          key={`${salonId}:${data.preferences?.auto_topup_threshold}:${data.preferences?.auto_topup_packs}`}
+          salonId={salonId}
+          card={s.card_mask}
+          enabled={!!data.preferences?.auto_topup && !!data.preferences?.auto_topup_consent_at}
+          threshold={data.preferences?.auto_topup_threshold ?? 500}
+          packs={data.preferences?.auto_topup_packs ?? 1}
+          packMessages={currentPlan.pack_messages}
+          packPrice={currentPlan.pack_price_kgs}
+          recurring={data.paymentCapabilities.recurring}
+          busy={busy !== null}
+          run={run}
+        />
+      )}
       {/* Расход */}
       <Card className="p-4 sm:p-5 space-y-4">
         <div className="flex items-start gap-3">
@@ -511,6 +580,14 @@ function BillingPage() {
         </p>
       </section>
 
+      {data.invoices.length === 0 && (
+        <Card className="p-5 space-y-2">
+          <h2 className="font-semibold">История платежей</h2>
+          <p className="text-sm text-muted-foreground">
+            Платежей пока нет. Здесь появятся суммы и подтверждённые результаты оплаты.
+          </p>
+        </Card>
+      )}
       {/* Счета */}
       {data.invoices.length > 0 && (
         <Card className="p-4 sm:p-5 space-y-3">
@@ -541,7 +618,19 @@ function BillingPage() {
                       {formatNumber(inv.amount_kgs)} сом
                     </td>
                     <td className="py-2 whitespace-nowrap">
-                      {STATUS_LABEL[inv.status] ?? inv.status}
+                      {STATUS_LABEL[inv.status] ?? "Уточняем статус"}
+                      {inv.status === "failed" && (
+                        <p className="max-w-60 whitespace-normal text-xs text-destructive mt-1">
+                          Проверьте остаток средств и срок действия карты. Если банк отклоняет
+                          оплату, используйте другую карту или обратитесь в поддержку.
+                        </p>
+                      )}
+                      <details className="mt-2 whitespace-normal text-xs">
+                        <summary className="cursor-pointer underline">Информация о платеже</summary>
+                        <p className="mt-2 break-all">Номер: {inv.id}</p>
+                        <p>Qabyl · {formatNumber(inv.amount_kgs)} сом</p>
+                        <p>Справочная информация, не фискальный чек.</p>
+                      </details>
                     </td>
                   </tr>
                 ))}

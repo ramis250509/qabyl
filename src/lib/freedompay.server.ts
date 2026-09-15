@@ -1,3 +1,4 @@
+import { readPaymentXml } from "./payment-xml.server";
 // Freedom Pay (Кыргызстан): приём карт и автосписание подписки Qabyl.
 //
 // ЧТО ИЗВЕСТНО ИЗ ДОКУМЕНТАЦИИ (freedompay.kg/docs/merchant-api, сверено 11.09.2026):
@@ -12,32 +13,27 @@
 //     Не ответили — Freedom Pay повторяет каждые 30 минут в течение двух часов.
 //   • get_status3.php — статус платежа; revoke.php — возврат.
 //
-// ЧТО НЕ ОПИСАНО НА ПУБЛИЧНЫХ СТРАНИЦАХ: запрос повторного списания по рекуррентному профилю без
-// участия владельца. Здесь использован классический скрипт make_recurring_payment.php с
-// параметром pg_recurring_profile — ТАК РАБОТАЕТ PayBox, на котором построен Freedom Pay, но у
-// кыргызского подразделения это нужно подтвердить при подключении. Имя скрипта вынесено в
-// переменную FREEDOMPAY_RECURRING_SCRIPT, чтобы поменять его без правки кода.
+// Saved-card and partner flows require merchant activation and certification. No guessed endpoints.
 
 export type FreedomPayConfig = {
   merchantId: string;
   secretKey: string;
   apiBase: string;
   testing: boolean;
-  recurringScript: string;
+  recurringScript?: string;
 };
 
 export function freedomPayConfig(): FreedomPayConfig | null {
   const merchantId = (process.env.FREEDOMPAY_MERCHANT_ID ?? "").trim();
   const secretKey = (process.env.FREEDOMPAY_SECRET_KEY ?? "").trim();
   if (!merchantId || !secretKey) return null;
+  const apiBase = process.env.FREEDOMPAY_API_BASE ?? "https://api.freedompay.kg";
+  if (apiBase !== "https://api.freedompay.kg") throw new Error("Unsupported acquiring endpoint");
   return {
     merchantId,
     secretKey,
     apiBase: (process.env.FREEDOMPAY_API_BASE ?? "https://api.freedompay.kg").replace(/\/$/, ""),
-    testing: (process.env.FREEDOMPAY_TESTING ?? "") === "1",
-    recurringScript: (
-      process.env.FREEDOMPAY_RECURRING_SCRIPT ?? "make_recurring_payment.php"
-    ).trim(),
+    testing: process.env.FREEDOMPAY_TESTING !== "0",
   };
 }
 
@@ -181,7 +177,15 @@ async function fpPost(
       signal: AbortSignal.timeout(20000),
     });
     const text = await res.text();
-    const data = parseFpXml(text);
+    const { fields: data, signatureFields } = readPaymentXml(text);
+    if (
+      !fpVerify(
+        script.split("/").pop()!,
+        { ...signatureFields, pg_sig: data.pg_sig },
+        cfg.secretKey,
+      )
+    )
+      return { ok: false, error: "Ответ банка не подтверждён" };
     if (!res.ok) return { ok: false, error: `Freedom Pay HTTP ${res.status}` };
     if ((data.pg_status ?? "").toLowerCase() !== "ok") {
       return {
@@ -227,9 +231,13 @@ export async function fpInitPayment(
     pg_description: p.description,
     pg_user_id: p.userId,
     pg_result_url: p.resultUrl,
+    pg_request_method: "POST",
+    pg_success_url_method: "GET",
+    pg_failure_url_method: "GET",
     pg_success_url: p.successUrl,
     pg_failure_url: p.failureUrl,
     pg_lifetime: "3600",
+    pg_postpone_payment: "0",
   };
   if (p.email) params.pg_user_contact_email = p.email;
   if (p.phone) params.pg_user_phone = p.phone.replace(/\D/g, "");
@@ -241,7 +249,8 @@ export async function fpInitPayment(
   const res = await fpPost(cfg, "init_payment.php", params);
   if (!res.ok) return res;
   const redirectUrl = res.data.pg_redirect_url;
-  if (!redirectUrl) return { ok: false, error: "Freedom Pay не вернул ссылку на оплату" };
+  if (!redirectUrl || !/^https:\/\/([a-z0-9-]+\.)*freedompay\.kg(?::443)?\//i.test(redirectUrl))
+    return { ok: false, error: "Freedom Pay не вернул ссылку на оплату" };
   return { ok: true, paymentId: res.data.pg_payment_id ?? "", redirectUrl };
 }
 
@@ -262,19 +271,7 @@ export async function fpChargeRecurring(
     resultUrl: string;
   },
 ): Promise<{ ok: true; paymentId: string; status: string } | { ok: false; error: string }> {
-  const res = await fpPost(cfg, cfg.recurringScript, {
-    pg_recurring_profile: p.recurringProfileId,
-    pg_order_id: p.orderId,
-    pg_amount: String(p.amountKgs),
-    pg_description: p.description,
-    pg_result_url: p.resultUrl,
-  });
-  if (!res.ok) return res;
-  return {
-    ok: true,
-    paymentId: res.data.pg_payment_id ?? "",
-    status: res.data.pg_payment_status ?? res.data.pg_status ?? "ok",
-  };
+  return { ok: false, error: "Автоматические списания ожидают подтверждения Freedom Pay" };
 }
 
 export async function fpGetStatus(
@@ -289,7 +286,7 @@ export async function fpGetStatus(
   const res = await fpPost(cfg, "get_status3.php", params);
   if (!res.ok) return res;
   const st = (res.data.pg_payment_status ?? "").toLowerCase();
-  return { ok: true, paid: st === "success" || st === "ok", raw: res.data };
+  return { ok: true, paid: st === "success", raw: res.data };
 }
 
 /** Подписанный XML-ответ на уведомление Freedom Pay. */

@@ -15,7 +15,22 @@ bun lint         # ESLint
 bun format       # Prettier
 ```
 
-There is no test suite. There is no single-file test runner command.
+Tests run under Bun's built-in runner — ~1000 tests across 45 files at the repo root:
+
+```bash
+bun run test                          # full suite = bun test --isolate, ~50s
+bun test --isolate wa-agent.scenarios # one file (substring match on the path)
+bun run qa:assistant                  # AI Assistant Quality Test (needs GEMINI_API_KEY) — see qa/assistant-sim/README.md
+```
+
+Always use `--isolate`: several suites replace `globalThis.fetch` and mock the Supabase client at
+import time, and without isolation the result depends on file order (plain `bun test` fails a
+different handful of tests per run).
+
+Most of the weight is the WhatsApp/Instagram agent scenario suites, which mock both the
+database and Gemini. `assistant-sim.harness.test.ts` drives the real webhook pipeline against an
+in-memory port of the booking SQL (qa/assistant-sim/fake-db.ts) — when you change booking SQL,
+update that port.
 
 ## Stack
 
@@ -31,11 +46,13 @@ There is no test suite. There is no single-file test runner command.
 ### File-based routing (`src/routes/`)
 
 Every `.tsx` file is a route. `routeTree.gen.ts` is **auto-generated** — never edit it. Key conventions from `src/routes/README.md`:
+
 - Dynamic params use bare `$`: `users/$id.tsx` → `/users/:id`
 - Layouts use `_layout.tsx` and render children via `<Outlet />`
 - `__root.tsx` is the single app shell — wraps every page
 
 Current routes:
+
 - `/` → landing / index
 - `/auth` → sign-in/sign-up
 - `/book/$slug` → public booking widget (slug = salon)
@@ -49,19 +66,21 @@ Current routes:
 ### Server functions (`src/lib/*.functions.ts`)
 
 Business logic exposed to the client uses `createServerFn` from `@tanstack/react-start`. Pattern:
+
 ```ts
 export const myFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => z.object({...}).parse(input))
   .handler(async ({ data, context }) => { ... });
 ```
+
 `context.userId` is the authenticated user's ID, injected by `requireSupabaseAuth` middleware.
 
 ### Supabase clients
 
-| Import | When to use |
-|---|---|
-| `import { supabase } from "@/integrations/supabase/client"` | Client-side (browser), respects RLS |
+| Import                                                                  | When to use                                      |
+| ----------------------------------------------------------------------- | ------------------------------------------------ |
+| `import { supabase } from "@/integrations/supabase/client"`             | Client-side (browser), respects RLS              |
 | `import { supabaseAdmin } from "@/integrations/supabase/client.server"` | Server-only, **bypasses RLS** — service role key |
 
 `client.server.ts` uses a lazy Proxy; only import it inside server code (`.server.ts` files, `createServerFn` handlers, route `server.handlers`).
@@ -71,6 +90,7 @@ export const myFn = createServerFn({ method: "POST" })
 `useAuth()` from `src/lib/auth-client.ts` returns: `{ user, loading, rolesLoading, isSuperAdmin, isSalonAdmin, isMaster, salonId, branchId }`.
 
 Roles stored in `public.user_roles`:
+
 - `super_admin` — platform-wide access; manages all salons
 - `salon_admin` — access to one salon
 - `master` — calendar-only, scoped to a branch
@@ -82,6 +102,7 @@ The `/admin` layout gate reads these flags and redirects masters straight to `/a
 `src/lib/wa-agent.server.ts` + `src/routes/api/public/wa.$salonId.ts` implement a stateful booking assistant over WhatsApp (via Green-API).
 
 Key design decisions:
+
 - **State machine** in TypeScript (not tool-loop): Gemini classifies intent, deterministic TS code drives slot/master selection
 - **Direct Gemini REST** (`gemini-2.5-flash`), not Lovable AI Gateway, for this path
 - Per-conversation **advisory lock** via Supabase RPC (`wa_try_acquire_lock` / `wa_release_lock`) to serialize parallel Green-API webhooks
@@ -121,6 +142,7 @@ Instagram Direct, using Meta's official Instagram Messaging API (Instagram Login
 ### Environment variables
 
 Client-side vars are prefixed `VITE_`. Server-side vars (no prefix) are read via `process.env`. Key vars:
+
 - `VITE_SUPABASE_URL` / `SUPABASE_URL`
 - `VITE_SUPABASE_PUBLISHABLE_KEY` / `SUPABASE_PUBLISHABLE_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY` — server-only, not in `.env` by default (set in Lovable Cloud)
@@ -132,6 +154,7 @@ Client-side vars are prefixed `VITE_`. Server-side vars (no prefix) are read via
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
 
 Rules:
+
 - For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
