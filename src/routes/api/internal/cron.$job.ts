@@ -102,6 +102,48 @@ export const Route = createFileRoute("/api/internal/cron/$job")({
             return json({ ok: true, ...report });
           }
 
+          // Диагностика Gemini: какой ключ реально подставлен и отвечает ли модель. Ключ наружу
+          // не отдаётся — только его источник, код ответа, время и начало текста ошибки.
+          if (job === "gemini-ping") {
+            const fromNew = (process.env.Gemini_API_Key ?? "").trim();
+            const fromOld = (process.env.GEMINI_API_KEY ?? "").trim();
+            const key = fromNew || fromOld;
+            const keySource = fromNew ? "Gemini_API_Key" : fromOld ? "GEMINI_API_KEY" : "none";
+            if (!key) return json({ ok: false, keySource });
+            const t0 = Date.now();
+            try {
+              const res = await fetch(
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(key)}`,
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    contents: [{ role: "user", parts: [{ text: "Ответь одним словом: да" }] }],
+                    generationConfig: { thinkingConfig: { thinkingBudget: 0 } },
+                  }),
+                  signal: AbortSignal.timeout(30_000),
+                },
+              );
+              const body = await res.text();
+              return json({
+                ok: res.ok,
+                keySource,
+                keyTail: key.slice(-4),
+                status: res.status,
+                ms: Date.now() - t0,
+                body: body.slice(0, 400),
+              });
+            } catch (e: any) {
+              return json({
+                ok: false,
+                keySource,
+                keyTail: key.slice(-4),
+                ms: Date.now() - t0,
+                error: e?.message ?? String(e),
+              });
+            }
+          }
+
           // Продление токенов Instagram, полученных кнопкой: живут 60 дней.
           if (job === "ig-token-refresh") {
             const { runIgTokenRefresh } = await import("@/lib/ig-oauth.server");
