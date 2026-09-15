@@ -110,6 +110,31 @@ export const Route = createFileRoute("/api/internal/cron/$job")({
             const key = fromNew || fromOld;
             const keySource = fromNew ? "Gemini_API_Key" : fromOld ? "GEMINI_API_KEY" : "none";
             if (!key) return json({ ok: false, keySource });
+
+            // ?replay=1 — повторить последний запрос ассистента, на котором Gemini не ответил
+            // (его сохраняет callGeminiTools), с долгим таймаутом: отвечает медленно или никогда.
+            const replay = new URL(request.url).searchParams.get("replay") === "1";
+            let requestBody = JSON.stringify({
+              contents: [{ role: "user", parts: [{ text: "Ответь одним словом: да" }] }],
+              generationConfig: { thinkingConfig: { thinkingBudget: 0 } },
+            });
+            let replayOf: string | null = null;
+            if (replay) {
+              const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+              const { data: rows } = await (supabaseAdmin as any)
+                .from("error_logs")
+                .select("id, ts, context")
+                .eq("source", "wa-agent-v4")
+                .order("ts", { ascending: false })
+                .limit(20);
+              const hit = ((rows ?? []) as any[]).find(
+                (r) => r?.context?.kind === "gemini_tools_failure" && r?.context?.body,
+              );
+              if (!hit) return json({ ok: false, keySource, error: "нет сохранённого запроса" });
+              requestBody = hit.context.body as string;
+              replayOf = `${hit.id} @ ${hit.ts}`;
+            }
+
             const t0 = Date.now();
             try {
               const res = await fetch(
@@ -117,11 +142,8 @@ export const Route = createFileRoute("/api/internal/cron/$job")({
                 {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    contents: [{ role: "user", parts: [{ text: "Ответь одним словом: да" }] }],
-                    generationConfig: { thinkingConfig: { thinkingBudget: 0 } },
-                  }),
-                  signal: AbortSignal.timeout(30_000),
+                  body: requestBody,
+                  signal: AbortSignal.timeout(replay ? 90_000 : 30_000),
                 },
               );
               const body = await res.text();
@@ -129,9 +151,11 @@ export const Route = createFileRoute("/api/internal/cron/$job")({
                 ok: res.ok,
                 keySource,
                 keyTail: key.slice(-4),
+                replayOf,
+                bodyChars: requestBody.length,
                 status: res.status,
                 ms: Date.now() - t0,
-                body: body.slice(0, 400),
+                body: body.slice(0, replay ? 1500 : 400),
               });
             } catch (e: any) {
               return json({

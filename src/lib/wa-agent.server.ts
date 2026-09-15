@@ -2019,16 +2019,16 @@ export async function priceFromPhoto(opts: {
   // this bucket so two runs on the same photo cannot differ by a few сом.
   priceStep?: number;
 }): Promise<
-  {
-    // Narrow range the client sees ("3000–3500 сом"). low === high when confidence is high
-    // and the model committed to a single bucket.
-    price_low: number;
-    price_high: number;
-    // Backwards-compatible midpoint used by legacy call sites that still expect a single number.
-    price: number;
-    explanation: string;
-    confidence: "high" | "medium" | "low";
-  }
+  | {
+      // Narrow range the client sees ("3000–3500 сом"). low === high when confidence is high
+      // and the model committed to a single bucket.
+      price_low: number;
+      price_high: number;
+      // Backwards-compatible midpoint used by legacy call sites that still expect a single number.
+      price: number;
+      explanation: string;
+      confidence: "high" | "medium" | "low";
+    }
   | { error: string }
 > {
   const langName =
@@ -2251,7 +2251,7 @@ function matchMasterByName(masters: DbMaster[], name: string | undefined): DbMas
 // ============================================================
 
 export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
-  const apiKey = (process.env.Gemini_API_Key || process.env.GEMINI_API_KEY);
+  const apiKey = process.env.Gemini_API_Key || process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return {
       reply: "Ассистент временно недоступен. Администратор салона ответит вам в ближайшее время.",
@@ -3192,6 +3192,31 @@ export async function callGeminiTools(opts: {
     return Math.min(ms, BACKOFF_CAP_MS) + Math.floor(Math.random() * 250);
   };
 
+  // Диагностика: запрос, на который Gemini не ответил ни на одну попытку, сохраняется целиком,
+  // чтобы его можно было повторить задачей gemini-ping?replay=1 и увидеть, отвечает ли модель
+  // медленно или не отвечает вовсе. Ключ в тело не входит — он в адресе.
+  const failTotal = async (err: string) => {
+    try {
+      const { logError } = await import("@/lib/error-log.server");
+      const raw = JSON.stringify(body);
+      await logError({
+        source: "wa-agent-v4",
+        level: "warn",
+        message: `gemini_tools total failure: ${err.slice(0, 200)}`,
+        context: {
+          kind: "gemini_tools_failure",
+          bodyChars: raw.length,
+          contentsCount: opts.contents.length,
+          usingCache,
+          body: raw.length <= 400_000 ? raw : null,
+        },
+      });
+    } catch {
+      /* диагностика не должна ронять ответ */
+    }
+    return { ok: false, error: err };
+  };
+
   let lastErr = "gemini unknown";
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     try {
@@ -3210,7 +3235,7 @@ export async function callGeminiTools(opts: {
           );
           continue;
         }
-        return { ok: false, error: lastErr };
+        return await failTotal(lastErr);
       }
       if (!r.ok) {
         // Cache-miss detection: when the caller supplied cachedContent and Gemini rejects
@@ -3241,10 +3266,10 @@ export async function callGeminiTools(opts: {
         await new Promise((res) => setTimeout(res, waitFor(null, "", attempt)));
         continue;
       }
-      return { ok: false, error: lastErr };
+      return await failTotal(lastErr);
     }
   }
-  return { ok: false, error: lastErr };
+  return await failTotal(lastErr);
 }
 
 // ============================================================
