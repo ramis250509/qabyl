@@ -90,12 +90,30 @@ export const upsertInstagramConfig = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     await assertSalonAccess(context.supabase, context.userId, data.salonId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const appSecret = data.instagram_app_secret?.trim() || null;
+
+    // The manual form must not overwrite a connection made with the button. Such a salon has no
+    // app secret of its own, so a save without one can only be the form echoing empty fields back —
+    // it once replaced a working token with null. Typing a real app secret is an explicit switch to
+    // the manual method and goes through.
+    const { data: existing } = await supabaseAdmin
+      .from("salon_secrets")
+      .select("*")
+      .eq("salon_id", data.salonId)
+      .maybeSingle();
+    if ((existing as any)?.instagram_connected_via === "platform" && !appSecret) {
+      return { ok: true };
+    }
+
     const { error } = await supabaseAdmin.from("salon_secrets").upsert(
       {
         salon_id: data.salonId,
         instagram_user_id: data.instagram_user_id?.trim() || null,
         instagram_token: data.instagram_token?.trim() || null,
-        instagram_app_secret: data.instagram_app_secret?.trim() || null,
+        instagram_app_secret: appSecret,
+        ...(appSecret
+          ? { instagram_connected_via: "manual", instagram_token_expires_at: null }
+          : {}),
       } as any,
       { onConflict: "salon_id" },
     );

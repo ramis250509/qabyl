@@ -524,7 +524,10 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
       return;
     }
     let autofilled = false;
-    if (!userId.trim() && res.accountId) {
+    // Only when the owner typed a token by hand. A salon connected with the button has an empty
+    // token field on screen (the token never reaches the browser), and saving the form from here
+    // wiped the real token and replaced the account id with the app-scoped one.
+    if (!userId.trim() && token.trim() && res.accountId) {
       setUserId(res.accountId);
       autofilled = true;
       try {
