@@ -433,14 +433,16 @@ export const getOnboardingProgress = createServerFn({ method: "POST" })
       // один вопрос, и два разных ответа на него (дашборд говорит одно, вкладка «Каналы» другое)
       // появятся ровно в тот момент, когда владелец смотрит на оба экрана сразу.
       //
-      // Подключён = есть чем отвечать (токен + аккаунт) И чем проверить подпись вебхука
-      // (app secret). Без последнего маршрут /api/public/ig отказывает вообще всем — то есть
-      // канал выглядит настроенным и молчит.
+      // Подключён = есть чем отвечать (токен + аккаунт) И чем проверить подпись вебхука. Своё
+      // приложение салона — это его app secret, без него пер-салонный маршрут отказывает всем.
+      // Подключённому кнопкой свой секрет не нужен: подпись проверяется секретом Qabyl на общем
+      // /api/public/ig, и требовать его здесь показывало «не подключён» у работающего канала.
       instagram: {
         connected: Boolean(
           (secretsRes as any)?.data?.instagram_token &&
           (secretsRes as any)?.data?.instagram_user_id &&
-          (secretsRes as any)?.data?.instagram_app_secret,
+          ((secretsRes as any)?.data?.instagram_app_secret ||
+            (secretsRes as any)?.data?.instagram_connected_via === "platform"),
         ),
         enabled: Boolean(salon?.instagram_enabled),
       },
