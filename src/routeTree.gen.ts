@@ -33,11 +33,13 @@ import { Route as AdminAccountRouteImport } from './routes/admin/account'
 import { Route as AdminSalonsIndexRouteImport } from './routes/admin/salons/index'
 import { Route as PreviewSalonSalonIdRouteImport } from './routes/preview.salon.$salonId'
 import { Route as ApiPublicWacloudRouteImport } from './routes/api/public/wacloud'
+import { Route as ApiPublicIgRouteImport } from './routes/api/public/ig'
 import { Route as ApiInternalTelegramRouteImport } from './routes/api/internal/telegram'
 import { Route as AdminSalonsSalonIdRouteImport } from './routes/admin/salons/$salonId'
 import { Route as ApiPublicWagupshupTokenRouteImport } from './routes/api/public/wagupshup.$token'
 import { Route as ApiPublicWacloudSalonIdRouteImport } from './routes/api/public/wacloud.$salonId'
 import { Route as ApiPublicIgSalonIdRouteImport } from './routes/api/public/ig.$salonId'
+import { Route as ApiPublicIgOauthCallbackRouteImport } from './routes/api/public/ig-oauth.callback'
 import { Route as ApiPublicBillingFreedompayRouteImport } from './routes/api/public/billing.freedompay'
 import { Route as ApiInternalCronJobRouteImport } from './routes/api/internal/cron.$job'
 
@@ -161,6 +163,11 @@ const ApiPublicWacloudRoute = ApiPublicWacloudRouteImport.update({
   path: '/api/public/wacloud',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicIgRoute = ApiPublicIgRouteImport.update({
+  id: '/api/public/ig',
+  path: '/api/public/ig',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiInternalTelegramRoute = ApiInternalTelegramRouteImport.update({
   id: '/api/internal/telegram',
   path: '/api/internal/telegram',
@@ -182,10 +189,16 @@ const ApiPublicWacloudSalonIdRoute = ApiPublicWacloudSalonIdRouteImport.update({
   getParentRoute: () => ApiPublicWacloudRoute,
 } as any)
 const ApiPublicIgSalonIdRoute = ApiPublicIgSalonIdRouteImport.update({
-  id: '/api/public/ig/$salonId',
-  path: '/api/public/ig/$salonId',
-  getParentRoute: () => rootRouteImport,
+  id: '/$salonId',
+  path: '/$salonId',
+  getParentRoute: () => ApiPublicIgRoute,
 } as any)
+const ApiPublicIgOauthCallbackRoute =
+  ApiPublicIgOauthCallbackRouteImport.update({
+    id: '/api/public/ig-oauth/callback',
+    path: '/api/public/ig-oauth/callback',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicBillingFreedompayRoute =
   ApiPublicBillingFreedompayRouteImport.update({
     id: '/api/public/billing/freedompay',
@@ -222,11 +235,13 @@ export interface FileRoutesByFullPath {
   '/admin/': typeof AdminIndexRoute
   '/admin/salons/$salonId': typeof AdminSalonsSalonIdRoute
   '/api/internal/telegram': typeof ApiInternalTelegramRoute
+  '/api/public/ig': typeof ApiPublicIgRouteWithChildren
   '/api/public/wacloud': typeof ApiPublicWacloudRouteWithChildren
   '/preview/salon/$salonId': typeof PreviewSalonSalonIdRoute
   '/admin/salons/': typeof AdminSalonsIndexRoute
   '/api/internal/cron/$job': typeof ApiInternalCronJobRoute
   '/api/public/billing/freedompay': typeof ApiPublicBillingFreedompayRoute
+  '/api/public/ig-oauth/callback': typeof ApiPublicIgOauthCallbackRoute
   '/api/public/ig/$salonId': typeof ApiPublicIgSalonIdRoute
   '/api/public/wacloud/$salonId': typeof ApiPublicWacloudSalonIdRoute
   '/api/public/wagupshup/$token': typeof ApiPublicWagupshupTokenRoute
@@ -254,11 +269,13 @@ export interface FileRoutesByTo {
   '/admin': typeof AdminIndexRoute
   '/admin/salons/$salonId': typeof AdminSalonsSalonIdRoute
   '/api/internal/telegram': typeof ApiInternalTelegramRoute
+  '/api/public/ig': typeof ApiPublicIgRouteWithChildren
   '/api/public/wacloud': typeof ApiPublicWacloudRouteWithChildren
   '/preview/salon/$salonId': typeof PreviewSalonSalonIdRoute
   '/admin/salons': typeof AdminSalonsIndexRoute
   '/api/internal/cron/$job': typeof ApiInternalCronJobRoute
   '/api/public/billing/freedompay': typeof ApiPublicBillingFreedompayRoute
+  '/api/public/ig-oauth/callback': typeof ApiPublicIgOauthCallbackRoute
   '/api/public/ig/$salonId': typeof ApiPublicIgSalonIdRoute
   '/api/public/wacloud/$salonId': typeof ApiPublicWacloudSalonIdRoute
   '/api/public/wagupshup/$token': typeof ApiPublicWagupshupTokenRoute
@@ -288,11 +305,13 @@ export interface FileRoutesById {
   '/admin/': typeof AdminIndexRoute
   '/admin/salons/$salonId': typeof AdminSalonsSalonIdRoute
   '/api/internal/telegram': typeof ApiInternalTelegramRoute
+  '/api/public/ig': typeof ApiPublicIgRouteWithChildren
   '/api/public/wacloud': typeof ApiPublicWacloudRouteWithChildren
   '/preview/salon/$salonId': typeof PreviewSalonSalonIdRoute
   '/admin/salons/': typeof AdminSalonsIndexRoute
   '/api/internal/cron/$job': typeof ApiInternalCronJobRoute
   '/api/public/billing/freedompay': typeof ApiPublicBillingFreedompayRoute
+  '/api/public/ig-oauth/callback': typeof ApiPublicIgOauthCallbackRoute
   '/api/public/ig/$salonId': typeof ApiPublicIgSalonIdRoute
   '/api/public/wacloud/$salonId': typeof ApiPublicWacloudSalonIdRoute
   '/api/public/wagupshup/$token': typeof ApiPublicWagupshupTokenRoute
@@ -323,11 +342,13 @@ export interface FileRouteTypes {
     | '/admin/'
     | '/admin/salons/$salonId'
     | '/api/internal/telegram'
+    | '/api/public/ig'
     | '/api/public/wacloud'
     | '/preview/salon/$salonId'
     | '/admin/salons/'
     | '/api/internal/cron/$job'
     | '/api/public/billing/freedompay'
+    | '/api/public/ig-oauth/callback'
     | '/api/public/ig/$salonId'
     | '/api/public/wacloud/$salonId'
     | '/api/public/wagupshup/$token'
@@ -355,11 +376,13 @@ export interface FileRouteTypes {
     | '/admin'
     | '/admin/salons/$salonId'
     | '/api/internal/telegram'
+    | '/api/public/ig'
     | '/api/public/wacloud'
     | '/preview/salon/$salonId'
     | '/admin/salons'
     | '/api/internal/cron/$job'
     | '/api/public/billing/freedompay'
+    | '/api/public/ig-oauth/callback'
     | '/api/public/ig/$salonId'
     | '/api/public/wacloud/$salonId'
     | '/api/public/wagupshup/$token'
@@ -388,11 +411,13 @@ export interface FileRouteTypes {
     | '/admin/'
     | '/admin/salons/$salonId'
     | '/api/internal/telegram'
+    | '/api/public/ig'
     | '/api/public/wacloud'
     | '/preview/salon/$salonId'
     | '/admin/salons/'
     | '/api/internal/cron/$job'
     | '/api/public/billing/freedompay'
+    | '/api/public/ig-oauth/callback'
     | '/api/public/ig/$salonId'
     | '/api/public/wacloud/$salonId'
     | '/api/public/wagupshup/$token'
@@ -413,11 +438,12 @@ export interface RootRouteChildren {
   CatalogSlugRoute: typeof CatalogSlugRoute
   ManageTokenRoute: typeof ManageTokenRoute
   ApiInternalTelegramRoute: typeof ApiInternalTelegramRoute
+  ApiPublicIgRoute: typeof ApiPublicIgRouteWithChildren
   ApiPublicWacloudRoute: typeof ApiPublicWacloudRouteWithChildren
   PreviewSalonSalonIdRoute: typeof PreviewSalonSalonIdRoute
   ApiInternalCronJobRoute: typeof ApiInternalCronJobRoute
   ApiPublicBillingFreedompayRoute: typeof ApiPublicBillingFreedompayRoute
-  ApiPublicIgSalonIdRoute: typeof ApiPublicIgSalonIdRoute
+  ApiPublicIgOauthCallbackRoute: typeof ApiPublicIgOauthCallbackRoute
   ApiPublicWagupshupTokenRoute: typeof ApiPublicWagupshupTokenRoute
 }
 
@@ -591,6 +617,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicWacloudRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/ig': {
+      id: '/api/public/ig'
+      path: '/api/public/ig'
+      fullPath: '/api/public/ig'
+      preLoaderRoute: typeof ApiPublicIgRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/internal/telegram': {
       id: '/api/internal/telegram'
       path: '/api/internal/telegram'
@@ -621,9 +654,16 @@ declare module '@tanstack/react-router' {
     }
     '/api/public/ig/$salonId': {
       id: '/api/public/ig/$salonId'
-      path: '/api/public/ig/$salonId'
+      path: '/$salonId'
       fullPath: '/api/public/ig/$salonId'
       preLoaderRoute: typeof ApiPublicIgSalonIdRouteImport
+      parentRoute: typeof ApiPublicIgRoute
+    }
+    '/api/public/ig-oauth/callback': {
+      id: '/api/public/ig-oauth/callback'
+      path: '/api/public/ig-oauth/callback'
+      fullPath: '/api/public/ig-oauth/callback'
+      preLoaderRoute: typeof ApiPublicIgOauthCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/public/billing/freedompay': {
@@ -671,6 +711,18 @@ const AdminRouteChildren: AdminRouteChildren = {
 
 const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
 
+interface ApiPublicIgRouteChildren {
+  ApiPublicIgSalonIdRoute: typeof ApiPublicIgSalonIdRoute
+}
+
+const ApiPublicIgRouteChildren: ApiPublicIgRouteChildren = {
+  ApiPublicIgSalonIdRoute: ApiPublicIgSalonIdRoute,
+}
+
+const ApiPublicIgRouteWithChildren = ApiPublicIgRoute._addFileChildren(
+  ApiPublicIgRouteChildren,
+)
+
 interface ApiPublicWacloudRouteChildren {
   ApiPublicWacloudSalonIdRoute: typeof ApiPublicWacloudSalonIdRoute
 }
@@ -697,11 +749,12 @@ const rootRouteChildren: RootRouteChildren = {
   CatalogSlugRoute: CatalogSlugRoute,
   ManageTokenRoute: ManageTokenRoute,
   ApiInternalTelegramRoute: ApiInternalTelegramRoute,
+  ApiPublicIgRoute: ApiPublicIgRouteWithChildren,
   ApiPublicWacloudRoute: ApiPublicWacloudRouteWithChildren,
   PreviewSalonSalonIdRoute: PreviewSalonSalonIdRoute,
   ApiInternalCronJobRoute: ApiInternalCronJobRoute,
   ApiPublicBillingFreedompayRoute: ApiPublicBillingFreedompayRoute,
-  ApiPublicIgSalonIdRoute: ApiPublicIgSalonIdRoute,
+  ApiPublicIgOauthCallbackRoute: ApiPublicIgOauthCallbackRoute,
   ApiPublicWagupshupTokenRoute: ApiPublicWagupshupTokenRoute,
 }
 export const routeTree = rootRouteImport

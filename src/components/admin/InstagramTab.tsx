@@ -21,6 +21,7 @@ import {
   getInstagramDiagnostics,
   listCommentTriggers,
   setInstagramEnabled,
+  startInstagramLogin,
   testInstagramConnection,
   upsertCommentTrigger,
   upsertInstagramConfig,
@@ -80,6 +81,26 @@ function diagnose(d: Diagnostics, enabled: boolean) {
     body: "Значит дело в настройке на стороне Meta, а не у нас. Проверьте по порядку: приложение опубликовано (в режиме Development Meta шлёт события только от аккаунтов с ролью в приложении — добавьте пишущий аккаунт как Instagram Tester и примите приглашение в самом Instagram); в разделе webhooks подписано поле messages; Callback URL и Verify Token совпадают с указанными выше.",
   };
 }
+
+/** Коды возврата из /api/public/ig-oauth/callback. */
+const IG_LOGIN_RESULT: Record<string, { ok: boolean; text: string }> = {
+  ok: { ok: true, text: "Instagram подключён. Осталось включить канал переключателем вверху." },
+  nosub: {
+    ok: false,
+    text: "Instagram подключён, но Meta не подписала аккаунт на сообщения. Нажмите «Переподключить Instagram» ещё раз.",
+  },
+  scopes: {
+    ok: false,
+    text: "Без разрешения на сообщения ассистент не сможет отвечать. Переподключите и оставьте все галочки включёнными.",
+  },
+  cancelled: { ok: false, text: "Подключение отменено." },
+  taken: { ok: false, text: "Этот Instagram-аккаунт уже подключён к другому салону в Qabyl." },
+  forbidden: { ok: false, text: "Нет доступа к этому салону." },
+  failed: {
+    ok: false,
+    text: "Не удалось подключить Instagram. Проверьте, что аккаунт профессиональный, и попробуйте ещё раз.",
+  },
+};
 
 type TestState =
   | { kind: "idle" }
@@ -406,6 +427,43 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
   const [diag, setDiag] = useState<Diagnostics | null>(null);
   const [diagBusy, setDiagBusy] = useState(false);
   const loadDiag = useServerFn(getInstagramDiagnostics);
+  const startLogin = useServerFn(startInstagramLogin);
+  const [connectedVia, setConnectedVia] = useState<"manual" | "platform" | null>(null);
+  const [expiresAt, setExpiresAt] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState(false);
+
+  async function onConnect() {
+    setConnecting(true);
+    try {
+      const { url } = await startLogin({ data: { salonId } });
+      window.location.href = url;
+    } catch (e: any) {
+      toast.error(humanError(e, "Не удалось начать подключение"));
+      setConnecting(false);
+    }
+  }
+
+  // Возврат с instagram.com: результат приходит кодом в ?ig=…. Показываем и убираем из адреса,
+  // чтобы обновление страницы не повторяло сообщение.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("ig");
+    if (!code) return;
+    const msg = IG_LOGIN_RESULT[code];
+    if (msg) {
+      if (msg.ok) toast.success(msg.text, { duration: 10000 });
+      else toast.error(msg.text, { duration: 15000 });
+    }
+    params.delete("ig");
+    const qs = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${qs ? `?${qs}` : ""}${window.location.hash}`,
+    );
+    if (code === "ok" || code === "nosub") void onTest();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function refreshDiagnostics() {
     setDiagBusy(true);
@@ -430,6 +488,8 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
         setWebhookUrl(cfg.webhook_url);
         setVerifyToken(cfg.verify_token);
         setEnabledState(cfg.enabled);
+        setConnectedVia(cfg.connected_via ?? null);
+        setExpiresAt(cfg.token_expires_at ?? null);
         // Load the diagnostics with the config: whoever opens this tab after setting it up is
         // usually here precisely because a message went unanswered.
         try {
@@ -538,6 +598,41 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
     }
   }
 
+  const testResult = (
+    <>
+      {testState.kind === "ok" && (
+        <div className="flex items-start gap-2 text-sm text-green-700 bg-green-50 rounded-md p-3">
+          <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
+          <div>
+            Связь с Instagram установлена
+            {testState.username ? (
+              <>
+                {" "}
+                — аккаунт <b>@{testState.username}</b>
+              </>
+            ) : null}
+            {testState.accountType ? ` (${testState.accountType})` : null}.
+            {testState.autofilledId && " Instagram account ID подставлен автоматически."}
+            {testState.idMismatch && testState.accountId && connectedVia !== "platform" && (
+              <>
+                {" "}
+                Указанный вами ID отличается от {testState.accountId} — это нормально, у аккаунта
+                два разных ID, на работу не влияет.
+              </>
+            )}
+            {!enabled && " Осталось включить канал переключателем вверху."}
+          </div>
+        </div>
+      )}
+      {testState.kind === "error" && (
+        <div className="flex items-start gap-2 text-sm text-red-700 bg-red-50 rounded-md p-3">
+          <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+          <div>{testState.message}</div>
+        </div>
+      )}
+    </>
+  );
+
   return (
     <div className="space-y-4 max-w-2xl">
       <Card className="p-4 sm:p-6 space-y-3">
@@ -586,184 +681,216 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
         </div>
       </Card>
 
-      <Card className="p-4 sm:p-6 space-y-4">
-        <div>
-          <h2 className="font-semibold">Шаг 2. Получите доступ к API</h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            Два способа. Первый не имеет ограничений по числу салонов и живёт постоянно — берите
-            его, если у владельца есть аккаунт Facebook. Второй быстрее и Facebook не требует, но
-            его выдаёт Qabyl вручную, и число таких подключений ограничено.
-          </p>
-        </div>
-
-        {/* Вариант А. Салон — владелец своего приложения, поэтому его аккаунт имеет в нём роль,
-            и Standard Access покрывает переписку без App Review. Потолка нет: ограничение
-            «до 50/500» относится к ролям в ЧУЖОМ приложении, а здесь приложение своё. */}
-        <div className="rounded-md border p-4 space-y-2">
-          <div className="font-medium text-sm">Вариант А. Своё приложение салона</div>
-          <p className="text-sm text-muted-foreground">
-            Откройте{" "}
-            <a
-              className="underline inline-flex items-center gap-1"
-              href="https://developers.facebook.com/apps/create/"
-              target="_blank"
-              rel="noreferrer"
-            >
-              developers.facebook.com/apps/create
-              <ExternalLink className="h-3 w-3" />
-            </a>{" "}
-            → «Создать приложение» → продукт <b>Instagram</b> →{" "}
-            <b>«API setup with Instagram login»</b> (именно этот пункт, не «with Facebook login»).
-            Там подключите Instagram-аккаунт салона и сгенерируйте токен доступа с правами{" "}
-            <code className="text-xs">instagram_business_basic</code> и{" "}
-            <code className="text-xs">instagram_business_manage_messages</code>.
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Владельцу нужен аккаунт Facebook — только чтобы создать приложение. Ни страница
-            Facebook, ни привязка к ней не требуются. App Review при этом не нужен никогда: аккаунт
-            салона имеет роль в своём же приложении.
-          </p>
-        </div>
-
-        {/* Вариант Б. Аккаунт салона добавляется тестировщиком в приложение Qabyl. Салону не
-            нужен ни Facebook, ни приложение — но это режим разработки, и роли конечны. */}
-        <div className="rounded-md border p-4 space-y-2">
-          <div className="font-medium text-sm">Вариант Б. Тестировщик в приложении Qabyl</div>
-          <p className="text-sm text-muted-foreground">
-            Салону не нужен ни Facebook, ни своё приложение — только принять приглашение. Напишите
-            нам имя Instagram-аккаунта, мы добавим его в роли и пришлём токен для полей ниже.
-          </p>
-          <p className="text-sm text-muted-foreground">
-            Владелец принимает приглашение в приложении Instagram: «Настройки» → «Для
-            профессионалов» → «Приложения и сайты» → «Приглашения тестировщиков» → «Принять».
-          </p>
-          <p className="text-xs text-amber-700">
-            Этот способ Meta предназначает для разработки и тестирования, и число ролей конечно. Для
-            постоянной работы салона лучше вариант А.
-          </p>
-        </div>
-      </Card>
-
-      <Card className="p-4 sm:p-6 space-y-4">
-        <div>
-          <h2 className="font-semibold">Шаг 3. Пропишите webhook в Meta</h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            В приложении Meta: Instagram → «Configure webhooks». Скопируйте туда эти два значения и
-            подпишитесь на поле <code className="text-xs">messages</code>.
-          </p>
-        </div>
-        <CopyField label="Callback URL" value={webhookUrl} hint="Вставьте в поле «Callback URL»." />
-        <CopyField
-          label="Verify Token"
-          value={verifyToken}
-          hint="Вставьте в поле «Verify token». Это значение придумано нами — в Meta его нужно просто скопировать."
-        />
-      </Card>
-
-      <Card className="p-4 sm:p-6 space-y-4">
-        <div>
-          <h2 className="font-semibold">Шаг 4. Введите данные приложения</h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            Эти три значения берутся из того же приложения Meta. Они хранятся только на сервере и
-            никогда не показываются клиентам.
-          </p>
-        </div>
-
-        <div>
-          <Label>Instagram account ID</Label>
-          <Input
-            value={userId}
-            onChange={(e) => setUserId(e.target.value)}
-            placeholder="17841400000000000"
-            disabled={loading}
-          />
-          <p className="text-xs text-muted-foreground mt-1">
-            Можно не заполнять: введите токен и нажмите «Сохранить и проверить» — ID подставится
-            сам. Вручную его видно в Meta → Instagram → API setup with Instagram login, под
-            названием аккаунта. У аккаунта бывает два разных ID (начинается на 178… и на другую
-            цифру) — подойдёт любой, на работу ассистента это не влияет.
-          </p>
-        </div>
-
-        <div>
-          <Label>Access Token</Label>
-          <Input
-            type="password"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            placeholder="IGAAxxxxxxxx..."
-            disabled={loading}
-          />
-          <p className="text-xs text-muted-foreground mt-1">
-            Meta → Instagram → <b>API setup with Instagram login</b> → блок «Generate access tokens»
-            → кнопка «Generate token» напротив вашего аккаунта. Действует 60 дней — после этого
-            сгенерируйте заново и вставьте сюда, иначе ассистент перестанет отвечать в Instagram.
-          </p>
-          <p className="text-xs text-amber-700 mt-1">
-            Не подходит токен из «API setup with <b>Facebook</b> login» — это другой тип токена, с
-            ним переписка работать не будет.
-          </p>
-        </div>
-
-        <div>
-          <Label>App Secret</Label>
-          <Input
-            type="password"
-            value={appSecret}
-            onChange={(e) => setAppSecret(e.target.value)}
-            placeholder="••••••••••••••••"
-            disabled={loading}
-          />
-          <p className="text-xs text-muted-foreground mt-1">
-            Meta → «Настройки приложения» → «Основное» → «Секрет приложения». Нужен, чтобы никто
-            посторонний не мог отправлять поддельные сообщения на ваш webhook.
-          </p>
-        </div>
-
-        <div className="flex gap-2 flex-wrap">
-          <Button onClick={onSave} disabled={saving || loading}>
-            {saving ? "..." : "Сохранить и проверить"}
-          </Button>
-          <Button
-            variant="outline"
-            onClick={onTest}
-            disabled={loading || testState.kind === "running"}
-          >
-            {testState.kind === "running" ? "Проверяем..." : "Проверить связь"}
-          </Button>
-        </div>
-
-        {testState.kind === "ok" && (
+      <Card className="p-4 sm:p-6 space-y-3">
+        <h2 className="font-semibold">Шаг 2. Подключите Instagram</h2>
+        <p className="text-sm text-muted-foreground">
+          Нажмите кнопку, войдите в Instagram-аккаунт салона и разрешите доступ к сообщениям и
+          комментариям. Больше ничего настраивать не нужно — ни приложения Meta, ни токенов.
+        </p>
+        {connectedVia === "platform" && userId && (
           <div className="flex items-start gap-2 text-sm text-green-700 bg-green-50 rounded-md p-3">
             <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
             <div>
-              Связь с Instagram установлена
-              {testState.username ? (
-                <>
-                  {" "}
-                  — аккаунт <b>@{testState.username}</b>
-                </>
-              ) : null}
-              {testState.accountType ? ` (${testState.accountType})` : null}.
-              {testState.autofilledId && " Instagram account ID подставлен автоматически."}
-              {testState.idMismatch && testState.accountId && (
-                <>
-                  {" "}
-                  Указанный вами ID отличается от {testState.accountId} — это нормально, у аккаунта
-                  два разных ID, на работу не влияет.
-                </>
-              )}
-              {!enabled && " Осталось включить канал переключателем вверху."}
+              Instagram подключён. Доступ продлевается автоматически
+              {expiresAt
+                ? ` (текущий действует до ${new Date(expiresAt).toLocaleDateString("ru-RU")})`
+                : ""}
+              .{!enabled && " Осталось включить канал переключателем вверху."}
             </div>
           </div>
         )}
-        {testState.kind === "error" && (
-          <div className="flex items-start gap-2 text-sm text-red-700 bg-red-50 rounded-md p-3">
-            <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
-            <div>{testState.message}</div>
-          </div>
-        )}
+        <div className="flex gap-2 flex-wrap">
+          <Button onClick={onConnect} disabled={connecting || loading}>
+            <Instagram className="h-4 w-4 mr-2" />
+            {connecting
+              ? "Открываем Instagram…"
+              : connectedVia === "platform" && userId
+                ? "Переподключить Instagram"
+                : "Подключить Instagram"}
+          </Button>
+          {connectedVia === "platform" && userId && (
+            <Button
+              variant="outline"
+              onClick={onTest}
+              disabled={loading || testState.kind === "running"}
+            >
+              {testState.kind === "running" ? "Проверяем..." : "Проверить связь"}
+            </Button>
+          )}
+        </div>
+        {connectedVia === "platform" && testResult}
+        <p className="text-xs text-muted-foreground">
+          Instagram попросит войти заново, даже если в браузере уже открыт аккаунт. Входите именно в
+          аккаунт салона, а не в личный.
+        </p>
       </Card>
+
+      {/* Ручной путь остаётся: салоны, подключённые раньше, и те, у кого своё приложение Meta. */}
+      <details
+        className="rounded-md border bg-card"
+        open={connectedVia === "manual" || (!connectedVia && Boolean(appSecret))}
+      >
+        <summary className="cursor-pointer px-4 py-3 text-sm text-muted-foreground">
+          Другой способ: своё приложение Meta и токен вручную
+        </summary>
+        <div className="space-y-4 p-2 sm:p-4 pt-0">
+          <Card className="p-4 sm:p-6 space-y-4">
+            <div>
+              <h2 className="font-semibold">Получите доступ к API</h2>
+              <p className="text-sm text-muted-foreground mt-1">
+                Два способа. Первый не имеет ограничений по числу салонов и живёт постоянно — берите
+                его, если у владельца есть аккаунт Facebook. Второй быстрее и Facebook не требует,
+                но его выдаёт Qabyl вручную, и число таких подключений ограничено.
+              </p>
+            </div>
+
+            {/* Вариант А. Салон — владелец своего приложения, поэтому его аккаунт имеет в нём роль,
+            и Standard Access покрывает переписку без App Review. Потолка нет: ограничение
+            «до 50/500» относится к ролям в ЧУЖОМ приложении, а здесь приложение своё. */}
+            <div className="rounded-md border p-4 space-y-2">
+              <div className="font-medium text-sm">Вариант А. Своё приложение салона</div>
+              <p className="text-sm text-muted-foreground">
+                Откройте{" "}
+                <a
+                  className="underline inline-flex items-center gap-1"
+                  href="https://developers.facebook.com/apps/create/"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  developers.facebook.com/apps/create
+                  <ExternalLink className="h-3 w-3" />
+                </a>{" "}
+                → «Создать приложение» → продукт <b>Instagram</b> →{" "}
+                <b>«API setup with Instagram login»</b> (именно этот пункт, не «with Facebook
+                login»). Там подключите Instagram-аккаунт салона и сгенерируйте токен доступа с
+                правами <code className="text-xs">instagram_business_basic</code> и{" "}
+                <code className="text-xs">instagram_business_manage_messages</code>.
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Владельцу нужен аккаунт Facebook — только чтобы создать приложение. Ни страница
+                Facebook, ни привязка к ней не требуются. App Review при этом не нужен никогда:
+                аккаунт салона имеет роль в своём же приложении.
+              </p>
+            </div>
+
+            {/* Вариант Б. Аккаунт салона добавляется тестировщиком в приложение Qabyl. Салону не
+            нужен ни Facebook, ни приложение — но это режим разработки, и роли конечны. */}
+            <div className="rounded-md border p-4 space-y-2">
+              <div className="font-medium text-sm">Вариант Б. Тестировщик в приложении Qabyl</div>
+              <p className="text-sm text-muted-foreground">
+                Салону не нужен ни Facebook, ни своё приложение — только принять приглашение.
+                Напишите нам имя Instagram-аккаунта, мы добавим его в роли и пришлём токен для полей
+                ниже.
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Владелец принимает приглашение в приложении Instagram: «Настройки» → «Для
+                профессионалов» → «Приложения и сайты» → «Приглашения тестировщиков» → «Принять».
+              </p>
+              <p className="text-xs text-amber-700">
+                Этот способ Meta предназначает для разработки и тестирования, и число ролей конечно.
+                Для постоянной работы салона лучше вариант А.
+              </p>
+            </div>
+          </Card>
+
+          <Card className="p-4 sm:p-6 space-y-4">
+            <div>
+              <h2 className="font-semibold">Шаг 3. Пропишите webhook в Meta</h2>
+              <p className="text-sm text-muted-foreground mt-1">
+                В приложении Meta: Instagram → «Configure webhooks». Скопируйте туда эти два
+                значения и подпишитесь на поле <code className="text-xs">messages</code>.
+              </p>
+            </div>
+            <CopyField
+              label="Callback URL"
+              value={webhookUrl}
+              hint="Вставьте в поле «Callback URL»."
+            />
+            <CopyField
+              label="Verify Token"
+              value={verifyToken}
+              hint="Вставьте в поле «Verify token». Это значение придумано нами — в Meta его нужно просто скопировать."
+            />
+          </Card>
+
+          <Card className="p-4 sm:p-6 space-y-4">
+            <div>
+              <h2 className="font-semibold">Шаг 4. Введите данные приложения</h2>
+              <p className="text-sm text-muted-foreground mt-1">
+                Эти три значения берутся из того же приложения Meta. Они хранятся только на сервере
+                и никогда не показываются клиентам.
+              </p>
+            </div>
+
+            <div>
+              <Label>Instagram account ID</Label>
+              <Input
+                value={userId}
+                onChange={(e) => setUserId(e.target.value)}
+                placeholder="17841400000000000"
+                disabled={loading}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Можно не заполнять: введите токен и нажмите «Сохранить и проверить» — ID подставится
+                сам. Вручную его видно в Meta → Instagram → API setup with Instagram login, под
+                названием аккаунта. У аккаунта бывает два разных ID (начинается на 178… и на другую
+                цифру) — подойдёт любой, на работу ассистента это не влияет.
+              </p>
+            </div>
+
+            <div>
+              <Label>Access Token</Label>
+              <Input
+                type="password"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                placeholder="IGAAxxxxxxxx..."
+                disabled={loading}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Meta → Instagram → <b>API setup with Instagram login</b> → блок «Generate access
+                tokens» → кнопка «Generate token» напротив вашего аккаунта. Действует 60 дней —
+                после этого сгенерируйте заново и вставьте сюда, иначе ассистент перестанет отвечать
+                в Instagram.
+              </p>
+              <p className="text-xs text-amber-700 mt-1">
+                Не подходит токен из «API setup with <b>Facebook</b> login» — это другой тип токена,
+                с ним переписка работать не будет.
+              </p>
+            </div>
+
+            <div>
+              <Label>App Secret</Label>
+              <Input
+                type="password"
+                value={appSecret}
+                onChange={(e) => setAppSecret(e.target.value)}
+                placeholder="••••••••••••••••"
+                disabled={loading}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Meta → «Настройки приложения» → «Основное» → «Секрет приложения». Нужен, чтобы никто
+                посторонний не мог отправлять поддельные сообщения на ваш webhook.
+              </p>
+            </div>
+
+            <div className="flex gap-2 flex-wrap">
+              <Button onClick={onSave} disabled={saving || loading}>
+                {saving ? "..." : "Сохранить и проверить"}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={onTest}
+                disabled={loading || testState.kind === "running"}
+              >
+                {testState.kind === "running" ? "Проверяем..." : "Проверить связь"}
+              </Button>
+            </div>
+
+            {connectedVia !== "platform" && testResult}
+          </Card>
+        </div>
+      </details>
 
       <Card className="p-4 sm:p-6 space-y-3">
         <div className="flex items-center justify-between gap-2">

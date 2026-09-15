@@ -102,6 +102,14 @@ export const Route = createFileRoute("/api/internal/cron/$job")({
             return json({ ok: true, ...report });
           }
 
+          // Продление токенов Instagram, полученных кнопкой: живут 60 дней.
+          if (job === "ig-token-refresh") {
+            const { runIgTokenRefresh } = await import("@/lib/ig-oauth.server");
+            const report = await runIgTokenRefresh();
+            console.log(`[cron ig-token-refresh] ${JSON.stringify(report)}`);
+            return json({ ok: true, ...report });
+          }
+
           if (job === "wa-health") {
             const { runWaHealthCheck } = await import("@/lib/wa-connection.server");
             const report = await runWaHealthCheck();

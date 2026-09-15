@@ -20,6 +20,9 @@ dist-ssr
 .wrangler/
 .dev.vars
 
+# Local deployment checkout; must never be committed as a Git submodule
+/.codex-deploy/
+
 # Supabase CLI local state
 supabase/.temp/
 

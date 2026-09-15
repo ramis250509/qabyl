@@ -114,19 +114,7 @@ export const Route = createFileRoute("/api/public/ig/$salonId")({
       },
 
       POST: async ({ request, params }) => {
-        const salonId = params.salonId;
         const rid = Math.random().toString(36).slice(2, 8);
-        const log = (msg: string, ...rest: unknown[]) => console.log(`[ig ${rid}] ${msg}`, ...rest);
-        const errLog = (msg: string, ...rest: unknown[]) =>
-          console.error(`[ig ${rid}] ${msg}`, ...rest);
-        const t0 = Date.now();
-        const ms = () => Date.now() - t0;
-
-        // Always 200 back to Meta once we have accepted responsibility for a payload. A non-200
-        // makes Meta redeliver the same batch for up to 36 h, and after enough failures it
-        // unsubscribes the app from the field entirely — far worse than dropping one message.
-        const ack = () => new Response("ok", { status: 200 });
-
         // Raw text, not request.json(): the signature is computed over the exact bytes Meta sent,
         // so re-serialising a parsed object would produce a different digest.
         let rawBody: string;
@@ -135,259 +123,295 @@ export const Route = createFileRoute("/api/public/ig/$salonId")({
         } catch {
           return new Response("Bad request", { status: 400 });
         }
-
-        const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-        const [{ data: secrets }, { data: salon }, { data: assistant }] = await Promise.all([
-          supabaseAdmin
-            .from("salon_secrets")
-            .select(
-              "instagram_user_id, instagram_token, instagram_app_secret, greenapi_instance, greenapi_token, owner_notify_phone",
-            )
-            .eq("salon_id", salonId)
-            .maybeSingle(),
-          supabaseAdmin
-            .from("salons")
-            .select(
-              "id, name, timezone, ai_assistant_enabled, instagram_enabled, working_hours, address, slug, custom_domain",
-            )
-            .eq("id", salonId)
-            .maybeSingle(),
-          supabaseAdmin
-            // select("*") — see the same note in the WhatsApp webhook: this row keeps gaining
-            // columns, and naming one a not-yet-migrated database lacks would fail the whole
-            // query and silence the assistant for that salon.
-            .from("salon_ai_assistant")
-            .select("*")
-            .eq("salon_id", salonId)
-            .maybeSingle(),
-        ]);
-
-        // Every reason we refuse or ignore a delivery is recorded, not just console-logged.
-        // Debugging "the assistant did not answer" hinges on one question — did Meta reach us at
-        // all? — and a Cloudflare log line the salon owner cannot read does not answer it. These
-        // rows show up in /admin/errors and drive the diagnostics panel in the Instagram tab.
-        const record = async (message: string, context: Record<string, unknown> = {}) => {
-          const { logError } = await import("@/lib/error-log.server");
-          await logError({
-            source: "ig-webhook",
-            level: "warn",
-            message,
-            salonId,
-            context: { rid, ...context },
-          });
-        };
-
-        const appSecret = (secrets as any)?.instagram_app_secret ?? "";
-        // No app secret means this endpoint has no authentication at all — the URL contains only a
-        // salon id, which is not a secret. Refuse rather than process attacker-supplied "client
-        // messages" that would drive the assistant and burn the salon's Gemini budget.
-        if (!appSecret) {
-          await record("Webhook отклонён: App Secret не заполнен в настройках салона");
-          return new Response("Forbidden", { status: 403 });
-        }
         const signature =
           request.headers.get("x-hub-signature-256") ?? request.headers.get("X-Hub-Signature-256");
-        if (!(await igVerifySignature(appSecret, rawBody, signature))) {
-          await record("Webhook отклонён: неверная подпись X-Hub-Signature-256", {
-            hasSignatureHeader: Boolean(signature),
-          });
-          return new Response("Forbidden", { status: 403 });
-        }
-
-        if (!salon) return ack();
-
-        let payload: any;
-        try {
-          payload = JSON.parse(rawBody);
-        } catch {
-          return new Response("Bad request", { status: 400 });
-        }
-        if (payload?.object && payload.object !== "instagram") return ack();
-
-        const { igUserId: msgIgUserId, events } = parseIgWebhook(payload);
-        // Comments ride the SAME webhook URL but a different envelope (entry[].changes with
-        // field="comments"), so both parsers run over every payload and either may come back
-        // empty. Only a delivery carrying neither is nothing to us.
-        const { igUserId: commentIgUserId, comments } = parseIgCommentWebhook(payload);
-        const igUserId = msgIgUserId ?? commentIgUserId;
-        if (events.length === 0 && comments.length === 0) return ack();
-
-        // One Instagram account legitimately has TWO ids, and they are not interchangeable:
-        //   17841…  the professional account id shown in the Meta dashboard, and what Meta puts in
-        //           entry[].id on the webhook
-        //   285…    the app-scoped id that graph.instagram.com/me returns for the same account
-        // An owner copying from the dashboard stores the first; our own connection check stores the
-        // second. Both are correct, so comparing them and DROPPING the delivery on a mismatch
-        // silently threw away every message — looking, from the outside, exactly like Meta never
-        // calling at all. The mismatch is recorded but no longer blocks anything.
-        //
-        // Nothing is lost security-wise: the delivery is already authenticated by the per-salon
-        // app-secret signature above, and the salon is identified by the URL path. This check could
-        // only ever catch a mis-pasted webhook URL between two salons sharing one Meta app — and
-        // even then, dropping is the wrong response to what is a configuration slip.
-        const configuredIgUser = (secrets as any)?.instagram_user_id ?? "";
-        if (configuredIgUser && igUserId && configuredIgUser !== igUserId) {
-          await record(
-            `Webhook пришёл для Instagram-аккаунта ${igUserId}, а в настройках указан ${configuredIgUser}. Сообщение обработано, но стоит проверить поле «Instagram account ID».`,
-            { received: igUserId, configured: configuredIgUser },
-          );
-        }
-
-        const creds: IgCreds = {
-          token: (secrets as any)?.instagram_token ?? "",
-          // Prefer the id Meta itself used in this delivery over the one typed into the settings:
-          // when they differ (see the two-ids note above) Meta's own value is the one its API
-          // expects on the send endpoint.
-          igUserId: igUserId || configuredIgUser,
-        };
-
-        // Comment → DM. Handled before the assistant gate below on purpose: the private reply is
-        // a message the OWNER wrote, not something the AI generates, so it stays useful even for
-        // a salon that has the assistant switched off and answers manually. It only needs the
-        // channel to be on and a token to send with.
-        if (comments.length && ((salon as any).instagram_enabled ?? false) && creds.token) {
-          for (const c of comments) {
-            try {
-              await handleCommentTrigger({
-                db: supabaseAdmin,
-                salonId,
-                creds,
-                comment: c,
-                log,
-                record,
-              });
-            } catch (e: any) {
-              await record(`Не удалось обработать комментарий: ${e?.message ?? e}`, {
-                commentId: c.commentId,
-              });
-            }
-          }
-        }
-
-        // Точка, за которой закреплён этот Instagram.
-        //
-        // Салон известен из адреса вебхука, поэтому ищем только область действия. NULL — канал
-        // общий на сеть, и дальше всё работает как раньше: ассистент спросит клиента, в какую
-        // точку он хочет. Не NULL — клиент написал в директ конкретного филиала, и спрашивать
-        // его об этом незачем.
-        //
-        // Ошибка чтения даёт NULL: канал продолжает работать как общий. Потерять уточнение
-        // хуже, чем потерять ответ, но несравнимо лучше, чем второе.
-        const { branchForSalonChannel } = await import("@/lib/channel-routing.server");
-        const channelBranchId = await branchForSalonChannel(
-          supabaseAdmin as any,
-          salonId,
-          "instagram",
-        );
-
-        // Ingest EVERY event first (so the admin panel and the audit log stay complete even when
-        // the assistant is off or paused), then run at most one agent turn per conversation.
-        const conversationsToProcess = new Set<string>();
-        for (const ev of events) {
-          const convId = await ingestEvent({
-            db: supabaseAdmin,
-            salonId,
-            ev,
-            creds,
-            branchId: channelBranchId,
-            errLog,
-          });
-          if (convId) conversationsToProcess.add(convId);
-        }
-
-        const assistantOn =
-          ((salon as any).instagram_enabled ?? false) === true &&
-          ((salon as any).ai_assistant_enabled ?? true) !== false &&
-          ((assistant as any)?.enabled ?? true) !== false;
-        // A message arrived and we are deliberately staying silent. Legitimate, but from the
-        // outside identical to a bug — so name the exact switch that is off. Four different
-        // toggles can produce this, they live on three different screens, and "the assistant is
-        // not answering" sends the owner hunting through all of them.
-        if (!assistantOn || !creds.token) {
-          const off = !((salon as any).instagram_enabled ?? false)
-            ? "канал Instagram выключен — включите переключатель вверху вкладки «Instagram»"
-            : !((salon as any).ai_assistant_enabled ?? true)
-              ? "ИИ-ассистент не подключён для этого салона — включается владельцем платформы"
-              : !((assistant as any)?.enabled ?? true)
-                ? "ассистент выключен — включите переключатель «Активен» во вкладке «Ассистент» и сохраните"
-                : "не заполнен Access Token во вкладке «Instagram»";
-          await record(`Сообщение получено, но ответа не будет: ${off}`, {
-            instagram_enabled: (salon as any).instagram_enabled ?? false,
-            ai_assistant_enabled: (salon as any).ai_assistant_enabled ?? true,
-            assistant_enabled: (assistant as any)?.enabled ?? true,
-            hasToken: Boolean(creds.token),
-          });
-          return ack();
-        }
-        if (conversationsToProcess.size === 0) return ack();
-
-        // Биллинг: неоплаченный салон или исчерпанный лимит — сообщения сохранены, ассистент молчит.
-        // Ворота сами пробуют автодокупку и при своей ошибке пропускают (fail-open).
-        let planAllowsSales = true;
-        {
-          const { assistantGate, recordUsage } = await import("@/lib/billing.server");
-          const gate = await assistantGate(salonId);
-          if (!gate.allowed) {
-            await record(`Ассистент не ответил: ${gate.reason}`);
-            return ack();
-          }
-          if (gate.features && !gate.features.sales_mode) planAllowsSales = false;
-          await recordUsage(salonId, "ai_reply", conversationsToProcess.size);
-        }
-
-        const assistantConfig = {
-          greeting: (assistant as any)?.greeting ?? null,
-          tone_instructions: (assistant as any)?.tone_instructions ?? null,
-          pricing_rules: (assistant as any)?.pricing_rules ?? null,
-          languages: (assistant as any)?.languages?.length ? (assistant as any).languages : ["ru"],
-          manage_cutoff_hours: (assistant as any)?.manage_cutoff_hours ?? 0,
-          knowledge_base: (assistant as any)?.knowledge_base ?? null,
-          ai_rules: (assistant as any)?.ai_rules ?? null,
-          rich_formatting: (assistant as any)?.rich_formatting ?? false,
-          client_addressing: (assistant as any)?.client_addressing ?? null,
-          industry: (assistant as any)?.industry ?? null,
-          knowledge_answers: (assistant as any)?.knowledge_answers ?? null,
-          sales_style: (assistant as any)?.sales_style ?? null,
-          sales_mode: planAllowsSales && ((assistant as any)?.sales_mode ?? false),
-          start_language: (assistant as any)?.start_language ?? null,
-          entry_service_id: (assistant as any)?.entry_service_id ?? null,
-          sales_price_framing: (assistant as any)?.sales_price_framing ?? null,
-          sales_usp: (assistant as any)?.sales_usp ?? null,
-          sales_objections: (assistant as any)?.sales_objections ?? null,
-          sales_promos: (assistant as any)?.sales_promos ?? null,
-          booking_link_mode: (assistant as any)?.booking_link_mode ?? "auto",
-        };
-
-        for (const convId of conversationsToProcess) {
-          try {
-            await runConversationTurn({
-              db: supabaseAdmin,
-              salonId,
-              salon,
-              assistant,
-              assistantConfig,
-              secrets,
-              creds,
-              convId,
-              log,
-              errLog,
-              record,
-              ms,
-              channelBranchId,
-            });
-          } catch (e: any) {
-            // Anything that escapes the turn leaves the client staring at silence, so it must be
-            // recorded and not merely logged — this catch used to be the last blind spot on the
-            // path between "message received" and "reply sent".
-            await record(`Не удалось обработать сообщение: ${e?.message ?? e}`, { convId });
-          }
-        }
-
-        return ack();
+        return processIgDelivery({
+          salonId: params.salonId,
+          rawBody,
+          rid,
+          auth: { kind: "salon", signature },
+        });
       },
     },
   },
 });
+
+/**
+ * How a delivery was authenticated before it reached processIgDelivery.
+ *   salon    — per-salon URL: verify here with the salon's own app secret.
+ *   platform — shared /api/public/ig: already verified with Qabyl's app secret, and the salon was
+ *              found by the Instagram account id in the payload, not taken from the URL.
+ */
+export type IgDeliveryAuth = { kind: "salon"; signature: string | null } | { kind: "platform" };
+
+/** Everything after the salon is known. Shared by the per-salon and the platform webhook. */
+export async function processIgDelivery(opts: {
+  salonId: string;
+  rawBody: string;
+  rid: string;
+  auth: IgDeliveryAuth;
+}): Promise<Response> {
+  const { salonId, rid } = opts;
+  const log = (msg: string, ...rest: unknown[]) => console.log(`[ig ${rid}] ${msg}`, ...rest);
+  const errLog = (msg: string, ...rest: unknown[]) => console.error(`[ig ${rid}] ${msg}`, ...rest);
+  const t0 = Date.now();
+  const ms = () => Date.now() - t0;
+
+  // Always 200 back to Meta once we have accepted responsibility for a payload. A non-200
+  // makes Meta redeliver the same batch for up to 36 h, and after enough failures it
+  // unsubscribes the app from the field entirely — far worse than dropping one message.
+  const ack = () => new Response("ok", { status: 200 });
+
+  const rawBody = opts.rawBody;
+
+  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  const [{ data: secrets }, { data: salon }, { data: assistant }] = await Promise.all([
+    supabaseAdmin
+      .from("salon_secrets")
+      .select(
+        "instagram_user_id, instagram_token, instagram_app_secret, greenapi_instance, greenapi_token, owner_notify_phone",
+      )
+      .eq("salon_id", salonId)
+      .maybeSingle(),
+    supabaseAdmin
+      .from("salons")
+      .select(
+        "id, name, timezone, ai_assistant_enabled, instagram_enabled, working_hours, address, slug, custom_domain",
+      )
+      .eq("id", salonId)
+      .maybeSingle(),
+    supabaseAdmin
+      // select("*") — see the same note in the WhatsApp webhook: this row keeps gaining
+      // columns, and naming one a not-yet-migrated database lacks would fail the whole
+      // query and silence the assistant for that salon.
+      .from("salon_ai_assistant")
+      .select("*")
+      .eq("salon_id", salonId)
+      .maybeSingle(),
+  ]);
+
+  // Every reason we refuse or ignore a delivery is recorded, not just console-logged.
+  // Debugging "the assistant did not answer" hinges on one question — did Meta reach us at
+  // all? — and a Cloudflare log line the salon owner cannot read does not answer it. These
+  // rows show up in /admin/errors and drive the diagnostics panel in the Instagram tab.
+  const record = async (message: string, context: Record<string, unknown> = {}) => {
+    const { logError } = await import("@/lib/error-log.server");
+    await logError({
+      source: "ig-webhook",
+      level: "warn",
+      message,
+      salonId,
+      context: { rid, ...context },
+    });
+  };
+
+  if (opts.auth.kind === "salon") {
+    const appSecret = (secrets as any)?.instagram_app_secret ?? "";
+    // No app secret means this endpoint has no authentication at all — the URL contains only
+    // a salon id, which is not a secret. Refuse rather than process attacker-supplied "client
+    // messages" that would drive the assistant and burn the salon's Gemini budget. A salon
+    // connected with the button has no secret of its own on purpose: its deliveries arrive at
+    // the shared /api/public/ig, never here.
+    if (!appSecret) {
+      await record("Webhook отклонён: App Secret не заполнен в настройках салона");
+      return new Response("Forbidden", { status: 403 });
+    }
+    const signature = opts.auth.signature;
+    if (!(await igVerifySignature(appSecret, rawBody, signature))) {
+      await record("Webhook отклонён: неверная подпись X-Hub-Signature-256", {
+        hasSignatureHeader: Boolean(signature),
+      });
+      return new Response("Forbidden", { status: 403 });
+    }
+  }
+
+  if (!salon) return ack();
+
+  let payload: any;
+  try {
+    payload = JSON.parse(rawBody);
+  } catch {
+    return new Response("Bad request", { status: 400 });
+  }
+  if (payload?.object && payload.object !== "instagram") return ack();
+
+  const { igUserId: msgIgUserId, events } = parseIgWebhook(payload);
+  // Comments ride the SAME webhook URL but a different envelope (entry[].changes with
+  // field="comments"), so both parsers run over every payload and either may come back
+  // empty. Only a delivery carrying neither is nothing to us.
+  const { igUserId: commentIgUserId, comments } = parseIgCommentWebhook(payload);
+  const igUserId = msgIgUserId ?? commentIgUserId;
+  if (events.length === 0 && comments.length === 0) return ack();
+
+  // One Instagram account legitimately has TWO ids, and they are not interchangeable:
+  //   17841…  the professional account id shown in the Meta dashboard, and what Meta puts in
+  //           entry[].id on the webhook
+  //   285…    the app-scoped id that graph.instagram.com/me returns for the same account
+  // An owner copying from the dashboard stores the first; our own connection check stores the
+  // second. Both are correct, so comparing them and DROPPING the delivery on a mismatch
+  // silently threw away every message — looking, from the outside, exactly like Meta never
+  // calling at all. The mismatch is recorded but no longer blocks anything.
+  //
+  // Nothing is lost security-wise: the delivery is already authenticated by the per-salon
+  // app-secret signature above, and the salon is identified by the URL path. This check could
+  // only ever catch a mis-pasted webhook URL between two salons sharing one Meta app — and
+  // even then, dropping is the wrong response to what is a configuration slip.
+  const configuredIgUser = (secrets as any)?.instagram_user_id ?? "";
+  if (configuredIgUser && igUserId && configuredIgUser !== igUserId) {
+    await record(
+      `Webhook пришёл для Instagram-аккаунта ${igUserId}, а в настройках указан ${configuredIgUser}. Сообщение обработано, но стоит проверить поле «Instagram account ID».`,
+      { received: igUserId, configured: configuredIgUser },
+    );
+  }
+
+  const creds: IgCreds = {
+    token: (secrets as any)?.instagram_token ?? "",
+    // Prefer the id Meta itself used in this delivery over the one typed into the settings:
+    // when they differ (see the two-ids note above) Meta's own value is the one its API
+    // expects on the send endpoint.
+    igUserId: igUserId || configuredIgUser,
+  };
+
+  // Comment → DM. Handled before the assistant gate below on purpose: the private reply is
+  // a message the OWNER wrote, not something the AI generates, so it stays useful even for
+  // a salon that has the assistant switched off and answers manually. It only needs the
+  // channel to be on and a token to send with.
+  if (comments.length && ((salon as any).instagram_enabled ?? false) && creds.token) {
+    for (const c of comments) {
+      try {
+        await handleCommentTrigger({
+          db: supabaseAdmin,
+          salonId,
+          creds,
+          comment: c,
+          log,
+          record,
+        });
+      } catch (e: any) {
+        await record(`Не удалось обработать комментарий: ${e?.message ?? e}`, {
+          commentId: c.commentId,
+        });
+      }
+    }
+  }
+
+  // Точка, за которой закреплён этот Instagram.
+  //
+  // Салон известен из адреса вебхука, поэтому ищем только область действия. NULL — канал
+  // общий на сеть, и дальше всё работает как раньше: ассистент спросит клиента, в какую
+  // точку он хочет. Не NULL — клиент написал в директ конкретного филиала, и спрашивать
+  // его об этом незачем.
+  //
+  // Ошибка чтения даёт NULL: канал продолжает работать как общий. Потерять уточнение
+  // хуже, чем потерять ответ, но несравнимо лучше, чем второе.
+  const { branchForSalonChannel } = await import("@/lib/channel-routing.server");
+  const channelBranchId = await branchForSalonChannel(supabaseAdmin as any, salonId, "instagram");
+
+  // Ingest EVERY event first (so the admin panel and the audit log stay complete even when
+  // the assistant is off or paused), then run at most one agent turn per conversation.
+  const conversationsToProcess = new Set<string>();
+  for (const ev of events) {
+    const convId = await ingestEvent({
+      db: supabaseAdmin,
+      salonId,
+      ev,
+      creds,
+      branchId: channelBranchId,
+      errLog,
+    });
+    if (convId) conversationsToProcess.add(convId);
+  }
+
+  const assistantOn =
+    ((salon as any).instagram_enabled ?? false) === true &&
+    ((salon as any).ai_assistant_enabled ?? true) !== false &&
+    ((assistant as any)?.enabled ?? true) !== false;
+  // A message arrived and we are deliberately staying silent. Legitimate, but from the
+  // outside identical to a bug — so name the exact switch that is off. Four different
+  // toggles can produce this, they live on three different screens, and "the assistant is
+  // not answering" sends the owner hunting through all of them.
+  if (!assistantOn || !creds.token) {
+    const off = !((salon as any).instagram_enabled ?? false)
+      ? "канал Instagram выключен — включите переключатель вверху вкладки «Instagram»"
+      : !((salon as any).ai_assistant_enabled ?? true)
+        ? "ИИ-ассистент не подключён для этого салона — включается владельцем платформы"
+        : !((assistant as any)?.enabled ?? true)
+          ? "ассистент выключен — включите переключатель «Активен» во вкладке «Ассистент» и сохраните"
+          : "не заполнен Access Token во вкладке «Instagram»";
+    await record(`Сообщение получено, но ответа не будет: ${off}`, {
+      instagram_enabled: (salon as any).instagram_enabled ?? false,
+      ai_assistant_enabled: (salon as any).ai_assistant_enabled ?? true,
+      assistant_enabled: (assistant as any)?.enabled ?? true,
+      hasToken: Boolean(creds.token),
+    });
+    return ack();
+  }
+  if (conversationsToProcess.size === 0) return ack();
+
+  // Биллинг: неоплаченный салон или исчерпанный лимит — сообщения сохранены, ассистент молчит.
+  // Ворота сами пробуют автодокупку и при своей ошибке пропускают (fail-open).
+  let planAllowsSales = true;
+  {
+    const { assistantGate, recordUsage } = await import("@/lib/billing.server");
+    const gate = await assistantGate(salonId);
+    if (!gate.allowed) {
+      await record(`Ассистент не ответил: ${gate.reason}`);
+      return ack();
+    }
+    if (gate.features && !gate.features.sales_mode) planAllowsSales = false;
+    await recordUsage(salonId, "ai_reply", conversationsToProcess.size);
+  }
+
+  const assistantConfig = {
+    greeting: (assistant as any)?.greeting ?? null,
+    tone_instructions: (assistant as any)?.tone_instructions ?? null,
+    pricing_rules: (assistant as any)?.pricing_rules ?? null,
+    languages: (assistant as any)?.languages?.length ? (assistant as any).languages : ["ru"],
+    manage_cutoff_hours: (assistant as any)?.manage_cutoff_hours ?? 0,
+    knowledge_base: (assistant as any)?.knowledge_base ?? null,
+    ai_rules: (assistant as any)?.ai_rules ?? null,
+    rich_formatting: (assistant as any)?.rich_formatting ?? false,
+    client_addressing: (assistant as any)?.client_addressing ?? null,
+    industry: (assistant as any)?.industry ?? null,
+    knowledge_answers: (assistant as any)?.knowledge_answers ?? null,
+    sales_style: (assistant as any)?.sales_style ?? null,
+    sales_mode: planAllowsSales && ((assistant as any)?.sales_mode ?? false),
+    start_language: (assistant as any)?.start_language ?? null,
+    entry_service_id: (assistant as any)?.entry_service_id ?? null,
+    sales_price_framing: (assistant as any)?.sales_price_framing ?? null,
+    sales_usp: (assistant as any)?.sales_usp ?? null,
+    sales_objections: (assistant as any)?.sales_objections ?? null,
+    sales_promos: (assistant as any)?.sales_promos ?? null,
+    booking_link_mode: (assistant as any)?.booking_link_mode ?? "auto",
+  };
+
+  for (const convId of conversationsToProcess) {
+    try {
+      await runConversationTurn({
+        db: supabaseAdmin,
+        salonId,
+        salon,
+        assistant,
+        assistantConfig,
+        secrets,
+        creds,
+        convId,
+        log,
+        errLog,
+        record,
+        ms,
+        channelBranchId,
+      });
+    } catch (e: any) {
+      // Anything that escapes the turn leaves the client staring at silence, so it must be
+      // recorded and not merely logged — this catch used to be the last blind spot on the
+      // path between "message received" and "reply sent".
+      await record(`Не удалось обработать сообщение: ${e?.message ?? e}`, { convId });
+    }
+  }
+
+  return ack();
+}
 
 // ---------------------------------------------------------------------------
 // Ingestion: webhook event → conversation + stored message

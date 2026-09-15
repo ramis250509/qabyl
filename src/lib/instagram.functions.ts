@@ -39,7 +39,9 @@ export const getInstagramConfig = createServerFn({ method: "POST" })
     const [{ data: row }, { data: salon }] = await Promise.all([
       supabaseAdmin
         .from("salon_secrets")
-        .select("instagram_user_id, instagram_token, instagram_app_secret, instagram_verify_token")
+        // "*", not a column list: the button-connection columns may not be migrated yet, and naming
+        // a missing column fails the whole query and blanks the tab.
+        .select("*")
         .eq("salon_id", data.salonId)
         .maybeSingle(),
       supabaseAdmin.from("salons").select("instagram_enabled").eq("id", data.salonId).maybeSingle(),
@@ -65,6 +67,11 @@ export const getInstagramConfig = createServerFn({ method: "POST" })
       verify_token: verifyToken as string,
       webhook_url: igWebhookUrl(data.salonId),
       enabled: Boolean((salon as any)?.instagram_enabled),
+      connected_via: ((row as any)?.instagram_connected_via ?? null) as
+        | "manual"
+        | "platform"
+        | null,
+      token_expires_at: ((row as any)?.instagram_token_expires_at ?? null) as string | null,
     };
   });
 
@@ -113,13 +120,18 @@ export const setInstagramEnabled = createServerFn({ method: "POST" })
       await assertCanAddChannel(data.salonId, "ig");
       const { data: row } = await supabaseAdmin
         .from("salon_secrets")
-        .select("instagram_user_id, instagram_token, instagram_app_secret")
+        .select("*")
         .eq("salon_id", data.salonId)
         .maybeSingle();
+      const viaButton = (row as any)?.instagram_connected_via === "platform";
       const missing: string[] = [];
       if (!(row as any)?.instagram_user_id) missing.push("Instagram account ID");
       if (!(row as any)?.instagram_token) missing.push("Access Token");
-      if (!(row as any)?.instagram_app_secret) missing.push("App Secret");
+      // Подключённому кнопкой свой секрет не нужен: его вебхук подписывает приложение Qabyl.
+      if (!viaButton && !(row as any)?.instagram_app_secret) missing.push("App Secret");
+      if (missing.length === 3 || (viaButton && missing.length)) {
+        throw new Error("Сначала подключите Instagram кнопкой «Подключить Instagram»");
+      }
       if (missing.length) {
         throw new Error(`Сначала заполните и сохраните: ${missing.join(", ")}`);
       }
@@ -131,6 +143,27 @@ export const setInstagramEnabled = createServerFn({ method: "POST" })
       .eq("id", data.salonId);
     if (error) throw new Error(error.message);
     return { ok: true };
+  });
+
+/**
+ * «Подключить Instagram»: адрес входа на instagram.com. Доступ к салону проверяется здесь, а
+ * результат проверки едет через Instagram внутри подписанного state — на возврате сессии нет.
+ */
+export const startInstagramLogin = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => z.object({ salonId: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    await assertSalonAccess(context.supabase, context.userId, data.salonId);
+    const { buildIgAuthorizeUrl, igAppId, igAppSecret, igRedirectUri, signIgState } =
+      await import("@/lib/ig-oauth.server");
+    const secret = igAppSecret();
+    if (!secret) {
+      throw new Error(
+        "Подключение Instagram кнопкой пока не настроено на сервере — напишите в поддержку",
+      );
+    }
+    const state = await signIgState({ salonId: data.salonId, userId: context.userId }, secret);
+    return { url: buildIgAuthorizeUrl({ appId: igAppId(), redirectUri: igRedirectUri(), state }) };
   });
 
 /**
