@@ -3,9 +3,16 @@
 //
 // Запуск: bun test freedompay.test.ts
 
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { fpCallbackResponse, fpSign, fpVerify, md5, parseFpXml } from "./src/lib/freedompay.server";
+import {
+  fpCallbackResponse,
+  fpInitPayment,
+  fpSign,
+  fpVerify,
+  md5,
+  parseFpXml,
+} from "./src/lib/freedompay.server";
 
 const nodeMd5 = (s: string) => createHash("md5").update(s, "utf8").digest("hex");
 
@@ -68,5 +75,78 @@ describe("XML", () => {
     const parsed = parseFpXml(body);
     expect(parsed.pg_status).toBe("ok");
     expect(fpVerify("freedompay", parsed, "K")).toBe(true);
+  });
+});
+
+describe("init_payment", () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  const cfg = {
+    merchantId: "561397",
+    secretKey: "K",
+    apiBase: "https://api.freedompay.kg",
+    testing: true,
+  };
+  const input = {
+    orderId: "inv-1",
+    amountKgs: 6499,
+    description: "Qabyl Pro: 1 месяц",
+    userId: "salon-1",
+    resultUrl: "https://qabyl.com/api/public/billing/freedompay",
+    successUrl: "https://qabyl.com/admin/billing?payment=success",
+    failureUrl: "https://qabyl.com/admin/billing?payment=failed",
+    recurring: false,
+  };
+
+  function bankReplies(status: string) {
+    const fields: Record<string, string> = {
+      pg_status: status,
+      pg_payment_id: "987654",
+      pg_redirect_url: "https://customer.freedompay.kg/pay.html?customer=abc",
+      pg_salt: "s",
+    };
+    fields.pg_sig = fpSign("init_payment.php", fields, "K");
+    const inner = Object.entries(fields)
+      .map(([k, v]) => `<${k}>${v.replace(/&/g, "&amp;")}</${k}>`)
+      .join("");
+    globalThis.fetch = (async () =>
+      new Response(`<?xml version="1.0" encoding="utf-8"?><response>${inner}</response>`, {
+        status: 200,
+      })) as unknown as typeof fetch;
+  }
+
+  // Дока init_payment 2026 года отвечает success, старые *.php — ok. Принимать надо оба.
+  for (const status of ["ok", "success"]) {
+    test(`pg_status=${status} даёт ссылку на оплату`, async () => {
+      bankReplies(status);
+      const res = await fpInitPayment(cfg, input);
+      expect(res).toEqual({
+        ok: true,
+        paymentId: "987654",
+        redirectUrl: "https://customer.freedompay.kg/pay.html?customer=abc",
+      });
+    });
+  }
+
+  test("pg_status=error — отказ", async () => {
+    bankReplies("error");
+    const res = await fpInitPayment(cfg, input);
+    expect(res.ok).toBe(false);
+  });
+
+  test("форма оплаты запрашивается на русском", async () => {
+    let sent = "";
+    bankReplies("ok");
+    const mocked = globalThis.fetch;
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      sent = String(init.body);
+      return mocked(url as never, init as never);
+    }) as unknown as typeof fetch;
+
+    await fpInitPayment(cfg, input);
+    expect(new URLSearchParams(sent).get("pg_language")).toBe("ru");
   });
 });

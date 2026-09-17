@@ -187,7 +187,9 @@ async function fpPost(
     )
       return { ok: false, error: "Ответ банка не подтверждён" };
     if (!res.ok) return { ok: false, error: `Freedom Pay HTTP ${res.status}` };
-    if ((data.pg_status ?? "").toLowerCase() !== "ok") {
+    // Старые скрипты (*.php) отвечают pg_status=ok, дока init_payment от 2026 года — success.
+    const status = (data.pg_status ?? "").toLowerCase();
+    if (status !== "ok" && status !== "success") {
       return {
         ok: false,
         error: data.pg_error_description || data.pg_description || "Freedom Pay отклонил запрос",
@@ -231,6 +233,9 @@ export async function fpInitPayment(
     pg_description: p.description,
     pg_user_id: p.userId,
     pg_result_url: p.resultUrl,
+    // Без этого Freedom Pay отдаёт форму оплаты на английском. Платят владельцы салонов,
+    // а админка у них русская — английская форма на шаге оплаты отпугивает.
+    pg_language: "ru",
     pg_request_method: "POST",
     pg_success_url_method: "GET",
     pg_failure_url_method: "GET",
