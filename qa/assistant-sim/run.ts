@@ -52,6 +52,44 @@ if (!process.env.GEMINI_API_KEY) {
   process.exit(2);
 }
 
+// ─── проверка квоты до старта ─────────────────────────────────────────────────────────────────
+//
+// ЗАЧЕМ. 17.09.2026 прогон на бесплатном ключе крутился 24 минуты и выдал пустой отчёт: все 78
+// сценариев упали с 429, каждый потратив по 36 секунд на повторы. Один запрос перед стартом
+// отвечает на тот же вопрос за секунду.
+//
+// ГЛАВНОЕ ПРО БЕСПЛАТНЫЙ ТИР. Там не «мало запросов в минуту», а лимит
+// GenerateRequestsPerDayPerProjectPerModel — порядка 20 запросов В СУТКИ на модель. Один сценарий
+// съедает ~15 вызовов, то есть бесплатного ключа хватает примерно на ОДИН сценарий в день.
+// Полный прогон на нём невозможен в принципе, и лучше узнать это до, а не после.
+{
+  const model = process.env.SIM_CUSTOMER_MODEL ?? "gemini-flash-latest";
+  const key = process.env.GEMINI_API_KEY;
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "ок" }] }] }),
+      signal: AbortSignal.timeout(30_000),
+    },
+  ).catch((e) => ({ ok: false, status: 0, text: async () => String(e?.message ?? e) }) as any);
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    const perDay = /PerDay|RequestsPerDay/i.test(body);
+    console.error(
+      `\nПрогон не начат: модель ${model} ответила ${res.status}.\n` +
+        (perDay
+          ? "Это СУТОЧНАЯ квота бесплатного тира (порядка 20 запросов на модель в день), а одному\n" +
+            "сценарию нужно ~15. Полный прогон на бесплатном ключе невозможен: нужен платный ключ\n" +
+            "либо запуск одного-двух сценариев через --filter.\n"
+          : `${body.slice(0, 300)}\n`),
+    );
+    process.exit(2);
+  }
+}
+
 // ─── world + fault-injecting fetch ────────────────────────────────────────────────────────────
 const world = new SimWorld();
 (globalThis as any).__QABYL_SIM_DB__ = world.db;
