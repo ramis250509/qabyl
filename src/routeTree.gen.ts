@@ -26,6 +26,7 @@ import { Route as BookSlugRouteImport } from './routes/book.$slug'
 import { Route as AdminStatsRouteImport } from './routes/admin/stats'
 import { Route as AdminOpsRouteImport } from './routes/admin/ops'
 import { Route as AdminNotificationsRouteImport } from './routes/admin/notifications'
+import { Route as AdminInstallRouteImport } from './routes/admin/install'
 import { Route as AdminErrorsRouteImport } from './routes/admin/errors'
 import { Route as AdminCalendarRouteImport } from './routes/admin/calendar'
 import { Route as AdminBillingRouteImport } from './routes/admin/billing'
@@ -128,6 +129,11 @@ const AdminNotificationsRoute = AdminNotificationsRouteImport.update({
   path: '/notifications',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminInstallRoute = AdminInstallRouteImport.update({
+  id: '/install',
+  path: '/install',
+  getParentRoute: () => AdminRoute,
+} as any)
 const AdminErrorsRoute = AdminErrorsRouteImport.update({
   id: '/errors',
   path: '/errors',
@@ -226,6 +232,7 @@ export interface FileRoutesByFullPath {
   '/admin/billing': typeof AdminBillingRoute
   '/admin/calendar': typeof AdminCalendarRoute
   '/admin/errors': typeof AdminErrorsRoute
+  '/admin/install': typeof AdminInstallRoute
   '/admin/notifications': typeof AdminNotificationsRoute
   '/admin/ops': typeof AdminOpsRoute
   '/admin/stats': typeof AdminStatsRoute
@@ -260,6 +267,7 @@ export interface FileRoutesByTo {
   '/admin/billing': typeof AdminBillingRoute
   '/admin/calendar': typeof AdminCalendarRoute
   '/admin/errors': typeof AdminErrorsRoute
+  '/admin/install': typeof AdminInstallRoute
   '/admin/notifications': typeof AdminNotificationsRoute
   '/admin/ops': typeof AdminOpsRoute
   '/admin/stats': typeof AdminStatsRoute
@@ -296,6 +304,7 @@ export interface FileRoutesById {
   '/admin/billing': typeof AdminBillingRoute
   '/admin/calendar': typeof AdminCalendarRoute
   '/admin/errors': typeof AdminErrorsRoute
+  '/admin/install': typeof AdminInstallRoute
   '/admin/notifications': typeof AdminNotificationsRoute
   '/admin/ops': typeof AdminOpsRoute
   '/admin/stats': typeof AdminStatsRoute
@@ -333,6 +342,7 @@ export interface FileRouteTypes {
     | '/admin/billing'
     | '/admin/calendar'
     | '/admin/errors'
+    | '/admin/install'
     | '/admin/notifications'
     | '/admin/ops'
     | '/admin/stats'
@@ -367,6 +377,7 @@ export interface FileRouteTypes {
     | '/admin/billing'
     | '/admin/calendar'
     | '/admin/errors'
+    | '/admin/install'
     | '/admin/notifications'
     | '/admin/ops'
     | '/admin/stats'
@@ -402,6 +413,7 @@ export interface FileRouteTypes {
     | '/admin/billing'
     | '/admin/calendar'
     | '/admin/errors'
+    | '/admin/install'
     | '/admin/notifications'
     | '/admin/ops'
     | '/admin/stats'
@@ -568,6 +580,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminNotificationsRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/install': {
+      id: '/admin/install'
+      path: '/install'
+      fullPath: '/admin/install'
+      preLoaderRoute: typeof AdminInstallRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/errors': {
       id: '/admin/errors'
       path: '/errors'
@@ -688,6 +707,7 @@ interface AdminRouteChildren {
   AdminBillingRoute: typeof AdminBillingRoute
   AdminCalendarRoute: typeof AdminCalendarRoute
   AdminErrorsRoute: typeof AdminErrorsRoute
+  AdminInstallRoute: typeof AdminInstallRoute
   AdminNotificationsRoute: typeof AdminNotificationsRoute
   AdminOpsRoute: typeof AdminOpsRoute
   AdminStatsRoute: typeof AdminStatsRoute
@@ -701,6 +721,7 @@ const AdminRouteChildren: AdminRouteChildren = {
   AdminBillingRoute: AdminBillingRoute,
   AdminCalendarRoute: AdminCalendarRoute,
   AdminErrorsRoute: AdminErrorsRoute,
+  AdminInstallRoute: AdminInstallRoute,
   AdminNotificationsRoute: AdminNotificationsRoute,
   AdminOpsRoute: AdminOpsRoute,
   AdminStatsRoute: AdminStatsRoute,

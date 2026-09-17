@@ -14,6 +14,7 @@ import {
   Menu,
   Bell,
   UserCog,
+  Smartphone,
   Activity,
   AlertOctagon,
   CreditCard,
@@ -168,12 +169,14 @@ function AdminLayout() {
               },
             ]
           : []),
+        { to: "/admin/install", label: "Приложение", icon: Smartphone },
         { to: "/admin/account", label: "Аккаунт", icon: UserCog },
       ]
     : isMaster && !isSuperAdmin && !isSalonAdmin
       ? [
           { to: "/admin/calendar", label: "Календарь", icon: Calendar, tour: "nav-calendar" },
           { to: "/admin/notifications", label: "Уведомления", icon: Bell, badge: unreadCount },
+          { to: "/admin/install", label: "Приложение", icon: Smartphone },
           { to: "/admin/account", label: "Аккаунт", icon: UserCog },
         ]
       : isSuperAdmin
@@ -186,6 +189,7 @@ function AdminLayout() {
             { to: "/admin/calendar", label: "Календарь", icon: Calendar },
             { to: "/admin/notifications", label: "Уведомления", icon: Bell, badge: unreadCount },
             { to: "/admin/stats", label: "Статистика", icon: BarChart3 },
+            { to: "/admin/install", label: "Приложение", icon: Smartphone },
             { to: "/admin/account", label: "Аккаунт", icon: UserCog },
           ]
         : [
@@ -210,6 +214,7 @@ function AdminLayout() {
                 ]
               : []),
             { to: "/admin/billing", label: "Тариф и оплата", icon: CreditCard },
+            { to: "/admin/install", label: "Приложение", icon: Smartphone },
             { to: "/admin/account", label: "Аккаунт", icon: UserCog },
           ];
 
