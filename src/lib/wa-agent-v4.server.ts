@@ -412,7 +412,7 @@ ${servicesRoster}
     `- РАБОТА С КАЛЕНДАРЁМ (СТРОГО): о свободном времени говори ТОЛЬКО по данным инструментов, никогда не угадывай. Спросил про день — вызови get_available_slots на эту дату. Клиент назвал КОНКРЕТНЫЙ час («17:00 барбы?») — вызови check_time на эту дату и час и ответь по факту. НИКОГДА не говори, что время занято, пока не проверил его инструментом; если инструмент показал время свободным — оно свободно.`,
     `- check_time возвращает reason: ok (свободно, можно записывать) / time_taken (это время уже занято — предложи из nearby_free_times) / outside_hours (в это время салон/${sn.nomSg} уже не работает или процедура не успеет закончиться — НЕ говори «занято»; скажи, что на этот час не получится, и предложи времена из nearby_free_times) / closed_that_day (подтверждённый выходной ВСЕГО салона) / master_off_that_day (выходной у ВЫБРАННОГО мастера, но салон работает — предложи другого мастера в этот день или выбранного в другой день, НЕ говори «салон не работает») / fully_booked (весь день занят) / hours_not_configured (данных о работе в этот день НЕТ — это НЕ выходной). Никогда не называй «outside_hours» занятостью.`,
     `- ЖЕЛЕЗНОЕ ПРАВИЛО «НИКОГДА НЕ УГАДЫВАЙ ЗАНЯТОСТЬ»: если клиент называет конкретный час (например «в 10» / «на 5», «а в 14 можно?») — ВСЕГДА вызови check_time на этот час, ДАЖЕ ЕСЛИ этого часа НЕТ в списке, который ты только что показал в get_available_slots. Список из get_available_slots — это компактная сводка, а не единственный источник правды: время могло не попасть в неё по десятку причин (граница части дня, кэш merged view, редкое расписание конкретного мастера). НИКОГДА не говори «занято/недоступно» на основании отсутствия часа в предыдущем списке — только на основании ответа check_time. Если check_time вернул ok — время свободно, записывай.`,
-    `- get_available_slots возвращает ПОЛНЫЙ список свободных времён начала на дату (учитывает длительность процедуры и занятость) плюс поле reason. reason=closed_that_day → в этот день ВЕСЬ салон НЕ работает (выходной): так и скажи и предложи другой день, НЕ говори «занято». reason=master_off_that_day → выходной У ВЫБРАННОГО мастера, но салон работает и услугу делают другие: предложи записаться в этот день к другому мастеру ИЛИ к выбранному мастеру в другой день, НИКОГДА не говори «салон не работает/выходной». reason=fully_booked → на эту дату всё занято, предложи ближайший день. reason=part_unavailable → на запрошенную часть дня (утро/день/вечер) окошек нет, НО в этот же день есть другое время: предложи эти времена из free_times («вечером всё занято, но есть днём в 14:00 или 16:00»), НЕ говори «всё занято» и НЕ перескакивай на другой день. reason=hours_not_configured → данных о работе в этот день НЕТ (график не заполнен): это НЕ выходной — НЕ говори «не работаем»/«выходной», скажи, что свободного времени на эту дату не видишь, предложи дни с окошками, а если клиенту нужна именно эта дата — передай администратору (escalate_to_human). Никогда не выдавай «выходной» за «занято» и наоборот.`,
+    `- get_available_slots возвращает ПОЛНЫЙ список свободных времён начала на дату (учитывает длительность процедуры и занятость) плюс поле reason. reason=closed_that_day → в этот день ВЕСЬ салон НЕ работает (выходной): так и скажи и предложи другой день, НЕ говори «занято». reason=master_off_that_day → выходной У ВЫБРАННОГО мастера, но салон работает и услугу делают другие: предложи записаться в этот день к другому мастеру ИЛИ к выбранному мастеру в другой день, НИКОГДА не говори «салон не работает/выходной». reason=no_master_for_service_that_day → САЛОН В ЭТОТ ДЕНЬ РАБОТАЕТ, но именно эту услугу выполнять некому (у всех, кто её делает, выходной). НИКОГДА не говори «салон не работает» и «выходной» — это ложь про салон. Скажи, что на этот день эта услуга недоступна, и предложи ближайший день, когда она есть (вызови get_available_slots на следующие дни). reason=fully_booked → на эту дату всё занято, предложи ближайший день. reason=part_unavailable → на запрошенную часть дня (утро/день/вечер) окошек нет, НО в этот же день есть другое время: предложи эти времена из free_times («вечером всё занято, но есть днём в 14:00 или 16:00»), НЕ говори «всё занято» и НЕ перескакивай на другой день. reason=hours_not_configured → данных о работе в этот день НЕТ (график не заполнен): это НЕ выходной — НЕ говори «не работаем»/«выходной», скажи, что свободного времени на эту дату не видишь, предложи дни с окошками, а если клиенту нужна именно эта дата — передай администратору (escalate_to_human). Никогда не выдавай «выходной» за «занято» и наоборот.`,
     `- ВРЕМЯ ЗАКРЫТИЯ (СТРОГО): никогда не предлагай и не подтверждай время, если услуга не успеет закончиться до закрытия салона. Пример: салон работает до 20:00, услуга длится 3 часа — значит запись возможна не позже 17:00, а 18:00/19:00 предлагать нельзя. Не считай это в уме — get_available_slots уже отфильтровал такие времена, предлагай ТОЛЬКО из его ответа. Если клиент сам просит время, которое не помещается до закрытия, мягко объясни и предложи ближайшее подходящее из get_available_slots (в т.ч. на другой день).`,
     `- Клиенту показывай не весь список, а 2–4 удобно РАЗНЕСЁННЫХ варианта (например утро, день, вечер), а не подряд через 15 минут. Пример: «Есть 10:00, 13:00 и 16:00 — что удобнее?»`,
     `- ВЫБОР ${sn.genSg.toUpperCase()} (ОБЯЗАТЕЛЬНО перед подтверждением записи): вызови get_masters и называй ${sn.accPl} ИСКЛЮЧИТЕЛЬНО их реальными именами из ответа get_masters. НИКОГДА не выдумывай имена ${sn.genPl} и НЕ бери имена из примеров этой инструкции — у каждого салона свои ${sn.nomPl}. Если услугу выполняют НЕСКОЛЬКО ${sn.genPl} — до записи ОБЯЗАТЕЛЬНО предложи выбрать из этих реальных имён («К какому ${sn.datSg} записать? Или любой свободный?»). Если у ${sn.genSg} указана specialization/bio_short — порекомендуй по сильной стороне. Когда клиент называет ${sn.accSg} — сопоставь его слова с реальным списком get_masters (учитывай склонения и опечатки); если ни с кем не совпало — покажи реальные имена и переспроси, НЕ придумывай. В create_appointment передавай master_id ТОЛЬКО реального ${sn.genSg} из get_masters. «Всё равно / любой» — выбери сам и назови, кого записал. Если ${sn.nomSg} один — не спрашивай, просто веди к записи.`,
@@ -565,12 +565,20 @@ const V4_TOOL_DECLARATIONS = [
   {
     name: "get_masters",
     description:
-      "Мастера, выполняющие услугу, с их специализацией (specialization) и кратким био (bio_short) — используй их, чтобы рекомендовать подходящего мастера.",
+      "Мастера, выполняющие услугу, с их специализацией (specialization) и кратким био (bio_short) — используй их, чтобы рекомендовать подходящего мастера. ЕСЛИ ВРЕМЯ УЖЕ ВЫБРАНО — обязательно передай date и time: тогда вернутся только те, кто реально свободен в это время, и ты не предложишь клиенту мастера, который в этот час не работает.",
     parameters: {
       type: "object",
       properties: {
         service_id: { type: "string" },
         branch_id: { type: "string", description: "ID филиала (если выбран)" },
+        date: {
+          type: "string",
+          description: "YYYY-MM-DD — если время записи уже обсуждается. Вместе с time.",
+        },
+        time: {
+          type: "string",
+          description: "HH:MM — если время записи уже обсуждается. Вместе с date.",
+        },
       },
       required: ["service_id"],
     },
@@ -912,6 +920,33 @@ export function classifyDateVsToday(argsDate: string, todayIso: string): DateVer
 // data. "unknown" keeps the assistant honest: it must not claim a day off it cannot prove.
 export type DayVerdict = "workable" | "closed" | "unknown";
 
+/** Все активные мастера салона (в филиале, если он выбран) — без фильтра по услуге. */
+async function loadActiveMasters(
+  db: AdminClient,
+  salonId: string,
+  branchId: string | null,
+): Promise<DbMaster[]> {
+  const { data } = await db
+    .from("masters")
+    .select("id, name, branch_id, sort_order, specialization, bio, master_services(service_id)")
+    .eq("salon_id", salonId)
+    .eq("is_active", true)
+    .order("sort_order");
+  return ((data ?? []) as any[])
+    .map((m) => ({
+      id: m.id,
+      name: m.name,
+      branch_id: m.branch_id ?? null,
+      sort_order: m.sort_order ?? 0,
+      service_ids: (m.master_services ?? []).map((s: any) => s.service_id),
+      specialization: m.specialization ?? null,
+      bio: m.bio ?? null,
+    }))
+    .filter(
+      (m) => branchId == null || m.branch_id == null || m.branch_id === branchId,
+    ) as DbMaster[];
+}
+
 export async function classifyDayForService(opts: {
   db: AdminClient;
   input: WaAgentInput;
@@ -919,15 +954,19 @@ export async function classifyDayForService(opts: {
   date: string;
   branchId?: string | null;
   masterId?: string | null; // when the client named a specific master, judge only that master
+  /**
+   * Судить день по ВСЕМ активным мастерам салона, а не только по тем, кто делает услугу.
+   *
+   * Нужно, чтобы отличить «сегодня эту услугу делать некому» от «салон закрыт». Без этого салон
+   * с единственным барбером объявлял себе выходной каждый раз, когда у барбера выходной.
+   */
+  ignoreService?: boolean;
 }): Promise<DayVerdict> {
   try {
     const branchId = opts.branchId ?? opts.input.selectedBranchId ?? null;
-    let masters = await loadMastersForService(
-      opts.db,
-      opts.input.salon.salonId,
-      opts.serviceId,
-      branchId,
-    );
+    let masters = opts.ignoreService
+      ? await loadActiveMasters(opts.db, opts.input.salon.salonId, branchId)
+      : await loadMastersForService(opts.db, opts.input.salon.salonId, opts.serviceId, branchId);
     // Client asked for a specific master → judge only that master, so "запишите к Айгерим в
     // среду" (her day off) reads as closed for her rather than a blanket "всё занято".
     if (opts.masterId) masters = masters.filter((m) => m.id === opts.masterId);
@@ -1113,6 +1152,18 @@ async function emptyDayReasonScoped(commonArgs: {
   ]);
   if (verdict === "closed" && commonArgs.masterId && salonWide === "workable") {
     return "master_off_that_day";
+  }
+  // «УСЛУГУ ДЕЛАТЬ НЕКОМУ» ≠ «САЛОН ЗАКРЫТ» (sim B11-no-master-available, 2026-09-17).
+  //
+  // Вердикт выше всегда посчитан по мастерам, которые делают ЭТУ услугу. Если услугу делает один
+  // человек и у него выходной, вердикт — "closed", и раньше это уходило моделью как
+  // closed_that_day: «завтра салон не работает». Салон при этом работал, просто мужскую стрижку
+  // делать было некому. Клиенту сообщили ложь о салоне, а не о мастере.
+  //
+  // Ветка выше не срабатывала, потому что требовала явного masterId: клиент мастера не называл.
+  if (verdict === "closed" && !commonArgs.masterId) {
+    const anyMaster = await classifyDayForService({ ...commonArgs, ignoreService: true });
+    if (anyMaster === "workable") return "no_master_for_service_that_day";
   }
   // Route empty-workable-day through emptyDayReasonWithDate so `past` / `today` don't get
   // mislabeled as `fully_booked`. `closed` / `unknown` verdicts are unaffected — they still
@@ -1379,16 +1430,81 @@ export async function executeV4Tool(
         args.service_id as string,
         (args.branch_id as string | null) ?? flags.selectedBranchId ?? null,
       );
-      return {
-        masters: masters.map((m) => ({
-          id: m.id,
-          name: m.name,
-          // Specialization / short bio let the assistant recommend by strength ("по сложному
-          // окрашиванию — Айгерим"). Trim bio so the tool payload stays small.
-          specialization: m.specialization || null,
-          bio_short: m.bio ? String(m.bio).slice(0, 200) : null,
-        })),
-      };
+      const shape = (m: (typeof masters)[number]) => ({
+        id: m.id,
+        name: m.name,
+        // Specialization / short bio let the assistant recommend by strength ("по сложному
+        // окрашиванию — Айгерим"). Trim bio so the tool payload stays small.
+        specialization: m.specialization || null,
+        bio_short: m.bio ? String(m.bio).slice(0, 200) : null,
+      });
+
+      // ВРЕМЯ УЖЕ ВЫБРАНО → отдаём только тех, кто в этот час реально свободен.
+      //
+      // Раньше инструмент не знал про время вообще и возвращал всех, кто делает услугу. Модель
+      // честно зачитывала этот список — и предлагала клиенту мастера, чья смена уже кончилась
+      // («на 18:30 у нас Айгуль и Айжан», при том что Айжан работает до 18:00). Инструкцией это
+      // не лечится: модель не врала, она озвучивала то, что ей дали. Лечится тем, что инструмент
+      // физически не может вернуть недоступного мастера, когда время известно.
+      const askedDate = typeof args.date === "string" ? args.date : null;
+      const askedTime = normHHMM(String(args.time ?? ""));
+      if (askedDate && isIsoDate(askedDate) && askedTime) {
+        const free = await mastersFreeAtRequestedTime({
+          db,
+          input,
+          serviceId: args.service_id as string,
+          date: askedDate,
+          time: askedTime,
+          branchId: (args.branch_id as string | null) ?? flags.selectedBranchId ?? null,
+        });
+        const freeIds = new Set(free.map((f) => f.id));
+        const available = masters.filter((m) => freeIds.has(m.id));
+        if (available.length > 0) {
+          return {
+            masters: available.map(shape),
+            filtered_by: { date: askedDate, time: askedTime },
+            note: `Это мастера, свободные именно в ${askedTime}. Предлагай клиенту ТОЛЬКО их.`,
+          };
+        }
+        // Никто не свободен в это время. Не выдаём полный список как доступный — иначе вернём
+        // ровно тот баг. Говорим модели правду, чтобы она предложила другое время.
+        return {
+          masters: [],
+          reason: "nobody_free_at_time",
+          filtered_by: { date: askedDate, time: askedTime },
+          performs_service: masters.map((m) => m.name).filter(Boolean),
+          note: `В ${askedTime} свободных мастеров нет. НЕ предлагай мастеров из performs_service на это время — они заняты или не работают. Вызови get_available_slots и предложи другое время.`,
+        };
+      }
+
+      // ПУСТОЙ СПИСОК — НЕ «ТАКОГО МАСТЕРА НЕТ».
+      //
+      // Инструмент отдавал голый masters: [], а в системном промпте написано «если клиент назвал
+      // мастера не из списка — скажи, что такого нет». Модель складывала одно с другим и отвечала
+      // «такого мастера у нас нет», тут же перечисляя настоящих — включая того, кого клиент и
+      // просил. Пусто бывает по двум совсем разным причинам, и их надо назвать вслух.
+      if (masters.length === 0) {
+        const anyBranch = await loadMastersForService(
+          db,
+          input.salon.salonId,
+          args.service_id as string,
+          null,
+        );
+        return anyBranch.length > 0
+          ? {
+              masters: [],
+              reason: "wrong_branch",
+              elsewhere: anyBranch.map((m) => m.name).filter(Boolean),
+              note: "В ВЫБРАННОМ филиале эту услугу не делает никто, но в другом — делают. НЕ говори «такого мастера нет»: предложи другой филиал или уточни, какой филиал удобен.",
+            }
+          : {
+              masters: [],
+              reason: "service_has_no_masters",
+              note: "Эту услугу сейчас не выполняет ни один мастер. НЕ говори «такого мастера нет» — дело не в имени, а в услуге. Предложи другую услугу или вызови escalate_to_human.",
+            };
+      }
+
+      return { masters: masters.map(shape) };
     }
 
     case "get_available_slots": {
@@ -3110,8 +3226,12 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   // without ever calling get_available_slots this turn — i.e. it hallucinated the busyness. Detect
   // that class of reply (ru/ky/en) and, if no slot-tool actually ran, force a second pass that MUST
   // call get_available_slots before the model can talk about free time.
+  // «ЭТО ВРЕМЯ ТОЛЬКО ЧТО ЗАНЯЛИ» — та же ложь, что «всё занято», но про один слот, и раньше она
+  // сюда не попадала (sim B14-next-week): модель подтвердила 11:00 через check_time, довела
+  // клиента до «да, подтверждаю» — и вместо create_appointment написала про накладку. Записи нет,
+  // клиент ушёл. Инструмент при этом не вызывался ни разу, то есть занятость выдумана целиком.
   const FAKE_BUSY_RE =
-    /(нет\s+свободн(ого|ых)|нет\s+свободн[ыо]|свободн(ое|ых)\s+время?\s+нет|нет\s+мест|всё\s+занято|все\s+занято|занято\s+полностью|полностью\s+занят|места\s+заняты)|(бош\s+убак[иы]т\s+жок|орун\s+жок|орду\s+жок|жок\s+экен)|(no\s+free\s+(time|slots?)|fully\s+booked|no\s+slots\s+available|all\s+booked)/i;
+    /(нет\s+свободн(ого|ых)|нет\s+свободн[ыо]|свободн(ое|ых)\s+время?\s+нет|нет\s+мест|всё\s+занято|все\s+занято|занято\s+полностью|полностью\s+занят|места\s+заняты)|((только\s+что|уже|успели)\s+заня[лт]|это\s+время\s+заня[лт]|врем[яени]\s+уже\s+заня[лт]|накладк)|(бош\s+убак[иы]т\s+жок|орун\s+жок|орду\s+жок|жок\s+экен)|(no\s+free\s+(time|slots?)|fully\s+booked|no\s+slots\s+available|all\s+booked|just\s+got\s+taken|no\s+longer\s+available)/i;
   const slotToolCalledThisTurn = debug.actions
     .slice()
     .reverse()
@@ -3174,6 +3294,15 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   );
   const noneVerified =
     mentionedTimes.length > 0 && !mentionedTimes.some((t) => verifiedFreeTimes.has(t));
+  // ПРОВЕРЯЕМ ТОЛЬКО ХОДЫ, ГДЕ ИНСТРУМЕНТ РЕАЛЬНО ОТРАБОТАЛ.
+  //
+  // Пробовал снять это условие, чтобы ловить и «назвал времена, не вызвав ничего» (B14). Дало
+  // обратный эффект: verifiedFreeTimes живёт один ход, поэтому законное повторение уже
+  // согласованного времени («да, записываю вас на 15:00») выглядело как выдумка, guard жёг
+  // повторный вызов модели, ходы заканчивались — и запись не создавалась там, где раньше
+  // создавалась (полный прогон: B01/B13/B15/B17 свалились из PASS в «запись не создана»).
+  // Случай «вообще без инструмента» ловится расширенным FAKE_BUSY_RE выше — он про утверждение,
+  // а не про перечисление времён, и ложных срабатываний не даёт.
   if (slotToolRanThisTurn && OFFER_RE.test(reply) && noneVerified) {
     debug.errors.push("invented_slots_forcing_retry");
     const truth = verifiedFreeTimes.size
@@ -3225,6 +3354,35 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
       });
     } catch {
       // Sink never throws.
+    }
+  }
+
+  // СВОДКА БЕЗ ИМЕНИ (sim B14-next-week, 2026-09-17). Шаблон сводки требует строку «🙍 Имя», а
+  // create_appointment без client_name невозможен — но модель периодически выпускает сводку без
+  // неё. Дальше идёт худший из возможных порядков: клиент читает сводку, отвечает «да,
+  // подтверждаю» — и только тогда слышит «а как вас зовут?». Для клиента это сломанный бот, и он
+  // уходит: в симуляции запись из таких диалогов не создалась ни разу.
+  //
+  // Имя надо спросить ДО сводки. Инструкцией это уже требуется и всё равно нарушается, поэтому
+  // сводку без имени наружу просто не выпускаем.
+  const SUMMARY_RE = /подтвердите\s+запись|confirm\s+your\s+booking|жазууну\s+ырастаңыз/i;
+  const HAS_NAME_LINE_RE = /(🙍|\bИмя\s*:|\bName\s*:|\bАты\s*:)/i;
+  if (SUMMARY_RE.test(reply) && !HAS_NAME_LINE_RE.test(reply)) {
+    debug.errors.push("summary_without_name_forcing_retry");
+    contents.push({
+      role: "user",
+      parts: [
+        {
+          text: "СИСТЕМА: ты показал сводку подтверждения БЕЗ строки «🙍 Имя». Записать без имени невозможно, а спрашивать имя ПОСЛЕ подтверждения нельзя — клиент уже сказал «да». Сейчас НЕ показывай сводку: задай ровно один короткий вопрос — как зовут клиента. Сводку покажешь следующим сообщением, когда имя будет известно.",
+        },
+      ],
+    });
+    const retry = await runToolLoop();
+    if (retry) reply = retry;
+    // Снова сводка без имени — не отправляем её, спрашиваем имя сами.
+    if (SUMMARY_RE.test(reply) && !HAS_NAME_LINE_RE.test(reply)) {
+      debug.errors.push("summary_without_name_suppressed");
+      reply = "Подскажите, пожалуйста, как вас зовут — и сразу оформлю запись.";
     }
   }
 
