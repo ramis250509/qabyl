@@ -3472,6 +3472,67 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     }
   }
 
+  // ВЫДУМАННЫЕ УСЛУГИ (sim D07-unknown-service, 2026-09-17).
+  //
+  // Клиентка спросила про татуаж бровей. Ассистент честно сказал, что татуажа нет, и тут же
+  // предложил «коррекцию формы бровей, окрашивание краской или хной и ламинирование» — при том
+  // что у салона в прайсе ОДНА услуга, «Коррекция бровей». Клиент приедет за тем, чего не делают.
+  //
+  // ОТКУДА ЭТО БЕРЁТСЯ. Книга знаний (wa-beauty-knowledge.ts) учит ассистента процедурам вообще —
+  // это её работа, он должен грамотно консультировать. Прайс говорит, что есть в ЭТОМ салоне.
+  // Модель смешивает два источника. Промптом это лечится плохо: она не врёт, она обобщает.
+  //
+  // Сверяем не со словарём бьюти-терминов (его пришлось бы вести вечно), а с прайсом самого
+  // салона: всё, что перечислено после «у нас есть», обязано в нём найтись.
+  const realServices = [...servicesRoster.matchAll(/«([^»]+)»/g)].map((m) => m[1].trim());
+  if (realServices.length > 0) {
+    const words = (s: string) =>
+      new Set(
+        s
+          .toLowerCase()
+          .replace(/[^\p{L}\p{N}\s]/gu, " ")
+          .split(/\s+/)
+          .filter((w) => w.length >= 4),
+      );
+    const matchesSomeService = (item: string): boolean => {
+      const wi = words(item);
+      if (wi.size === 0) return true; // не из чего судить — не придираемся
+      return realServices.some((svc) => {
+        const ws = words(svc);
+        if (ws.size === 0) return false;
+        let common = 0;
+        for (const w of wi) if (ws.has(w)) common++;
+        return (2 * common) / (wi.size + ws.size) >= 0.4;
+      });
+    };
+    // Перечисления вида «у нас есть A, B и C». Время и свободные окна сюда не относятся —
+    // «у нас есть окошко в 10:00» это не про услуги, и придираться к нему нельзя.
+    const NOT_A_SERVICE = /\d|окош|свободн|мест[оа]|врем|запис|скидк|акци|филиал/i;
+    const invented: string[] = [];
+    for (const m of reply.matchAll(
+      /(?:у нас есть|мы делаем|можем предложить|предлагаем|также есть|в наличии)\s+([^.!?\n]{4,200})/giu,
+    )) {
+      for (const raw of m[1].split(/,|;|\sи\s|\sили\s|\sа также\s/)) {
+        const item = raw.trim().replace(/^(?:а\s+)?также\s+/i, "");
+        if (item.length < 4 || NOT_A_SERVICE.test(item)) continue;
+        if (!matchesSomeService(item)) invented.push(item);
+      }
+    }
+    if (invented.length > 0) {
+      debug.errors.push("invented_services_forcing_retry");
+      contents.push({
+        role: "user",
+        parts: [
+          {
+            text: `СИСТЕМА: ты предложил клиенту услуги, которых у этого салона НЕТ: ${invented.join(", ")}. Салон делает ТОЛЬКО это: ${realServices.join(", ")}. Клиент приедет за тем, чего здесь не делают, — это хуже, чем честно сказать «не делаем». Перепиши ответ, называя исключительно услуги из этого списка. Рассказать о процедуре, которой у салона нет, можно ТОЛЬКО как об отсутствующей («татуаж мы не делаем»), но предлагать её нельзя.`,
+          },
+        ],
+      });
+      const retry = await runToolLoop();
+      if (retry) reply = retry;
+    }
+  }
+
   // Strip markdown and any numbered/bulleted menu the model may have produced (see humanizeReply).
   reply = humanizeReply(reply, { rich: !!input.config.rich_formatting });
 
