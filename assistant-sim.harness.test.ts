@@ -629,3 +629,31 @@ describe("нельзя утверждать то, чего система не �
     expect(res2.reason).toBe("closed_that_day");
   });
 });
+
+describe("потеря сообщений клиента (найдено живым прогоном, B06/D08)", () => {
+  test("клиент дописывает, пока идёт ход: ни одно сообщение не остаётся без ответа", async () => {
+    // Клиент, который печатает быстро, шлёт мысль пузырями и дописывает ПОКА ассистент отвечает.
+    // Замок берёт один воркер, остальные выходят в расчёте на то, что он их сольёт. Итераций
+    // слива три, и первая уходит на ожидание пачки — то есть реальных проходов два. Третья волна
+    // не влезает: сообщение остаётся с processed_at IS NULL и в проде ждёт cron-перезапуска,
+    // а клиент просто не получает ответа несколько минут.
+    const h = world.createSalon(DEFAULT_SALON);
+    brain = () => [{ text: "Поняла вас, подскажу." }];
+    const s = session(h, "996700400001");
+
+    const wave1 = s.say(["здравствуйте", "хотела записаться"]);
+    await new Promise((r) => setTimeout(r, 150));
+    const wave2 = s.say(["на женскую стирижку", "завтра"]);
+    await new Promise((r) => setTimeout(r, 150));
+    const wave3 = s.say(["после шести", "можно?"]);
+    await Promise.all([wave1, wave2, wave3]);
+
+    const conv = world.conversationOf(h, "996700400001")!;
+    const unprocessed = world.db
+      .table("wa_messages")
+      .filter(
+        (m) => m.conversation_id === conv.id && m.direction === "in" && m.processed_at == null,
+      );
+    expect(unprocessed.map((m: any) => m.text_body)).toEqual([]);
+  }, 60_000);
+});
