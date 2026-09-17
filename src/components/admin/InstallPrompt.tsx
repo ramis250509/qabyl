@@ -20,6 +20,21 @@ import { isIos, isStandalonePWA } from "@/lib/push";
 
 const DISMISSED_KEY = "qb_install_dismissed";
 const VISITS_KEY = "qb_admin_visits";
+
+/**
+ * Телефон/планшет или компьютер — по типу указателя, а не по ширине окна.
+ *
+ * Ширина врёт: узкое окно на ноутбуке — это не телефон, а развёрнутый планшет — не компьютер.
+ * Нужно это ровно для одного: не обещать человеку за ноутбуком «Qabyl на телефоне». Обещание,
+ * не совпадающее с тем, что человек видит, читается как ошибка сайта.
+ */
+function isHandheld(): boolean {
+  try {
+    return window.matchMedia?.("(pointer: coarse)").matches ?? false;
+  } catch {
+    return false;
+  }
+}
 /** Столько заходов в кабинет до предложения. Меньше — навязчиво, больше — никогда не покажем. */
 const VISITS_BEFORE_ASK = 3;
 
@@ -104,9 +119,11 @@ export function InstallPrompt() {
   const [deferred, setDeferred] = useState<InstallEvent | null>(null);
   const [show, setShow] = useState(false);
   const [iosHint, setIosHint] = useState(false);
+  const [handheld, setHandheld] = useState(true);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    setHandheld(isHandheld());
     if (isStandalonePWA()) return; // уже установлено
     if (dismissed()) return;
 
@@ -178,11 +195,15 @@ export function InstallPrompt() {
           )}
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold">Qabyl на телефоне</p>
+          <p className="text-sm font-semibold">
+            {iosHint || handheld ? "Qabyl на телефоне" : "Qabyl на ноутбуке"}
+          </p>
           <p className="mt-0.5 text-sm text-muted-foreground">
             {iosHint
               ? "Нажмите «Поделиться» внизу Safari и выберите «На экран „Домой“». Так Qabyl откроется как обычное приложение — и только так iPhone сможет присылать уведомления о новых записях."
-              : "Установите — будете открывать как обычное приложение и получать уведомления о новых записях."}
+              : handheld
+                ? "Установите — будете открывать как обычное приложение с экрана телефона и получать уведомления о новых записях."
+                : "Установите — Qabyl появится отдельным значком и будет открываться в своём окне, без вкладок и адресной строки. Уведомления о новых записях приходят так же."}
           </p>
           <div className="mt-3 flex items-center gap-2">
             {!iosHint && (

@@ -320,8 +320,10 @@ function AdminLayout() {
           </PullToRefresh>
         </RefreshProvider>
         {/* Предложение установки не показывается, пока салон заперт экраном оплаты: просить
-            поставить приложение у того, кто не может им пользоваться, — издевательство. */}
-        {!paywalled && isSalonAdmin && !isSuperAdmin && <InstallPrompt />}
+            поставить приложение у того, кто не может им пользоваться, — издевательство.
+            Мастерам предлагаем наравне с владельцем: они смотрят календарь с телефона весь день,
+            а на iPhone push о новой записи приходит только установленному приложению. */}
+        {!paywalled && !isSuperAdmin && (isSalonAdmin || isMaster) && <InstallPrompt />}
       </div>
       {tourEligible && (
         <ProductTour steps={ownerTourSteps(salonId)} open={tourOpen} onClose={closeTour} />
