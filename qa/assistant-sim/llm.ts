@@ -8,9 +8,14 @@
 //   SIM_LLM_PROVIDER     gemini (default) | openai
 //   SIM_LLM_API_KEY      default: GEMINI_API_KEY
 //   SIM_LLM_BASE_URL     for openai-compatible, e.g. https://openrouter.ai/api/v1
-//   SIM_CUSTOMER_MODEL   default gemini-2.5-flash
-//   SIM_JUDGE_MODEL      default gemini-2.5-pro
+//   SIM_CUSTOMER_MODEL   default gemini-flash-latest
+//   SIM_JUDGE_MODEL      default gemini-pro-latest
 //   SIM_JUDGE_PROVIDER / SIM_JUDGE_API_KEY / SIM_JUDGE_BASE_URL — override the judge only
+//
+// МОДЕЛИ ЗАДАНЫ АЛИАСАМИ, А НЕ ВЕРСИЯМИ. Пин `gemini-2.5-pro` протух молча: Google закрыл его
+// для новых аккаунтов, судья начал падать с 404, и качество разговоров перестало проверяться
+// вообще — прогон при этом «проходил», потому что проверки по базе живут отдельно от судьи.
+// Алиас `*-latest` переживает смену поколения; конкретную версию всегда можно вернуть через env.
 
 export type LlmConfig = {
   provider: "gemini" | "openai";
@@ -22,7 +27,7 @@ export type LlmConfig = {
 export function customerLlm(): LlmConfig {
   return {
     provider: (process.env.SIM_LLM_PROVIDER as any) === "openai" ? "openai" : "gemini",
-    model: process.env.SIM_CUSTOMER_MODEL ?? "gemini-2.5-flash",
+    model: process.env.SIM_CUSTOMER_MODEL ?? "gemini-flash-latest",
     apiKey: process.env.SIM_LLM_API_KEY ?? process.env.GEMINI_API_KEY ?? "",
     baseUrl: process.env.SIM_LLM_BASE_URL,
   };
@@ -35,7 +40,7 @@ export function judgeLlm(): LlmConfig {
       : "gemini";
   return {
     provider,
-    model: process.env.SIM_JUDGE_MODEL ?? "gemini-2.5-pro",
+    model: process.env.SIM_JUDGE_MODEL ?? "gemini-pro-latest",
     apiKey:
       process.env.SIM_JUDGE_API_KEY ??
       process.env.SIM_LLM_API_KEY ??

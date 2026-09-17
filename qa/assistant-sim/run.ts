@@ -173,7 +173,7 @@ async function converse(
     ).messages;
 
   for (let turn = 0; turn < maxTurns; turn++) {
-    base.beforeTurn?.(ctx, turn, session);
+    await base.beforeTurn?.(ctx, turn, session);
     for (const m of messages) transcript.push({ from: "client", text: m });
     const outBefore = new Set(world.db.table("wa_messages").map((r) => r.id));
     const res = await session.say(

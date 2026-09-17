@@ -469,6 +469,54 @@ export function inboundPayload(opts: {
   });
 }
 
+/**
+ * Эхо ответа администратора — то, чем прод узнаёт про вмешательство человека.
+ *
+ * Приходит полем `smb_message_echoes`, а НЕ `messages`, и салон в нём ОТПРАВИТЕЛЬ: `from` — номер
+ * салона, `to` — клиент. Оба факта — не мелочи: парсер, смотрящий только в `messages`, не увидит
+ * вмешательства вообще, а ключ по `from` приклеит паузу к разговору с самим салоном вместо
+ * клиента. Ровно на этом Instagram-канал уже обжёгся (см. ig-echo.ts), поэтому воспроизводим
+ * форму payload буквально, а не «примерно».
+ */
+export function echoPayload(opts: {
+  phoneNumberId: string;
+  salonPhone: string;
+  clientPhone: string;
+  text: string;
+  wamid: string;
+}): string {
+  return JSON.stringify({
+    object: "whatsapp_business_account",
+    entry: [
+      {
+        id: "sim-waba",
+        changes: [
+          {
+            field: "smb_message_echoes",
+            value: {
+              messaging_product: "whatsapp",
+              metadata: {
+                phone_number_id: opts.phoneNumberId,
+                display_phone_number: opts.salonPhone,
+              },
+              message_echoes: [
+                {
+                  from: opts.salonPhone,
+                  to: opts.clientPhone,
+                  id: opts.wamid,
+                  timestamp: String(Math.floor(Date.now() / 1000)),
+                  type: "text",
+                  text: { body: opts.text },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  });
+}
+
 // ─── client session ───────────────────────────────────────────────────────────────────────────
 
 export type DeliveryOptions = {
@@ -564,6 +612,57 @@ export class ClientSession {
       .slice(before)
       .map((m) => m.text);
     return { replies, lostInbound: pending.length, reconciled };
+  }
+
+  /**
+   * Администратор салона ответил клиенту сам — из приложения WhatsApp Business.
+   *
+   * Прод должен на это замолчать на несколько минут: две «администратора» в одном чате — худшее,
+   * что клиент может увидеть. Возвращает, встала ли пауза, чтобы сценарий проверял факт, а не
+   * верил на слово.
+   */
+  async adminReply(text: string, opts: { wamid?: string } = {}): Promise<{ paused: boolean }> {
+    await this.process({
+      salonId: this.salon.salonId,
+      rawBody: echoPayload({
+        phoneNumberId: this.salon.secrets.whatsapp_cloud_phone_number_id,
+        salonPhone: this.salon.secrets.wa_display_phone_number ?? "996700000000",
+        clientPhone: this.phone,
+        text,
+        wamid: opts.wamid ?? `wamid.sim.echo.${this.phone}.${++this.seq}`,
+      }),
+      secrets: this.salon.secrets,
+      salon: this.salon.salon,
+      assistant: this.salon.assistant,
+      rid: `sim-echo-${this.phone.slice(-4)}-${this.seq}`,
+      transport: this.world.transport,
+      branchId: null,
+    });
+    const conv = this.world.conversationOf(this.salon, this.phone);
+    return { paused: Boolean(conv?.ai_paused) };
+  }
+
+  /** Сколько ответов ассистент отправил этому клиенту за всё время. */
+  replyCount(): number {
+    return this.repliesSoFar();
+  }
+
+  /**
+   * wamid последнего сообщения, отправленного САМИМ ассистентом.
+   *
+   * Нужен ровно для одной проверки: эхо собственного ответа не должно считаться вмешательством
+   * человека. В Instagram это уже случалось в проде — ассистент глушил сам себя на пять минут.
+   */
+  lastOutboundWamid(): string | null {
+    const conv = this.world.conversationOf(this.salon, this.phone);
+    if (!conv) return null;
+    const out = this.world.db
+      .table("wa_messages")
+      .filter(
+        (m) => m.conversation_id === conv.id && m.direction === "out" && m.provider_message_id,
+      )
+      .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+    return out.length ? String(out[out.length - 1].provider_message_id) : null;
   }
 
   /** Pretend the client went quiet for `hours` (session gap logic reads last_message_at). */
