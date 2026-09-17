@@ -19,6 +19,7 @@ import {
 } from "./qa/assistant-sim/world";
 import { localDateOf, localTimeOf, localToUtcMs } from "./qa/assistant-sim/fake-db";
 import { runAssertions } from "./qa/assistant-sim/assertions";
+import { looksLikeSameReply } from "@/routes/api/public/wacloud.$salonId";
 
 const world = new SimWorld();
 (globalThis as any).__QABYL_SIM_DB__ = world.db;
@@ -656,4 +657,23 @@ describe("потеря сообщений клиента (найдено жив�
       );
     expect(unprocessed.map((m: any) => m.text_body)).toEqual([]);
   }, 60_000);
+});
+
+describe("два похожих ответа подряд (найдено живым прогоном, B08)", () => {
+  test("«Как вас зовут?» и «Как вас зовут, пожалуйста?» — уходит только один", () => {
+    // Защита от дубля сравнивала строки побайтово, поэтому эта пара для неё была двумя разными
+    // ответами. Клиент получал один и тот же вопрос дважды подряд — самый явный признак бота.
+    expect(looksLikeSameReply("Как вас зовут?", "Как вас зовут, пожалуйста?")).toBe(true);
+    expect(looksLikeSameReply("Как вас зовут?", "  как вас зовут  ")).toBe(true);
+    expect(looksLikeSameReply("Хорошо, записала вас 🙂", "Хорошо, записала вас")).toBe(true);
+  });
+
+  test("разные по смыслу ответы глушить нельзя", () => {
+    // Порог намеренно высокий: не отправить нужный ответ хуже, чем отправить похожий.
+    expect(looksLikeSameReply("Женская стрижка стоит 1200 сом.", "Как вас зовут?")).toBe(false);
+    expect(
+      looksLikeSameReply("Есть 10:00, 13:00 и 16:00 — что удобнее?", "Записала вас на 13:00."),
+    ).toBe(false);
+    expect(looksLikeSameReply("Здравствуйте!", null)).toBe(false);
+  });
 });

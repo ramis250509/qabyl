@@ -65,6 +65,44 @@ const MAX_LOOP_ITERATIONS = 3;
 // answering the half-typed first one produces a reply the assistant then has to correct.
 const COALESCE_WINDOW_MS = 1500;
 const COALESCE_WAIT_MS = 3500;
+/**
+ * Сколько раз за одно окно замка можно дождаться, пока клиент допишет пачку.
+ *
+ * Ограничение нужно, чтобы клиент, печатающий без остановки, не держал замок бесконечно:
+ * потолок ожидания — MAX_COALESCE_WAITS × COALESCE_WAIT_MS, то есть 7 с при LOCK_TTL_SECONDS 180.
+ */
+const MAX_COALESCE_WAITS = 2;
+/**
+ * Второй ответ в том же окне замка повторяет первый?
+ *
+ * Проверка была побайтовой (`a.trim() === b.trim()`), и этого не хватало. В прогоне (B08) клиенту
+ * ушло подряд «Как вас зовут?» и «Как вас зовут, пожалуйста?» — для строгого сравнения это разные
+ * строки, для человека это один и тот же вопрос дважды.
+ *
+ * Считаем по словам, а не по символам: приводим к нижнему регистру, выкидываем пунктуацию и
+ * эмодзи, сравниваем множества слов коэффициентом Дайса. Порог намеренно высокий (0.75) — глушить
+ * непохожие ответы страшнее, чем пропустить похожий: клиент останется без нужной информации.
+ *
+ * ЧЕГО ЭТО НЕ ЛОВИТ. Тот же вопрос ДРУГИМИ словами («К кому записать?» против «К какому мастеру
+ * вас записать?») — совпадение слов там низкое. Это уже про поведение модели, а не про строки, и
+ * строковым сравнением не решается.
+ */
+export function looksLikeSameReply(a: string, b: string | null): boolean {
+  if (!b) return false;
+  const norm = (s: string) =>
+    s
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s]/gu, " ")
+      .split(/\s+/)
+      .filter(Boolean);
+  const wa = new Set(norm(a));
+  const wb = new Set(norm(b));
+  if (wa.size === 0 || wb.size === 0) return false;
+  let common = 0;
+  for (const w of wa) if (wb.has(w)) common++;
+  return (2 * common) / (wa.size + wb.size) >= 0.75;
+}
+
 const RATE_LIMIT_MAX = 30;
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_PROBE_GAP_MS = 4000;
@@ -666,7 +704,7 @@ async function runAgentTurn(opts: {
     let state: WaAgentState = (conv.state ?? "idle") as WaAgentState;
     let stateData: any = conv.state_data ?? {};
     let lastSentReply: string | null = null;
-    let settledThisPass = false;
+    let coalesceWaits = 0;
 
     heartbeat = setInterval(() => {
       refreshConversationLock(db, convId, lockId).catch((e) =>
@@ -700,11 +738,26 @@ async function runAgentTurn(opts: {
       }
       if (fresh.length === 0) continue;
 
-      // Wait once for a burst to finish, then answer the whole thing with one reply.
-      if (!settledThisPass) {
+      // Дождаться, пока пачка договорит, и ответить на неё ОДИН раз.
+      //
+      // Раньше ждали ровно однажды за всё окно замка (settledThisPass). Клиент, который пишет
+      // словами по отдельному пузырю, успевал дописать уже ПОСЛЕ этого единственного ожидания —
+      // и догоняющие пузыри получали собственный ответ. В прогоне (B08) это выглядело так:
+      //   «…есть окошки на 17:00, 18:00 и 19:00. Какое подойдёт?»
+      //   «Хорошо, на завтра в 18:00 есть свободное время. Вас записать?»
+      // два сообщения подряд, оба от «администратора», второе отвечает на то, чего клиент ещё не
+      // говорил. Для клиента это самый явный признак бота.
+      //
+      // Теперь ждём столько раз, сколько клиент продолжает дописывать, но не больше
+      // MAX_COALESCE_WAITS — иначе бесконечно печатающий клиент держал бы замок.
+      //
+      // Ожидание НЕ тратит проход обработки (iter--): иначе лечение дублей отняло бы итерации у
+      // слива очереди и превратилось бы во второй баг — потерянные сообщения.
+      if (coalesceWaits < MAX_COALESCE_WAITS) {
         const newestMs = Math.max(...fresh.map((m: any) => new Date(m.created_at).getTime()));
         if (Date.now() - newestMs < COALESCE_WINDOW_MS) {
-          settledThisPass = true;
+          coalesceWaits++;
+          iter--;
           await new Promise((r) => setTimeout(r, COALESCE_WAIT_MS));
           continue;
         }
@@ -834,7 +887,7 @@ async function runAgentTurn(opts: {
           )
         : result.reply;
 
-      const isDuplicateReply = sentText.trim() === (lastSentReply ?? "").trim();
+      const isDuplicateReply = looksLikeSameReply(sentText, lastSentReply);
       let sentMessageId: string | undefined;
       const tAgentDone = ms();
       if (!isDuplicateReply) {
