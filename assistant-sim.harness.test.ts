@@ -775,3 +775,63 @@ describe("ложная доступность не доходит до клие�
     expect(r.replies.join("\n")).not.toContain("свободного времени нет совсем");
   }, 30_000);
 });
+
+describe("имя постоянного клиента (найдено живым прогоном, D03)", () => {
+  /** Минимальный V4-контекст; name — это отображаемое имя из профиля WhatsApp. */
+  const ctxFor = (h: SalonHandle, phone: string, profileName: string) => ({
+    input: {
+      salon: { salonId: h.salonId, salonName: h.spec.name, timezone: h.tz },
+      config: { manage_cutoff_hours: 0 },
+      client: { phone, name: profileName },
+      history: [],
+      lastMessages: [],
+      branches: [],
+      selectedBranchId: null,
+      state: "collecting",
+      stateData: {},
+    } as any,
+    flags: {
+      appointmentId: null,
+      selectedBranchId: null,
+      needsHuman: false,
+      escalateReason: null,
+      photoNotes: [],
+    } as any,
+  });
+
+  test("имя берётся из прошлой записи, а не спрашивается заново", async () => {
+    // Ассистент каждый раз спрашивал «как вас зовут?» у человека, который ходит сюда полгода.
+    // Имя лежало в базе, но get_client_context его не выбирал.
+    const h = world.createSalon(DEFAULT_SALON);
+    const { executeV4Tool } = await import("@/lib/wa-agent-v4.server");
+    const phone = "996700800001";
+    world.addAppointment(h, {
+      master: "Айжан",
+      service: "Маникюр",
+      date: h.localDate(-14),
+      time: "11:00",
+      phone,
+      name: "Айдана",
+    });
+
+    // Имя в профиле — именно такое, какое в мессенджерах и бывает.
+    const { input, flags } = ctxFor(h, phone, "💅Nails by Aika💅");
+    const ctx: any = await executeV4Tool("get_client_context", {}, input, world.db as any, flags);
+
+    expect(ctx.is_returning).toBe(true);
+    expect(ctx.client_name).toBe("Айдана");
+    // Ключевое: источник имени — прошлая запись, а не профиль. Никнейм или название фирмы сюда
+    // не попадёт по построению.
+    expect(JSON.stringify(ctx)).not.toContain("Nails by Aika");
+  });
+
+  test("новый клиент — имени нет, надо спросить", async () => {
+    const h = world.createSalon(DEFAULT_SALON);
+    const { executeV4Tool } = await import("@/lib/wa-agent-v4.server");
+    const { input, flags } = ctxFor(h, "996700800002", "Продажа авто");
+    const ctx: any = await executeV4Tool("get_client_context", {}, input, world.db as any, flags);
+
+    expect(ctx.is_returning).toBe(false);
+    expect(ctx.client_name).toBeUndefined();
+  });
+});
