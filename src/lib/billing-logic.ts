@@ -63,6 +63,14 @@ export type BillingConfig = {
   usage_warn_pct: number;
   notifications_ceiling_pct: number;
   trial_warn_days: number;
+  /**
+   * За сколько дней до конца ОПЛАЧЕННОГО периода напомнить про продление.
+   *
+   * Отдельно от trial_warn_days: конец пробного и конец оплаченного месяца — разные разговоры.
+   * Автосписания у нас нет (Freedom Pay откроет рекуррент не раньше чем через полгода), поэтому
+   * без этого напоминания салон просто забывает заплатить и в один день теряет ассистента.
+   */
+  renewal_warn_days: number;
   /** Текст для владельца, пока оплата картой не подключена: куда перевести и кому написать. */
   manual_payment_instructions?: string | null;
   support_contact?: string | null;
@@ -138,6 +146,7 @@ export const DEFAULT_BILLING_CONFIG: BillingConfig = {
   usage_warn_pct: 80,
   notifications_ceiling_pct: 110,
   trial_warn_days: 3,
+  renewal_warn_days: 3,
 };
 
 export function normalizeConfig(raw: unknown): BillingConfig {
@@ -163,6 +172,27 @@ export function addMonths(date: Date, n: number): Date {
 
 export function addDays(date: Date, n: number): Date {
   return new Date(date.getTime() + n * DAY);
+}
+
+/**
+ * «2 дня», «5 дней», «1 день» — из миллисекунд.
+ *
+ * Остаток всегда округляем ВВЕРХ: полтора дня — это «2 дня», а не «1 день». Занизить срок в
+ * напоминании об оплате хуже, чем завысить: салон отложит платёж и попадёт на блокировку.
+ */
+export function daysWord(ms: number): string {
+  const n = Math.max(1, Math.ceil(ms / DAY));
+  const tens = n % 100;
+  const ones = n % 10;
+  const word =
+    tens >= 11 && tens <= 14
+      ? "дней"
+      : ones === 1
+        ? "день"
+        : ones >= 2 && ones <= 4
+          ? "дня"
+          : "дней";
+  return `${n} ${word}`;
 }
 
 /**

@@ -6,6 +6,7 @@ import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_BILLING_CONFIG as cfg,
   addMonths,
+  daysWord,
   decidePlanChange,
   describePlan,
   estimateCost,
@@ -115,6 +116,21 @@ describe("даты", () => {
   });
   test("обычный месяц", () => {
     expect(addMonths(d("2026-09-15T00:00:00Z"), 1).toISOString()).toBe("2026-10-15T00:00:00.000Z");
+  });
+});
+
+describe("срок в напоминании", () => {
+  const DAY = 24 * 3600 * 1000;
+  test("склонение по-русски", () => {
+    expect(daysWord(DAY)).toBe("1 день");
+    expect(daysWord(2 * DAY)).toBe("2 дня");
+    expect(daysWord(5 * DAY)).toBe("5 дней");
+    expect(daysWord(11 * DAY)).toBe("11 дней");
+    expect(daysWord(21 * DAY)).toBe("21 день");
+  });
+  test("остаток округляется вверх — срок нельзя занижать", () => {
+    expect(daysWord(1.5 * DAY)).toBe("2 дня");
+    expect(daysWord(0.1 * DAY)).toBe("1 день");
   });
 });
 

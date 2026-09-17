@@ -18,6 +18,7 @@
 // заблокированным за неоплату.
 import {
   addMonths,
+  daysWord,
   planDisplayName,
   decidePlanChange,
   normalizeConfig,
@@ -865,16 +866,37 @@ export async function runBillingCycle(now = new Date()): Promise<{
           break;
       }
 
-      if (!sub.billing_exempt && sub.status === "trialing" && sub.trial_ends_at) {
-        const left = new Date(sub.trial_ends_at).getTime() - now.getTime();
-        if (left > 0 && left <= cfg.trial_warn_days * DAY && !withCard.has(sub.salon_id)) {
-          await notifyOwnerOnce(
-            sub.salon_id,
-            `trial_warn:${sub.trial_ends_at}`,
-            "Пробный период скоро закончится",
-            `Осталось ${Math.ceil(left / DAY)} дн. Оплатите тариф, чтобы ассистент и онлайн-запись работали без перерыва.`,
-          );
-          report.warned++;
+      // Напоминания об оплате. Пока нет автосписания, это единственное, что стоит между салоном
+      // и «внезапно всё отключилось»: заплатить он может только руками и только если помнит.
+      // Уведомление само уходит в push — на notifications висит триггер notifications_dispatch_push.
+      if (!sub.billing_exempt && !sub.cancel_at_period_end && !withCard.has(sub.salon_id)) {
+        const price = plans.get(sub.plan_code)?.price_kgs ?? null;
+        const priceHint = price ? ` Сумма — ${price.toLocaleString("ru-RU")} сом.` : "";
+
+        if (sub.status === "trialing" && sub.trial_ends_at) {
+          const left = new Date(sub.trial_ends_at).getTime() - now.getTime();
+          if (left > 0 && left <= cfg.trial_warn_days * DAY) {
+            await notifyOwnerOnce(
+              sub.salon_id,
+              `trial_warn:${sub.trial_ends_at}`,
+              "Пробный период скоро закончится",
+              `Осталось ${daysWord(left)}.${priceHint} Откройте «Подписка и оплата» и оплатите тариф, чтобы ассистент и онлайн-запись работали без перерыва.`,
+            );
+            report.warned++;
+          }
+        }
+
+        if (sub.status === "active" && sub.current_period_end) {
+          const left = new Date(sub.current_period_end).getTime() - now.getTime();
+          if (left > 0 && left <= cfg.renewal_warn_days * DAY) {
+            await notifyOwnerOnce(
+              sub.salon_id,
+              `renewal_warn:${sub.current_period_end}`,
+              "Пора продлить подписку",
+              `Оплаченный месяц заканчивается через ${daysWord(left)}.${priceHint} Автосписания нет — откройте «Подписка и оплата» и оплатите, иначе ассистент перестанет отвечать клиентам.`,
+            );
+            report.warned++;
+          }
         }
       }
     } catch (e) {

@@ -20,11 +20,19 @@ function isValidVapidPublic(s: string): boolean {
   try {
     const b = b64urlDecode(s);
     return b.length === 65 && b[0] === 0x04;
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
-const VAPID_PUBLIC_KEY = (Deno.env.get("VAPID_PUBLIC_KEY") ?? "").trim().replace(/\s+/g, "").replace(/^["']|["']$/g, "");
-const VAPID_PRIVATE_KEY = (Deno.env.get("VAPID_PRIVATE_KEY") ?? "").trim().replace(/\s+/g, "").replace(/^["']|["']$/g, "");
+const VAPID_PUBLIC_KEY = (Deno.env.get("VAPID_PUBLIC_KEY") ?? "")
+  .trim()
+  .replace(/\s+/g, "")
+  .replace(/^["']|["']$/g, "");
+const VAPID_PRIVATE_KEY = (Deno.env.get("VAPID_PRIVATE_KEY") ?? "")
+  .trim()
+  .replace(/\s+/g, "")
+  .replace(/^["']|["']$/g, "");
 const VAPID_SUBJECT = (Deno.env.get("VAPID_SUBJECT") ?? "mailto:support@qabyl.com").trim();
 
 const VAPID_OK = isValidVapidPublic(VAPID_PUBLIC_KEY) && !!VAPID_PRIVATE_KEY;
@@ -46,7 +54,8 @@ const supabase = createClient(
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-cron-secret",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
 
@@ -75,16 +84,29 @@ Deno.serve(async (req) => {
       expected = (sec as unknown as string) ?? "";
     }
     if (!expected || !provided || provided !== expected) {
-      return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401, headers: { ...cors, "content-type": "application/json" } });
+      return new Response(JSON.stringify({ error: "unauthorized" }), {
+        status: 401,
+        headers: { ...cors, "content-type": "application/json" },
+      });
     }
   } catch (e) {
     console.error("auth check failed", e);
-    return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401, headers: { ...cors, "content-type": "application/json" } });
+    return new Response(JSON.stringify({ error: "unauthorized" }), {
+      status: 401,
+      headers: { ...cors, "content-type": "application/json" },
+    });
   }
 
   try {
     if (!VAPID_OK) {
-      return new Response(JSON.stringify({ error: "vapid_not_configured", pub_len: VAPID_PUBLIC_KEY.length, priv_len: VAPID_PRIVATE_KEY.length }), { status: 503, headers: { ...cors, "content-type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          error: "vapid_not_configured",
+          pub_len: VAPID_PUBLIC_KEY.length,
+          priv_len: VAPID_PRIVATE_KEY.length,
+        }),
+        { status: 503, headers: { ...cors, "content-type": "application/json" } },
+      );
     }
     const payload = await req.json().catch(() => ({}));
     let title: string = payload.title || "Qabyl";
@@ -106,6 +128,9 @@ Deno.serve(async (req) => {
         salonId = n.salon_id;
         branchId = n.branch_id;
         tag = n.id;
+        // Напоминание об оплате ведёт прямо на страницу оплаты, а не в общий список уведомлений:
+        // лишний шаг между «пора продлить» и кнопкой «Оплатить тариф» стоит нам платежей.
+        if (n.type === "billing") url = payload.url || "/admin/billing";
       }
     }
 
@@ -123,7 +148,9 @@ Deno.serve(async (req) => {
     let masterCount = 0;
 
     const { data: supers, error: supErr } = await supabase
-      .from("user_roles").select("user_id").eq("role", "super_admin");
+      .from("user_roles")
+      .select("user_id")
+      .eq("role", "super_admin");
     if (supErr) throw supErr;
     (supers ?? []).forEach((r: any) => {
       if (r.user_id) {
@@ -134,8 +161,10 @@ Deno.serve(async (req) => {
 
     if (salonId) {
       const { data: admins, error: adminErr } = await supabase
-        .from("user_roles").select("user_id")
-        .eq("role", "salon_admin").eq("salon_id", salonId);
+        .from("user_roles")
+        .select("user_id")
+        .eq("role", "salon_admin")
+        .eq("salon_id", salonId);
       if (adminErr) throw adminErr;
       (admins ?? []).forEach((r: any) => {
         if (r.user_id) {
@@ -145,8 +174,10 @@ Deno.serve(async (req) => {
       });
 
       const { data: masters, error: mErr } = await supabase
-        .from("user_roles").select("user_id, branch_id")
-        .eq("role", "master").eq("salon_id", salonId);
+        .from("user_roles")
+        .select("user_id, branch_id")
+        .eq("role", "master")
+        .eq("salon_id", salonId);
       if (mErr) throw mErr;
       (masters ?? []).forEach((r: any) => {
         if (!r.user_id) return;
@@ -186,7 +217,6 @@ Deno.serve(async (req) => {
       subs_total: subsTotal,
       subs_after_scope_filter: filtered.length,
     });
-
 
     const msg = JSON.stringify({
       title: String(title || "Qabyl"),
@@ -228,9 +258,15 @@ Deno.serve(async (req) => {
         const endpoint = filtered[i].endpoint;
         console.log("push fail", endpoint.slice(0, 60), "code", code, "body", reason);
         failures.push({ endpoint: endpoint.slice(0, 80), code: code ?? null, reason });
-        const isMobileEndpoint = endpoint.includes("web.push.apple.com") || endpoint.includes("notify.windows.com");
-        const isStaleVapid = reason.includes("VapidPkHashMismatch") || reason.includes("BadJwtToken") || reason.includes("Unauthorized") || reason.includes("invalid token");
-        const isRejectedMobileAuth = isMobileEndpoint && (code === 401 || (code === 400 && isStaleVapid));
+        const isMobileEndpoint =
+          endpoint.includes("web.push.apple.com") || endpoint.includes("notify.windows.com");
+        const isStaleVapid =
+          reason.includes("VapidPkHashMismatch") ||
+          reason.includes("BadJwtToken") ||
+          reason.includes("Unauthorized") ||
+          reason.includes("invalid token");
+        const isRejectedMobileAuth =
+          isMobileEndpoint && (code === 401 || (code === 400 && isStaleVapid));
         if (code === 404 || code === 410 || isRejectedMobileAuth) dead.push(endpoint);
       } else {
         console.log("push ok", filtered[i].endpoint.slice(0, 60));
