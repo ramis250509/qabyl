@@ -713,3 +713,65 @@ describe("внутренняя кухня не должна попадать в 
     expect(sent).toContain("администратор");
   }, 30_000);
 });
+
+describe("ложная доступность не доходит до клиента (найдено живым прогоном, E02/E03/X01)", () => {
+  test("модель назвала время, которого календарь не давал — клиент его не увидит", async () => {
+    // Худший исход из возможных: клиент выбирает названное время, а оно занято или салон уже
+    // закрыт. Ассистент противоречит сам себе в двух соседних сообщениях, и доверие кончается.
+    const h = world.createSalon(DEFAULT_SALON);
+    const day = h.localDate(1);
+    // Весь день у Айгуль занят, кроме 12:00 — календарь вернёт ровно одно время.
+    world.fillDayExcept(h, "Айгуль", "Окрашивание", day, ["12:00"]);
+    let call_ = 0;
+    brain = ({ lastFunctionResponse }) => {
+      if (!lastFunctionResponse) {
+        return call("get_available_slots", {
+          service_id: h.serviceId("Окрашивание"),
+          date: day,
+          master_id: h.masterId("Айгуль"),
+        });
+      }
+      call_++;
+      // И на первый раз, и на повтор модель упрямо называет часы из «Часы работы» в промпте.
+      return [{ text: "Есть свободные окошки в 09:00, 15:00 и 19:00 — что удобнее?" }];
+    };
+    const s = session(h, "996700700001");
+    const r = await s.say(["окрашивание завтра к Айгуль"]);
+
+    const sent = r.replies.join("\n");
+    expect(sent).not.toContain("09:00");
+    expect(sent).not.toContain("19:00");
+    // Упрямство модели не должно оборачиваться враньём: либо настоящее время, либо честная пауза.
+    expect(/12:00|администратор/i.test(sent)).toBe(true);
+    expect(call_).toBeGreaterThan(1); // повтор был запрошен, а не молча пропущен
+  }, 30_000);
+
+  test("модель заявила «всё занято», не заглянув в календарь", async () => {
+    // Зеркальная ложь: выдуманная ЗАНЯТОСТЬ. Клиент уходит к конкуренту, хотя окна были.
+    const h = world.createSalon(DEFAULT_SALON);
+    const day = h.localDate(1);
+    let sawSlotTool = false;
+    brain = ({ lastUserText, lastFunctionResponse }) => {
+      if (lastFunctionResponse?.name === "get_available_slots") {
+        sawSlotTool = true;
+        const free = (lastFunctionResponse.response?.free_times ?? []) as string[];
+        return [{ text: `Свободно ${free.slice(0, 2).join(" и ")}. Что удобнее?` }];
+      }
+      // Получив системное требование, модель идёт в календарь — так и должно быть.
+      if (/СИСТЕМА/.test(lastUserText)) {
+        return call("get_available_slots", {
+          service_id: h.serviceId("Женская стрижка"),
+          date: day,
+        });
+      }
+      // Первый ответ — «мест нет», без единого вызова инструмента.
+      return [{ text: "К сожалению, на завтра свободного времени нет совсем." }];
+    };
+    const s = session(h, "996700700002");
+    const r = await s.say([`женская стрижка ${day}`]);
+
+    // Guard обязан заставить модель сходить в календарь, а не пропустить выдумку к клиенту.
+    expect(sawSlotTool).toBe(true);
+    expect(r.replies.join("\n")).not.toContain("свободного времени нет совсем");
+  }, 30_000);
+});
