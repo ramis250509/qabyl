@@ -14,6 +14,7 @@ import {
   ClientSession,
   DEFAULT_SALON,
   SOLO_SALON,
+  MULTI_BRANCH_SALON,
   type SalonHandle,
 } from "./qa/assistant-sim/world";
 import { localDateOf, localTimeOf, localToUtcMs } from "./qa/assistant-sim/fake-db";
@@ -489,5 +490,142 @@ describe("booking fixes of 13.09.2026 (regressions)", () => {
     expect(r.success).toBe(false);
     expect(r.reason).toBe("need_explicit_confirmation");
     expect(world.appointmentsOf(h)).toHaveLength(0);
+  });
+});
+
+// Ложные утверждения о доступности, найденные живым прогоном 17.09.2026.
+//
+// ПОЧЕМУ ЭТИ ЧЕТЫРЕ ЖИВУТ ЗДЕСЬ, А НЕ В scenarios.ts. Все они — про то, что ВОЗВРАЩАЕТ
+// инструмент, а не про то, как модель это сформулировала. Значит, живой Gemini для них не нужен:
+// проверяются без ключа, без денег и в каждом `bun run test`. Правило деления такое: зависит от
+// формулировок модели — в живой прогон, зависит только от кода — сюда.
+describe("нельзя утверждать то, чего система не знает (17.09.2026)", () => {
+  /** Минимальный V4-контекст для прямого вызова инструмента. */
+  const toolCtx = (h: SalonHandle, phone: string, branchId: string | null = null) => ({
+    input: {
+      salon: { salonId: h.salonId, salonName: h.spec.name, timezone: h.tz },
+      config: { manage_cutoff_hours: 0 },
+      client: { phone, name: null },
+      history: [],
+      lastMessages: [],
+      branches: [],
+      selectedBranchId: branchId,
+      state: "collecting",
+      stateData: {},
+    } as any,
+    flags: {
+      appointmentId: null,
+      selectedBranchId: branchId,
+      needsHuman: false,
+      escalateReason: null,
+      photoNotes: [],
+    } as any,
+  });
+
+  test("get_masters с временем не отдаёт мастера, который в этот час уже не работает", async () => {
+    // Айгуль работает до 20:00, Айжан — до 18:00. На 18:30 женскую стрижку может сделать только
+    // Айгуль. Раньше инструмент про время не знал и возвращал обеих, модель честно зачитывала
+    // список — и предлагала клиенту мастера, чья смена кончилась.
+    const h = world.createSalon(DEFAULT_SALON);
+    const { executeV4Tool } = await import("@/lib/wa-agent-v4.server");
+    const { input, flags } = toolCtx(h, "996700300001");
+    const service = h.serviceId("Женская стрижка");
+    const date = h.localDate(1);
+
+    const withTime: any = await executeV4Tool(
+      "get_masters",
+      { service_id: service, date, time: "18:30" },
+      input,
+      world.db as any,
+      flags,
+    );
+    expect(withTime.masters.map((m: any) => m.name)).toEqual(["Айгуль"]);
+    expect(withTime.filtered_by).toEqual({ date, time: "18:30" });
+
+    // Без времени поведение прежнее — обе делают эту услугу.
+    const withoutTime: any = await executeV4Tool(
+      "get_masters",
+      { service_id: service },
+      input,
+      world.db as any,
+      flags,
+    );
+    expect(withoutTime.masters.map((m: any) => m.name).sort()).toEqual(["Айгуль", "Айжан"]);
+    expect(withoutTime.filtered_by).toBeUndefined();
+  });
+
+  test("когда в это время свободных нет, инструмент говорит это причиной, а не пустым списком", async () => {
+    // 21:00 — позже смены обеих. Пустой список без причины модель читала как «такого мастера
+    // нет»: в промпте написано «нет в списке → скажи, что такого нет».
+    const h = world.createSalon(DEFAULT_SALON);
+    const { executeV4Tool } = await import("@/lib/wa-agent-v4.server");
+    const { input, flags } = toolCtx(h, "996700300002");
+
+    const res: any = await executeV4Tool(
+      "get_masters",
+      { service_id: h.serviceId("Женская стрижка"), date: h.localDate(1), time: "21:00" },
+      input,
+      world.db as any,
+      flags,
+    );
+    expect(res.masters).toEqual([]);
+    expect(res.reason).toBe("nobody_free_at_time");
+    // Имена тех, кто услугу делает, отданы отдельным полем — чтобы модель не выдала их за
+    // свободных, но и не заявила, что таких мастеров не существует.
+    expect(res.performs_service.sort()).toEqual(["Айгуль", "Айжан"]);
+  });
+
+  test("услуга есть в другом филиале — это wrong_branch, а не «мастера не существует»", async () => {
+    // Окрашивание в Beauty Lab делает только Айгуль, и только в филиале «Центр».
+    const h = world.createSalon(MULTI_BRANCH_SALON);
+    const { executeV4Tool } = await import("@/lib/wa-agent-v4.server");
+    const dzhal = h.branchId("Джал");
+    const { input, flags } = toolCtx(h, "996700300003", dzhal);
+
+    const res: any = await executeV4Tool(
+      "get_masters",
+      { service_id: h.serviceId("Окрашивание"), branch_id: dzhal },
+      input,
+      world.db as any,
+      flags,
+    );
+    expect(res.masters).toEqual([]);
+    expect(res.reason).toBe("wrong_branch");
+    expect(res.elsewhere).toContain("Айгуль");
+  });
+
+  test("выходной единственного мастера услуги — это не «салон не работает»", async () => {
+    // Мужскую стрижку делает только Бекзат. Его выходной раньше приходил как closed_that_day, и
+    // клиент слышал «завтра салон не работает» — ложь про салон, который работает.
+    const h = world.createSalon(DEFAULT_SALON);
+    const { executeV4Tool } = await import("@/lib/wa-agent-v4.server");
+    const { input, flags } = toolCtx(h, "996700300004");
+    const date = h.localDate(1);
+    world.addDayOff(h, "Бекзат", date);
+
+    const res: any = await executeV4Tool(
+      "get_available_slots",
+      { service_id: h.serviceId("Мужская стрижка"), date },
+      input,
+      world.db as any,
+      flags,
+    );
+    expect(res.free_times ?? []).toEqual([]);
+    expect(res.reason).toBe("no_master_for_service_that_day");
+
+    // Контроль: когда выходной у ВСЕХ, салон действительно закрыт — и это по-прежнему
+    // closed_that_day. Иначе фикс просто прятал бы настоящие выходные.
+    const closed = world.createSalon(DEFAULT_SALON);
+    const closedDate = closed.localDate(1);
+    for (const m of ["Айгуль", "Айжан", "Бекзат"]) world.addDayOff(closed, m, closedDate);
+    const ctx2 = toolCtx(closed, "996700300005");
+    const res2: any = await executeV4Tool(
+      "get_available_slots",
+      { service_id: closed.serviceId("Мужская стрижка"), date: closedDate },
+      ctx2.input,
+      world.db as any,
+      ctx2.flags,
+    );
+    expect(res2.reason).toBe("closed_that_day");
   });
 });
