@@ -325,7 +325,7 @@ export async function fetchWaSnapshot(creds: {
     token: creds.token,
     query: {
       fields:
-        "display_phone_number,verified_name,quality_rating,platform_type,throughput,code_verification_status",
+        "display_phone_number,verified_name,quality_rating,platform_type,is_on_biz_app,throughput,code_verification_status",
     },
   });
 
@@ -357,7 +357,13 @@ export async function fetchWaSnapshot(creds: {
     displayPhoneNumber: phone.data?.display_phone_number ?? null,
     verifiedName: phone.data?.verified_name ?? null,
     qualityRating: phone.data?.quality_rating ?? null,
-    platformType: phone.data?.platform_type ?? null,
+    // Coexistence определяем по is_on_biz_app, а не по platform_type: у подключённого через
+    // приложение номера Meta отдаёт platform_type = CLOUD_API и is_on_biz_app = true
+    // одновременно (проверено 21.09.2026 на живом подключении). Верить platform_type значило бы
+    // говорить владелице «номер в облаке» про номер, который прямо сейчас работает у неё в
+    // приложении WhatsApp Business.
+    platformType:
+      phone.data?.is_on_biz_app === true ? "ON_BIZ_APP" : (phone.data?.platform_type ?? null),
     // throughput.level — 'STANDARD' | 'HIGH'. Для владельца это «сколько сообщений в секунду»,
     // а не messaging tier; сам tier Graph отдаёт только в другом поле и не всем, поэтому берём то,
     // что отдаётся стабильно.

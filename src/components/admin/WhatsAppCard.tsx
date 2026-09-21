@@ -38,6 +38,7 @@ import {
   createWaTemplates,
   disconnectWa,
   finishWaOnboarding,
+  retryWaBilling,
   subscribeWaWebhooks,
 } from "@/lib/wa-onboarding.functions";
 import { WaConnectButton, type SignupOutcome } from "@/components/admin/WaConnectButton";
@@ -236,8 +237,10 @@ function AdvancedBlock({
 }) {
   const save = useServerFn(upsertWaCloudConfig);
   const subscribe = useServerFn(subscribeWaWebhooks);
+  const retryBilling = useServerFn(retryWaBilling);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [billingBusy, setBillingBusy] = useState(false);
   const [phoneNumberId, setPhoneNumberId] = useState(cfg.phone_number_id);
   const [wabaId, setWabaId] = useState(cfg.waba_id);
   const [token, setToken] = useState("");
@@ -275,6 +278,28 @@ function AdvancedBlock({
       toast.error(humanError(e, "Не удалось сохранить"));
     } finally {
       setBusy(false);
+    }
+  }
+
+  // Повтор привязки к кредитной линии YCloud. Отдельно от «Сохранить»: это не настройка салона, а
+  // наш собственный шаг, который иногда падает в момент подключения и до сих пор требовал провести
+  // салон через окно Meta заново.
+  async function onRetryBilling() {
+    setBillingBusy(true);
+    try {
+      const r: any = await retryBilling({ data: { salonId } });
+      if (r?.ok) {
+        toast.success("Оплата подключена");
+      } else if (!r?.solutionConfigured) {
+        toast.error("Не задан WA_ES_SOLUTION_ID — аккаунт салона не попал в решение YCloud");
+      } else {
+        toast.error(r?.error ?? "YCloud привязал аккаунт, но оплата не подключилась");
+      }
+      onChanged();
+    } catch (e: any) {
+      toast.error(humanError(e, "Не удалось подключить оплату"));
+    } finally {
+      setBillingBusy(false);
     }
   }
 
@@ -378,6 +403,23 @@ function AdvancedBlock({
             <p className="mt-1 font-mono text-[11px] text-muted-foreground">
               Verify token: {cfg.verify_token}
             </p>
+          </div>
+
+          <div className="rounded-lg border bg-muted/30 p-3">
+            <p className="text-xs font-medium">Оплата сообщений (кредитная линия YCloud)</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Привязка делается при подключении. Если она упала — повторите здесь, не проводя салон
+              через окно Meta заново.
+            </p>
+            <Button
+              onClick={onRetryBilling}
+              disabled={billingBusy}
+              size="sm"
+              variant="outline"
+              className="mt-2"
+            >
+              {billingBusy ? "Подключаем…" : "Подключить оплату"}
+            </Button>
           </div>
 
           <Button onClick={onSave} disabled={busy} size="sm">

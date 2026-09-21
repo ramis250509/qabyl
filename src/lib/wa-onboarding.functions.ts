@@ -221,7 +221,14 @@ export const finishWaOnboarding = createServerFn({ method: "POST" })
               : "аккаунт привязан, но оплата не подключена"
             : bind.error,
         },
-        { coexistence, paymentMethodAttached: bind.paymentMethodAttached },
+        {
+          coexistence,
+          paymentMethodAttached: bind.paymentMethodAttached,
+          // Без Solution ID окно подключения открывается без партнёрского решения, и YCloud
+          // отвечает ошибкой прав. Записываем это рядом с ошибкой: иначе разбор начинается с
+          // угадывания, что было в переменных воркера в тот момент.
+          solutionConfigured: Boolean((process.env.WA_ES_SOLUTION_ID ?? "").trim()),
+        },
       );
       if (bind.ok && bind.paymentMethodAttached !== null) {
         await supabaseAdmin
@@ -496,5 +503,93 @@ export const getWaSignupSettings = createServerFn({ method: "POST" })
       // тип токена «can't be changed later»), только создать новую, а проверять новую приходится на
       // живом салоне. Переменная в Cloudflare меняется за минуту, выкладка кода — дольше и рискованнее.
       configId: (process.env.WA_ES_CONFIG_ID ?? "").trim() || null,
+    };
+  });
+
+/**
+ * Повторно привязывает аккаунт салона к кредитной линии YCloud.
+ *
+ * ЗАЧЕМ ОТДЕЛЬНАЯ КНОПКА. Привязка делалась ровно один раз — внутри окна подключения. Когда она
+ * падала (не задан Solution ID, YCloud ещё не одобрил решение, Meta ответила «Permissions error»),
+ * единственным способом повторить её было провести салон через окно Meta заново. Для номера на
+ * coexistence это означает повторное сканирование QR владелицей и риск для живого номера — цена,
+ * несоразмерная перезапуску одного HTTP-вызова.
+ *
+ * Coexistence спрашиваем у Meta, а не берём из базы: `tp/bind` и `smb/bind` — разные вызовы, и
+ * ошибиться здесь значит получить ту же ошибку прав, только по другой причине.
+ */
+export const retryWaBilling = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => z.object({ salonId: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    await assertSalonAccess(context.supabase, context.userId, data.salonId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { logOnboardingEvent } = await import("@/lib/wa-connection.server");
+    const { platformBillingEnabled, ycloudBindWaba } = await import("@/lib/ycloud.server");
+
+    if (!platformBillingEnabled()) {
+      throw new Error(
+        "Оплата через платформу выключена: не задан YCLOUD_API_KEY. Салон платит Meta сам.",
+      );
+    }
+
+    const { data: row } = await supabaseAdmin
+      .from("salon_secrets")
+      .select(
+        "whatsapp_cloud_waba_id, whatsapp_cloud_phone_number_id, whatsapp_cloud_token, wa_platform_type",
+      )
+      .eq("salon_id", data.salonId)
+      .maybeSingle();
+
+    const wabaId = String((row as any)?.whatsapp_cloud_waba_id ?? "");
+    if (!wabaId) throw new Error("У салона нет аккаунта WhatsApp — сначала подключите канал.");
+
+    const phoneNumberId = String((row as any)?.whatsapp_cloud_phone_number_id ?? "");
+    const token = String((row as any)?.whatsapp_cloud_token ?? "");
+    let coexistence = String((row as any)?.wa_platform_type ?? "").toUpperCase() === "ON_BIZ_APP";
+    if (phoneNumberId && token) {
+      const { graphCall } = await import("@/lib/meta-graph.server");
+      const info = await graphCall<{ is_on_biz_app?: boolean }>(encodeURIComponent(phoneNumberId), {
+        token,
+        query: { fields: "is_on_biz_app" },
+      });
+      if (info.ok && typeof info.data?.is_on_biz_app === "boolean") {
+        coexistence = info.data.is_on_biz_app;
+      }
+    }
+
+    const bind = await ycloudBindWaba(wabaId, coexistence);
+    // Есть ли вообще Solution ID — первый вопрос при разборе ошибки прав: без него аккаунт салона
+    // не попадает в партнёрское решение, и YCloud по определению не может им распоряжаться.
+    const solutionConfigured = Boolean((process.env.WA_ES_SOLUTION_ID ?? "").trim());
+
+    await logOnboardingEvent(data.salonId, crypto.randomUUID(), {
+      step: "billing-retry",
+      ok: bind.ok && bind.paymentMethodAttached === true,
+      detail: bind.ok
+        ? bind.paymentMethodAttached
+          ? "оплата подключена"
+          : "аккаунт привязан, но оплата не подключена"
+        : bind.error,
+      details: {
+        coexistence,
+        solutionConfigured,
+        paymentMethodAttached: bind.paymentMethodAttached,
+      },
+    });
+
+    if (bind.ok && bind.paymentMethodAttached !== null) {
+      await supabaseAdmin
+        .from("salon_secrets")
+        .update({ wa_payment_ready: bind.paymentMethodAttached } as any)
+        .eq("salon_id", data.salonId);
+    }
+
+    return {
+      ok: bind.ok && bind.paymentMethodAttached === true,
+      coexistence,
+      solutionConfigured,
+      paymentMethodAttached: bind.paymentMethodAttached,
+      error: bind.error ?? null,
     };
   });
