@@ -426,7 +426,7 @@ export function PublicBooking({
                   setSelectedBranch(b);
                   setStep(1);
                 }}
-                className="w-full text-left rounded-xl border bg-card/50 hover:bg-card transition p-4 flex items-start gap-3"
+                className="w-full text-left rounded-xl border bg-card text-card-foreground hover:bg-accent hover:text-accent-foreground transition p-4 flex items-start gap-3"
               >
                 <div
                   className="h-10 w-10 rounded-lg flex items-center justify-center shrink-0"
@@ -1020,7 +1020,7 @@ function ServicesList({
     <button
       key={s.id}
       onClick={() => onPick(s)}
-      className="w-full text-left rounded-xl border border-border bg-card/50 hover:bg-card transition p-3 sm:p-4 flex items-center justify-between gap-3 sm:gap-4 group"
+      className="w-full text-left rounded-xl border border-border bg-card text-card-foreground hover:bg-accent hover:text-accent-foreground transition p-3 sm:p-4 flex items-center justify-between gap-3 sm:gap-4 group"
     >
       <div className="flex items-start gap-2 sm:gap-3 flex-1 min-w-0">
         <Sparkles className="h-5 w-5 shrink-0 mt-0.5" style={{ color: primary }} />
@@ -1037,9 +1037,13 @@ function ServicesList({
           </div>
         </div>
       </div>
+      {/* Цена — то единственное, ради чего клиент открыл этот список, и раньше она была самым
+          НЕЧИТАЕМЫМ элементом карточки: заливка 15% от цвета темы, текст тем же цветом. На тёмной
+          теме с сиреневым primary это сливалось в пятно. Теперь заливка сплошная, а цвет текста
+          считается по яркости фона — читается при любом цвете салона. */}
       <div
         className="shrink-0 px-3 py-1.5 sm:px-4 sm:py-2 rounded-full font-semibold text-xs sm:text-sm whitespace-nowrap"
-        style={{ background: `${primary}26`, color: primary }}
+        style={{ background: primary, color: readableOn(primary) }}
       >
         {formatPrice(s)}
       </div>
@@ -1082,7 +1086,7 @@ function FaqSection({ salonId, primary }: { salonId: string; primary: string }) 
         {faqs.map((f) => {
           const isOpen = open === f.id;
           return (
-            <div key={f.id} className="rounded-xl border bg-card/50">
+            <div key={f.id} className="rounded-xl border bg-card text-card-foreground">
               <button
                 type="button"
                 onClick={() => setOpen(isOpen ? null : f.id)}
@@ -1263,6 +1267,27 @@ function ServicesFlatList({
       <div aria-hidden className="h-[35vh]" />
     </div>
   );
+}
+
+/**
+ * Читаемый цвет текста поверх произвольного цвета салона.
+ *
+ * Цвет темы выбирает владелица, и он может быть каким угодно — от почти чёрного до жёлтого.
+ * Захардкоженный белый текст исчезает на светлом, чёрный — на тёмном. Формула — воспринимаемая
+ * яркость (та же, что уже используется в PremiumTemplate): она учитывает, что глаз видит зелёный
+ * куда ярче синего, поэтому на #0000ff белый текст читается, а на #ffff00 — нет.
+ *
+ * Тёмный вариант не чистый #000: на цветном фоне он выглядит провалом, а мягкий тёмно-серый
+ * читается так же и смотрится аккуратнее.
+ */
+function readableOn(hex: string): string {
+  const h = (hex || "").replace("#", "");
+  if (h.length !== 6) return "#ffffff";
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  if ([r, g, b].some((v) => Number.isNaN(v))) return "#ffffff";
+  return (r * 299 + g * 587 + b * 114) / 1000 < 150 ? "#ffffff" : "#1b1b1f";
 }
 
 function formatDuration(min: number, t: (k: "hour" | "min") => string) {
