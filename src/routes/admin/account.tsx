@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth-client";
 import { Card } from "@/components/ui/card";
 import { HelpCircle, Smartphone, Check } from "lucide-react";
@@ -10,7 +10,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { humanError } from "@/lib/human-error";
-import { AtSign, KeyRound } from "lucide-react";
+import { AtSign, KeyRound, Monitor, Moon, Sun } from "lucide-react";
+import { applyThemeChoice, readThemeChoice, subscribeTheme, type ThemeChoice } from "@/lib/theme";
 import { updateMyLogin, updateMyPassword } from "@/lib/account.functions";
 import { FullScreenLoader } from "@/components/ui/loading-state";
 import { supabase } from "@/integrations/supabase/client";
@@ -177,6 +178,8 @@ function AccountPage() {
           человек не просил. Но закрывший её остаётся без единого способа поставить приложение
           позже, а на iPhone это ещё и единственный способ получать уведомления о новых записях.
           Карточка ничего не навязывает и не исчезает. */}
+      <AppearanceCard />
+
       <InstallAppCard />
 
       {/* Экскурсия показывается один раз и больше никогда. Способ вернуть её нужен ровно для
@@ -202,6 +205,69 @@ function AccountPage() {
         </div>
       </Card>
     </div>
+  );
+}
+
+/**
+ * Тема оформления.
+ *
+ * Три варианта, а не переключатель: «как в системе» — не синоним светлой. Телефон, уходящий
+ * в тёмную по расписанию, должен утаскивать за собой и кабинет, иначе в час ночи Qabyl
+ * оказывается единственным белым окном на экране.
+ */
+function AppearanceCard() {
+  const [choice, setChoice] = useState<ThemeChoice>("system");
+
+  // Читаем в эффекте, а не в useState-инициализаторе: на сервере localStorage нет, и разметка
+  // сервера обязана совпасть с первой разметкой клиента.
+  useEffect(() => {
+    setChoice(readThemeChoice());
+    return subscribeTheme(setChoice);
+  }, []);
+
+  const options: { value: ThemeChoice; label: string; icon: typeof Sun }[] = [
+    { value: "light", label: "Светлая", icon: Sun },
+    { value: "dark", label: "Тёмная", icon: Moon },
+    { value: "system", label: "Как в системе", icon: Monitor },
+  ];
+
+  return (
+    <Card className="p-4 sm:p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="font-semibold">Оформление</h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            Тёмная тема пригодится вечером и экономит батарею на телефоне с OLED-экраном.
+          </p>
+        </div>
+        <div
+          role="radiogroup"
+          aria-label="Тема оформления"
+          className="inline-flex rounded-lg border bg-muted/40 p-0.5"
+        >
+          {options.map((o) => {
+            const active = choice === o.value;
+            return (
+              <button
+                key={o.value}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                onClick={() => applyThemeChoice(o.value)}
+                className={`qb-press inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                  active
+                    ? "bg-card text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <o.icon className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">{o.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </Card>
   );
 }
 

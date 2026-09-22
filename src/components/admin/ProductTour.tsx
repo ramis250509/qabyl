@@ -127,8 +127,13 @@ function useTargetRect(target: string, tick: number): Rect | null {
 
     const measure = () => {
       if (cancelled) return;
-      const el = document.querySelector<HTMLElement>(`[data-tour="${target}"]`);
-      if (el) {
+      // ВСЕ элементы с этим именем, а не первый.
+      //
+      // Один и тот же пункт меню теперь существует дважды: в боковой панели (скрыта на
+      // телефоне) и в нижней панели (скрыта на десктопе). Первый в DOM — всегда боковой, и
+      // querySelector на телефоне возвращал невидимый элемент размером 0×0. Экскурсия честно
+      // ждала 90 кадров и сдавалась: ни один шаг на телефоне ничего не подсвечивал.
+      for (const el of document.querySelectorAll<HTMLElement>(`[data-tour="${target}"]`)) {
         const r = el.getBoundingClientRect();
         // Цель может быть за краем экрана — на телефоне вкладки уезжают вбок.
         if (r.width > 0 && r.height > 0) {

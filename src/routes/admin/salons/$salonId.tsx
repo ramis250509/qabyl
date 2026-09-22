@@ -229,6 +229,73 @@ function normalizeTab(tab: string | undefined): string | undefined {
   return tab;
 }
 
+/**
+ * Настройки салона, сгруппированные по вопросу, на который отвечают.
+ *
+ * БЫЛО. Одиннадцать равновеликих вкладок в одной горизонтальной ленте: Салон, Услуги, Мастера,
+ * Команда, Каналы, Ассистент, Переписки, Сайт, Предоплата (+ Доступ и Импорт у супер-админа).
+ * На экране телефона помещалось три с половиной, остальные приходилось искать прокруткой вбок —
+ * то есть перебором. Порядок между ними был продуман, но порядок не спасает: девять одинаковых
+ * по весу пунктов человек не держит в голове, он их перебирает.
+ *
+ * СТАЛО. Три группы по три-четыре раздела, и три слова помещаются на любом экране целиком:
+ *   • Салон    — кто мы и что делаем;
+ *   • Общение  — как мы говорим с клиентом;
+ *   • Клиенту  — что клиент видит.
+ * Четвёртая группа, «Платформа», существует только для супер-админа: Доступ и Импорт — не
+ * настройки салона, а инструменты того, кто салон ведёт.
+ *
+ * Адреса вкладок (?tab=services) не изменились ни на один символ: группа вычисляется из
+ * активной вкладки, а не хранится отдельно. Все ссылки из чеклиста, писем и закладок работают.
+ */
+const TAB_GROUPS: {
+  key: string;
+  label: string;
+  superOnly?: boolean;
+  tabs: { value: string; label: string; tour?: string }[];
+}[] = [
+  {
+    key: "salon",
+    label: "Салон",
+    tabs: [
+      { value: "salon", label: "Основное" },
+      { value: "services", label: "Услуги" },
+      { value: "masters", label: "Мастера" },
+      { value: "team", label: "Команда", tour: "tab-team" },
+    ],
+  },
+  {
+    key: "talk",
+    label: "Общение",
+    tabs: [
+      { value: "channels", label: "Каналы", tour: "tab-channels" },
+      { value: "ai", label: "Ассистент", tour: "tab-ai" },
+      { value: "chats", label: "Переписки" },
+    ],
+  },
+  {
+    key: "client",
+    label: "Клиенту",
+    tabs: [
+      { value: "site", label: "Сайт" },
+      { value: "prepayment", label: "Предоплата" },
+    ],
+  },
+  {
+    key: "platform",
+    label: "Платформа",
+    superOnly: true,
+    tabs: [
+      { value: "access", label: "Доступ" },
+      { value: "import", label: "Импорт" },
+    ],
+  },
+];
+
+function groupOf(tab: string): string {
+  return TAB_GROUPS.find((g) => g.tabs.some((t) => t.value === tab))?.key ?? TAB_GROUPS[0].key;
+}
+
 function SalonEdit() {
   const { salonId } = Route.useParams();
   const { tab: rawTab } = Route.useSearch();
@@ -289,42 +356,56 @@ function SalonEdit() {
 
       <div ref={tabsRef} className="scroll-mt-4">
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          {/* Лента вкладок шире экрана телефона, и края у неё обрезаются ровно по границе —
-              понять, что список продолжается, было нельзя. `no-scrollbar` убирает полосу
-              прокрутки (на телефоне её и так нет), а отрицательные поля дают ленте уехать
-              под края экрана: обрезанная наполовину вкладка и есть подсказка «листай». */}
-          <div className="no-scrollbar -mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
-            {/* Порядок вкладок — это порядок вопросов, которые владелец задаёт себе сам:
-                  1. кто мы и что делаем      — Салон, Услуги, Мастера, Команда;
-                  2. как мы говорим с клиентом — Каналы, Ассистент, Переписки;
-                  3. что клиент видит          — Сайт, Предоплата.
-                Раньше «Сайт» стоял между «Мастерами» и «Каналами», а «Команда» — в самом конце
-                за «Предоплатой», и найти доступы сотрудников можно было только перебором. */}
-            <TabsList className="w-max">
-              <TabsTrigger value="salon">Салон</TabsTrigger>
-              <TabsTrigger value="services">Услуги</TabsTrigger>
-              <TabsTrigger value="masters">Мастера</TabsTrigger>
-              <TabsTrigger value="team" data-tour="tab-team">
-                Команда
-              </TabsTrigger>
-              <TabsTrigger value="channels" data-tour="tab-channels">
-                Каналы
-              </TabsTrigger>
-              {/* Вкладка видна ВСЕГДА.
-                  
-                  Раньше она появлялась только при salon.ai_assistant_enabled — то есть пропадала
-                  ровно у того, кто ассистента ещё не включил. Настроить его перед запуском было
-                  нельзя: чтобы увидеть настройки, надо было сначала включить вслепую. А после
-                  переноса выключателя в «Каналы» вкладка и вовсе исчезала у всех новых салонов. */}
-              <TabsTrigger value="ai" data-tour="tab-ai">
-                Ассистент
-              </TabsTrigger>
-              <TabsTrigger value="chats">Переписки</TabsTrigger>
-              <TabsTrigger value="site">Сайт</TabsTrigger>
-              <TabsTrigger value="prepayment">Предоплата</TabsTrigger>
-              {isSuperAdmin && <TabsTrigger value="access">Доступ</TabsTrigger>}
-              {isSuperAdmin && <TabsTrigger value="import">Импорт</TabsTrigger>}
-            </TabsList>
+          {/* Два уровня вместо одной длинной ленты. Верхний — три слова, помещаются на любом
+              экране целиком; нижний — разделы выбранной группы, их всегда два-четыре.
+
+              Верхний уровень — обычные кнопки, а не TabsTrigger: у группы нет собственного
+              содержимого, она только сужает выбор. Активная вкладка при смене группы
+              переставляется на её первый раздел — иначе нажатие на «Общение» не показывало бы
+              ничего нового. */}
+          <div className="space-y-2.5">
+            <div
+              role="tablist"
+              aria-label="Группы настроек"
+              className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4 sm:mx-0 sm:px-0"
+            >
+              {TAB_GROUPS.filter((g) => !g.superOnly || isSuperAdmin).map((g) => {
+                const active = groupOf(activeTab) === g.key;
+                return (
+                  <button
+                    key={g.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => setActiveTab(g.tabs[0].value)}
+                    className={`qb-press shrink-0 rounded-full px-4 py-1.5 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                      active
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {g.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Вкладка «Ассистент» видна ВСЕГДА.
+
+                Раньше она появлялась только при salon.ai_assistant_enabled — то есть пропадала
+                ровно у того, кто ассистента ещё не включил. Настроить его перед запуском было
+                нельзя: чтобы увидеть настройки, надо было сначала включить вслепую. */}
+            <div className="no-scrollbar -mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
+              <TabsList className="w-max">
+                {(TAB_GROUPS.find((g) => g.key === groupOf(activeTab)) ?? TAB_GROUPS[0]).tabs.map(
+                  (t) => (
+                    <TabsTrigger key={t.value} value={t.value} data-tour={t.tour}>
+                      {t.label}
+                    </TabsTrigger>
+                  ),
+                )}
+              </TabsList>
+            </div>
           </div>
 
           <TabsContent value="salon">

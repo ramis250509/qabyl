@@ -19,6 +19,13 @@
  */
 
 @theme inline {
+  /* Шрифт выбран, а не унаследован.
+     Onest нарисован кириллицей с самого начала (не «добавил кириллицу потом») и
+     спокойно читается в 13–15 px, где живёт весь кабинет. До него интерфейс шёл
+     системным шрифтом: Segoe UI на Windows, Roboto на Android, San Francisco на
+     iPhone — один и тот же экран выглядел тремя разными продуктами. */
+  --font-sans: "Onest", ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -80,42 +87,80 @@
   --color-danger-foreground: var(--danger-foreground);
   --color-danger-surface: var(--danger-surface);
   --color-danger-border: var(--danger-border);
+
+  /* Брендовая подложка. Ровно та же четвёрка ролей, что у состояний, но для
+     главного цвета: без неё «выделено брендом» приходится собирать из
+     primary/10 по месту, и в каждом месте получается свой процент. */
+  --color-primary-surface: var(--primary-surface);
+  --color-primary-border: var(--primary-border);
 }
 
+/*
+ * Цвет Qabyl.
+ *
+ * ОТКУДА ВЗЯЛСЯ ОТТЕНОК 335°. Не из вкуса. Четыре тона ниже уже заняты смыслом:
+ * 155° — успех, 75° — внимание, 255° — информация, 27° — ошибка. Главный цвет
+ * продукта не имеет права совпасть ни с одним из них, иначе кнопка «Сохранить»
+ * станет неотличима от сообщения об ошибке — а именно это и было, пока primary
+ * стоял нетронутым дефолтом shadcn (почти чёрный с синим отливом, oklch 265°).
+ * Сливово-пурпурная зона 335° далека от всех четырёх, уместна для бьюти и не
+ * занята ни одним конкурентом в СНГ: у YCLIENTS и Dikidi синий, у Altegio
+ * чёрный с жёлтым.
+ *
+ * НЕЙТРАЛЬНЫЕ ТОЖЕ ЦВЕТНЫЕ. У них подмес того же 335° с хромой 0.004–0.02: в
+ * глаза это не бросается, но серый перестаёт спорить с главным цветом. Прежние
+ * нейтрали тянули в синеву (264°) и делали кабинет холодным.
+ *
+ * ФОН БОЛЬШЕ НЕ БЕЛЫЙ. background и card оба были чистым белым, и карточка
+ * отделялась от страницы исключительно рамкой — отсюда рамка на каждом блоке и
+ * ощущение, что всё на экране одинаково важно. Теперь фон чуть темнее карточки,
+ * и карточку можно показывать без рамки вовсе.
+ */
 :root {
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.129 0.042 264.695);
+  --background: oklch(0.985 0.004 335);
+  --foreground: oklch(0.17 0.015 335);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.129 0.042 264.695);
+  --card-foreground: oklch(0.17 0.015 335);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.129 0.042 264.695);
-  --primary: oklch(0.208 0.042 265.755);
-  --primary-foreground: oklch(0.984 0.003 247.858);
-  --secondary: oklch(0.968 0.007 247.896);
-  --secondary-foreground: oklch(0.208 0.042 265.755);
-  --muted: oklch(0.968 0.007 247.896);
-  --muted-foreground: oklch(0.554 0.046 257.417);
-  --accent: oklch(0.968 0.007 247.896);
-  --accent-foreground: oklch(0.208 0.042 265.755);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.984 0.003 247.858);
-  --border: oklch(0.929 0.013 255.508);
-  --input: oklch(0.929 0.013 255.508);
-  --ring: oklch(0.704 0.04 256.788);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.984 0.003 247.858);
-  --sidebar-foreground: oklch(0.129 0.042 264.695);
-  --sidebar-primary: oklch(0.208 0.042 265.755);
-  --sidebar-primary-foreground: oklch(0.984 0.003 247.858);
-  --sidebar-accent: oklch(0.968 0.007 247.896);
-  --sidebar-accent-foreground: oklch(0.208 0.042 265.755);
-  --sidebar-border: oklch(0.929 0.013 255.508);
-  --sidebar-ring: oklch(0.704 0.04 256.788);
+  --popover-foreground: oklch(0.17 0.015 335);
+  --primary: oklch(0.47 0.14 335);
+  --primary-foreground: oklch(0.99 0.005 335);
+  --primary-surface: oklch(0.96 0.022 335);
+  --primary-border: oklch(0.88 0.055 335);
+  --secondary: oklch(0.955 0.007 335);
+  --secondary-foreground: oklch(0.26 0.03 335);
+  --muted: oklch(0.955 0.007 335);
+  /* 0.49, а не 0.52: на фоне 0.985 это 4.6:1 против 4.2:1 — разница между «проходит AA» и
+     «почти проходит». Вторичным текстом набраны подписи под числами и половина подсказок
+     кабинета, и читают их с телефона на солнце. */
+  --muted-foreground: oklch(0.49 0.02 335);
+  --accent: oklch(0.955 0.012 335);
+  --accent-foreground: oklch(0.3 0.06 335);
+  --destructive: oklch(0.53 0.21 27);
+  --destructive-foreground: oklch(0.99 0 0);
+  --border: oklch(0.915 0.008 335);
+  --input: oklch(0.915 0.008 335);
+  /* Кольцо фокуса — брендовое. Клавиатурный фокус должен быть заметен, а серое
+     кольцо на сером бордюре не заметно никому. */
+  --ring: oklch(0.47 0.14 335);
+  /* Категориальная шкала для статистики: первый — брендовый, остальные разведены
+     по кругу так, чтобы соседние серии не сливались у тех, кто путает красный с
+     зелёным. Светлота держится в узком коридоре, иначе одна серия выглядит
+     «важнее» остальных просто потому, что темнее. */
+  --chart-1: oklch(0.55 0.15 335);
+  --chart-2: oklch(0.6 0.12 200);
+  --chart-3: oklch(0.66 0.13 65);
+  --chart-4: oklch(0.55 0.13 270);
+  --chart-5: oklch(0.6 0.12 150);
+  --sidebar: oklch(0.975 0.006 335);
+  --sidebar-foreground: oklch(0.17 0.015 335);
+  --sidebar-primary: oklch(0.47 0.14 335);
+  --sidebar-primary-foreground: oklch(0.99 0.005 335);
+  --sidebar-accent: oklch(0.95 0.014 335);
+  --sidebar-accent-foreground: oklch(0.3 0.06 335);
+  --sidebar-border: oklch(0.915 0.008 335);
+  --sidebar-ring: oklch(0.47 0.14 335);
 
   /* Контраст текста на подложке держится выше 4.5:1 — это не украшение, а условие
      читаемости для тех, кто смотрит в телефон на солнце. */
@@ -137,39 +182,52 @@
   --danger-border: oklch(0.86 0.09 27);
 }
 
+/*
+ * Тёмная тема.
+ *
+ * Прежде эти токены существовали, но включить их было нечем: класс `dark` не
+ * ставил никто. Теперь его ставит скрипт в шапке документа (см. src/lib/theme.ts),
+ * и тема наконец проверяема.
+ *
+ * Главный цвет здесь СВЕТЛЕЕ фона, а не темнее: тёмно-сливовая кнопка на
+ * тёмно-сливовом фоне не читается. Светлота 0.78 при хроме 0.11 даёт цвет,
+ * который остаётся узнаваемо тем же и держит контраст с тёмным текстом на себе.
+ */
 .dark {
-  --background: oklch(0.129 0.042 264.695);
-  --foreground: oklch(0.984 0.003 247.858);
-  --card: oklch(0.208 0.042 265.755);
-  --card-foreground: oklch(0.984 0.003 247.858);
-  --popover: oklch(0.208 0.042 265.755);
-  --popover-foreground: oklch(0.984 0.003 247.858);
-  --primary: oklch(0.929 0.013 255.508);
-  --primary-foreground: oklch(0.208 0.042 265.755);
-  --secondary: oklch(0.279 0.041 260.031);
-  --secondary-foreground: oklch(0.984 0.003 247.858);
-  --muted: oklch(0.279 0.041 260.031);
-  --muted-foreground: oklch(0.704 0.04 256.788);
-  --accent: oklch(0.279 0.041 260.031);
-  --accent-foreground: oklch(0.984 0.003 247.858);
-  --destructive: oklch(0.704 0.191 22.216);
-  --destructive-foreground: oklch(0.984 0.003 247.858);
-  --border: oklch(1 0 0 / 10%);
+  --background: oklch(0.155 0.012 335);
+  --foreground: oklch(0.96 0.005 335);
+  --card: oklch(0.198 0.014 335);
+  --card-foreground: oklch(0.96 0.005 335);
+  --popover: oklch(0.198 0.014 335);
+  --popover-foreground: oklch(0.96 0.005 335);
+  --primary: oklch(0.78 0.11 335);
+  --primary-foreground: oklch(0.2 0.045 335);
+  --primary-surface: oklch(0.78 0.11 335 / 14%);
+  --primary-border: oklch(0.78 0.11 335 / 34%);
+  --secondary: oklch(0.26 0.016 335);
+  --secondary-foreground: oklch(0.96 0.005 335);
+  --muted: oklch(0.26 0.016 335);
+  --muted-foreground: oklch(0.71 0.02 335);
+  --accent: oklch(0.285 0.03 335);
+  --accent-foreground: oklch(0.94 0.02 335);
+  --destructive: oklch(0.72 0.18 22);
+  --destructive-foreground: oklch(0.18 0.04 22);
+  --border: oklch(1 0 0 / 11%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.551 0.027 264.364);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.208 0.042 265.755);
-  --sidebar-foreground: oklch(0.984 0.003 247.858);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.984 0.003 247.858);
-  --sidebar-accent: oklch(0.279 0.041 260.031);
-  --sidebar-accent-foreground: oklch(0.984 0.003 247.858);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.551 0.027 264.364);
+  --ring: oklch(0.78 0.11 335);
+  --chart-1: oklch(0.78 0.11 335);
+  --chart-2: oklch(0.75 0.1 200);
+  --chart-3: oklch(0.8 0.11 65);
+  --chart-4: oklch(0.72 0.11 270);
+  --chart-5: oklch(0.76 0.1 150);
+  --sidebar: oklch(0.185 0.014 335);
+  --sidebar-foreground: oklch(0.96 0.005 335);
+  --sidebar-primary: oklch(0.78 0.11 335);
+  --sidebar-primary-foreground: oklch(0.2 0.045 335);
+  --sidebar-accent: oklch(0.27 0.025 335);
+  --sidebar-accent-foreground: oklch(0.94 0.02 335);
+  --sidebar-border: oklch(1 0 0 / 11%);
+  --sidebar-ring: oklch(0.78 0.11 335);
 
   /* В тёмной теме роли меняются местами: цвет становится СВЕТЛЫМ (иначе он тонет
      в фоне), а подложка — тёмной и полупрозрачной, чтобы не выглядеть наклейкой. */
@@ -196,9 +254,27 @@
     border-color: var(--color-border);
   }
 
+  html {
+    font-family: var(--font-sans);
+    /* Смена темы не должна выглядеть как перезагрузка страницы. 160 мс — ровно
+       столько, чтобы переход был замечен как переход, а не как моргание. */
+    transition: background-color 160ms var(--qb-ease, ease-out);
+  }
+
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Цифры, стоящие в колонку, должны стоять в колонку. Пропорциональная единица
+     уже́ восьмёрки, и в календаре время «плывёт» от строки к строке. */
+  time,
+  .tabular,
+  [data-tabular] {
+    font-variant-numeric: tabular-nums;
   }
 }
 

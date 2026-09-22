@@ -12,6 +12,14 @@ import {
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -31,8 +39,7 @@ import {
   RotateCcw,
   Plus,
   ArrowRightLeft,
-  ZoomIn,
-  ZoomOut,
+  MoreHorizontal,
   UserX,
   Check,
 } from "lucide-react";
@@ -135,11 +142,6 @@ function CalendarPage() {
       window.localStorage.setItem("qabyl.calendar.density", density);
   }, [density]);
   const hourPx = HOUR_PX_BY_DENSITY[density];
-  function zoom(delta: number) {
-    const idx = DENSITY_ORDER.indexOf(density);
-    const next = DENSITY_ORDER[Math.max(0, Math.min(DENSITY_ORDER.length - 1, idx + delta))];
-    setDensity(next);
-  }
   const [date, setDate] = useState<Date>(() => {
     // Дата из адреса — это «покажи мне вот этот день». Разбираем её как локальный полдень:
     // new Date("2026-09-12") — полночь UTC, и в часовом поясе западнее Гринвича это вчера.
@@ -485,73 +487,41 @@ function CalendarPage() {
 
   return (
     <div className="p-4 sm:p-8 space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="min-w-0">
-          <h1 className="text-2xl sm:text-3xl font-bold">Календарь</h1>
-          <p className="text-muted-foreground text-sm">Тапните по записи для управления</p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {!lockedMaster && effectiveSalonId && (
-            <Button onClick={() => setCreateOpen(true)} className="gap-1">
-              <Plus className="h-4 w-4" />
-              Добавить запись
-            </Button>
-          )}
-          <Select value={view} onValueChange={(v) => setView(v as any)}>
-            <SelectTrigger className="w-28">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="day">День</SelectItem>
-              <SelectItem value="week">Неделя</SelectItem>
-            </SelectContent>
-          </Select>
-          <div className="flex items-center rounded-md border bg-background">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-9 w-9 rounded-r-none"
-              onClick={() => zoom(-1)}
-              disabled={density === "compact"}
-              title="Уменьшить"
-            >
-              <ZoomOut className="h-4 w-4" />
-            </Button>
-            <Select value={density} onValueChange={(v) => setDensity(v as Density)}>
-              <SelectTrigger className="h-9 w-[136px] rounded-none border-0 border-x focus:ring-0">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {DENSITY_ORDER.map((d) => (
-                  <SelectItem key={d} value={d}>
-                    {DENSITY_LABEL[d]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-9 w-9 rounded-l-none"
-              onClick={() => zoom(1)}
-              disabled={density === "spacious"}
-              title="Увеличить"
-            >
-              <ZoomIn className="h-4 w-4" />
-            </Button>
-          </div>
-          {/* Назад / Сегодня / Вперёд — одна группа, а не три отдельные кнопки.
+      {/* Тулбар: четыре группы контролов превратились в две с половиной.
 
-              Кнопки лежали в общем flex-wrap вместе с зумом и выбором вида, и на узком экране
-              перенос рвал их по живому: «назад» и «Сегодня» оставались на одной строке, а
-              «вперёд» уезжала на следующую. Группа переносится целиком. */}
-          <div className="inline-flex items-center overflow-hidden rounded-md border bg-background">
+          ЧТО УБРАЛИ И ПОЧЕМУ:
+            • Выпадающий список «День / Неделя» — вариантов два, и меню ради двух вариантов
+              стоит лишнего касания и лишнего решения. Теперь переключатель, где оба варианта
+              видны сразу.
+            • Связку «зум − / плотность / зум +» — три контрола, делавшие ОДНО И ТО ЖЕ и
+              занимавшие треть ширины ради настройки, которую меняют раз в жизни. Плотность
+              уехала под «⋯», зум удалён как дубликат.
+            • Строку с датой отдельным блоком ниже — она повторяла то, что и так написано под
+              заголовком. Теперь дата — подзаголовок, там, где её и ищут.
+            • Подпись «Тапните по записи для управления» — инструкцию к тому, что и так
+              очевидно после первого касания; место под заголовком стоит дороже.
+
+          Осталось то, чем пользуются каждый день: куда смотрим, как смотрим и «добавить». */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold sm:text-3xl">Календарь</h1>
+          <p className="text-sm text-muted-foreground first-letter:uppercase">
+            {view === "day"
+              ? formatInTz(date, tz, { weekday: "long", day: "numeric", month: "long" })
+              : `${formatInTz(days[0], tz, { day: "numeric", month: "short" })} — ${formatInTz(days[6], tz, { day: "numeric", month: "short", year: "numeric" })}`}
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Назад / Сегодня / Вперёд — одна группа, а не три отдельные кнопки: на узком
+              экране перенос рвал их по живому. Группа переносится целиком. */}
+          <div className="inline-flex items-center overflow-hidden rounded-md border bg-card">
             <Button
               variant="ghost"
               size="icon"
               className="h-9 w-9 rounded-none"
               onClick={() => shiftDate(-1)}
-              aria-label="Предыдущий день"
+              aria-label={view === "week" ? "Предыдущая неделя" : "Предыдущий день"}
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
@@ -567,11 +537,63 @@ function CalendarPage() {
               size="icon"
               className="h-9 w-9 rounded-none"
               onClick={() => shiftDate(1)}
-              aria-label="Следующий день"
+              aria-label={view === "week" ? "Следующая неделя" : "Следующий день"}
             >
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
+
+          <div
+            role="radiogroup"
+            aria-label="Вид календаря"
+            className="inline-flex rounded-md border bg-muted/40 p-0.5"
+          >
+            {(["day", "week"] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                role="radio"
+                aria-checked={view === v}
+                onClick={() => setView(v)}
+                className={`qb-press rounded-[5px] px-3 py-1.5 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                  view === v
+                    ? "bg-card text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {v === "day" ? "День" : "Неделя"}
+              </button>
+            ))}
+          </div>
+
+          {!lockedMaster && effectiveSalonId && (
+            <Button onClick={() => setCreateOpen(true)} className="h-9 gap-1.5">
+              <Plus className="h-4 w-4" />
+              <span className="hidden sm:inline">Добавить запись</span>
+              <span className="sm:hidden">Запись</span>
+            </Button>
+          )}
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon" className="h-9 w-9" aria-label="Вид сетки">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>Высота часа</DropdownMenuLabel>
+              <DropdownMenuRadioGroup
+                value={density}
+                onValueChange={(v) => setDensity(v as Density)}
+              >
+                {DENSITY_ORDER.map((d) => (
+                  <DropdownMenuRadioItem key={d} value={d}>
+                    {DENSITY_LABEL[d]}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
@@ -599,17 +621,6 @@ function CalendarPage() {
           </Select>
         </div>
       )}
-
-      <div className="text-sm font-medium">
-        {view === "day"
-          ? formatInTz(date, tz, {
-              weekday: "long",
-              day: "numeric",
-              month: "long",
-              year: "numeric",
-            })
-          : `${formatInTz(days[0], tz, { day: "numeric", month: "short" })} — ${formatInTz(days[6], tz, { day: "numeric", month: "short", year: "numeric" })}`}
-      </div>
 
       {loadingAppts && appointments.length === 0 ? (
         <Card className="p-0">
@@ -1293,20 +1304,32 @@ function PositionedBlock({
   const endMin = minutesFromMidnightInTz(end, tz);
   const top = ((startMin - hourStart * 60) / 60) * hourPx;
   const height = Math.max(20, ((endMin - startMin) / 60) * hourPx);
-  const color = a.services?.color ?? "#0ea5e9";
+  const color = a.services?.color ?? "var(--color-primary)";
   const durationMin = (end.getTime() - start.getTime()) / 60000;
   const isCancelled = a.status === "cancelled";
   const isNoShow = a.status === "no_show";
   const isPast = !isCancelled && end.getTime() < Date.now();
-  const isDimmed = isCancelled || isPast;
+
+  // ИСХОД И ВРЕМЯ — РАЗНЫЕ ВЕЩИ, и раньше они рисовались одинаково.
+  //
+  // Прошедшая запись получала opacity 50% и зачёркивание — ровно то же, что отменённая. То
+  // есть состоявшийся визит выглядел как несостоявшийся, а «клиент не пришёл» — как «день
+  // закончился». Для владелицы это два совершенно разных события: первое — выручка, второе —
+  // потерянное окно, за которым надо позвонить.
+  //
+  // Теперь зачёркнуто ровно одно состояние — отменённое, единственное, которого не было.
+  // Неявка не приглушается вовсе: она требует действия, а приглушённое требовать не может, и
+  // помечена штриховой рамкой — формой, которая читается и в чёрно-белом, и тем, кто не
+  // различает цвета. Прошедшее просто тише: оно уже случилось.
+  const isDimmed = isCancelled || (isPast && !isNoShow);
   const attendanceLabel = isNoShow
     ? " · не пришёл"
     : a.status === "completed"
       ? " · пришёл"
       : isCancelled
         ? " · отменено"
-        : isPast
-          ? " · завершено"
+        : a.status === "pending_payment"
+          ? " · ждёт предоплату"
           : "";
   const serviceText =
     (a.services?.name ?? "") +
@@ -1329,8 +1352,22 @@ function PositionedBlock({
         dragRef.current = null;
       }}
       onClick={() => onSelect(a)}
-      className={`absolute left-1 right-1 rounded p-1.5 text-xs text-left overflow-hidden select-none hover:opacity-90 ${isDimmed ? "cursor-pointer opacity-50 line-through" : "cursor-move"}`}
-      style={{ top, height, background: color + "22", borderLeft: `3px solid ${color}` }}
+      className={`qb-press absolute left-1 right-1 overflow-hidden rounded p-1.5 text-left text-xs select-none hover:opacity-90 ${
+        isCancelled ? "line-through" : ""
+      } ${isDimmed ? "cursor-pointer opacity-55" : "cursor-move"} ${
+        isNoShow ? "border border-dashed border-warning" : ""
+      }`}
+      style={{
+        top,
+        height,
+        // Цвет услуги остаётся основой: в сетке по мастерам именно он позволяет за секунду
+        // увидеть, чем занят день. Неявка поверх него получает янтарную подложку — статус
+        // перебивает услугу ровно в том случае, когда статус и есть новость.
+        background: isNoShow
+          ? "var(--color-warning-surface)"
+          : `color-mix(in srgb, ${color} 14%, transparent)`,
+        borderLeft: `3px solid ${isNoShow ? "var(--color-warning)" : color}`,
+      }}
       role="button"
       tabIndex={0}
       title={serviceText}

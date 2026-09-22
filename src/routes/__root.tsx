@@ -10,6 +10,8 @@ import {
 import { Toaster } from "@/components/ui/sonner";
 import { I18nProvider } from "@/lib/i18n";
 
+import { THEME_BOOTSTRAP } from "@/lib/theme";
+
 import appCss from "../styles.css?url";
 
 function NotFoundComponent() {
@@ -113,6 +115,15 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "twitter:image", content: "https://qabyl.com/og-image.png" },
     ],
     links: [
+      // Onest — единственный сторонний ресурс в шапке. preconnect стоит до него: без него
+      // браузер узнаёт про fonts.gstatic.com только прочитав CSS, и первый текст на экране
+      // успевает моргнуть системным шрифтом.
+      { rel: "preconnect", href: "https://fonts.googleapis.com" },
+      { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&display=swap",
+      },
       { rel: "stylesheet", href: appCss },
       { rel: "manifest", href: "/manifest.webmanifest" },
       { rel: "apple-touch-icon", href: "/apple-touch-icon.png" },
@@ -128,9 +139,24 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 
 function RootShell({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="ru">
+    // suppressHydrationWarning — из-за скрипта темы ниже.
+    //
+    // Он ставит класс `dark` на <html> ДО гидратации, и сервер об этом знать не может: ни
+    // системная настройка браузера, ни выбор из localStorage до него не доезжают. React при
+    // гидратации видит расхождение и один раз пишет о нём в консоль — на <html> подавление до
+    // него не доходит, и убрать эту строчку можно было бы только хранением темы в cookie,
+    // то есть ради одной строки в консоли разработчика.
+    //
+    // Расхождение здесь безвредно и проверено: React пишет «this won't be patched up», то есть
+    // класс остаётся на месте, тема применяется, страница отрисовывается правильно. Цена
+    // альтернативы — вспышка белого экрана в лицо тому, кто открыл кабинет ночью.
+    <html lang="ru" suppressHydrationWarning>
       <head>
         <HeadContent />
+        {/* Тема ставится ДО первой отрисовки. Если делать это из React, страница успевает
+            нарисоваться светлой и только потом темнеет — вспышка белого в лицо тому, кто
+            открыл кабинет ночью. Скрипт синхронный и крошечный: см. src/lib/theme.ts. */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP }} />
       </head>
       <body>
         {children}
