@@ -43,8 +43,14 @@ const V3_STALL_RE =
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 // Note: gemini-1.5-* models were retired on Sept 24, 2025 → 404 on new API keys.
-const MODEL_TEXT = "gemini-2.5-flash";
-const MODEL_VISION = "gemini-2.5-flash";
+//
+// Модель переопределяется переменной окружения, но ПО УМОЛЧАНИЮ не меняется. Понадобилось это
+// не ради продакшна, а ради прогонов на бесплатном ключе: там суточная квота считается ОТДЕЛЬНО
+// НА КАЖДУЮ МОДЕЛЬ (около 20 запросов), поэтому единственный способ прогнать что-то бесплатно —
+// развести ассистента, симулированного клиента и судью по разным моделям. Прод продолжает ходить
+// на gemini-2.5-flash, пока переменная не задана.
+const MODEL_TEXT = process.env.GEMINI_MODEL_TEXT || "gemini-2.5-flash";
+const MODEL_VISION = process.env.GEMINI_MODEL_VISION || "gemini-2.5-flash";
 
 // How many free slots we offer for a chosen day. High enough to show a full working day
 // (grouped into Утром/День/Вечер), since the client explicitly wants every free time — the
