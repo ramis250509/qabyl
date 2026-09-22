@@ -34,6 +34,8 @@ import { getOnboardingProgress } from "@/lib/onboarding.functions";
 import { getChannelScopes } from "@/lib/channels.functions";
 import { useSalonShape } from "@/hooks/use-salon-shape";
 import { ChannelScopePicker } from "@/components/admin/ChannelScopePicker";
+import { useAuth } from "@/lib/auth-client";
+import { waStatusForViewer } from "@/lib/wa-status-view";
 
 type Progress = Awaited<ReturnType<typeof getOnboardingProgress>>;
 
@@ -45,6 +47,8 @@ function channelState(
   if (!connected) return { tone: "idle", text: "не подключён" };
   if (level === "error") return { tone: "error", text: "не работает" };
   if (level === "warn") return { tone: "warn", text: "нужно внимание" };
+  // Подключён, но тон idle — платформенная поломка, пересказанная владельцу (wa-status-view.ts).
+  if (level === "idle") return { tone: "idle", text: "настраиваем" };
   return { tone: "ok", text: "подключён" };
 }
 
@@ -59,6 +63,7 @@ export function ChannelsTab({
   initialChannel?: "whatsapp" | "instagram";
 }) {
   const salonId = salon.id as string;
+  const { isSuperAdmin } = useAuth();
   const loadProgress = useServerFn(getOnboardingProgress);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [progressLoading, setProgressLoading] = useState(true);
@@ -146,10 +151,10 @@ export function ChannelsTab({
     if (data) onSalonSaved(data);
   }
 
-  const wa = channelState(
-    Boolean(progress?.whatsapp.connected),
-    (progress?.whatsapp.level ?? "idle") as any,
-  );
+  // Состояние канала глазами смотрящего: платформенная поломка для владелицы салона выглядит
+  // незаконченной настройкой, а не красным «не работает». См. src/lib/wa-status-view.ts.
+  const waView = progress ? waStatusForViewer(progress.whatsapp, isSuperAdmin) : null;
+  const wa = channelState(Boolean(waView?.connected), (waView?.level ?? "idle") as any);
   const igConnected = Boolean(progress?.instagram?.connected);
   const ig = channelState(
     igConnected,

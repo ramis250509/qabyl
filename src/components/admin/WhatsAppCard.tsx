@@ -43,6 +43,7 @@ import {
 import { WaConnectButton, type SignupOutcome } from "@/components/admin/WaConnectButton";
 import { useAuth } from "@/lib/auth-client";
 import { humanError } from "@/lib/human-error";
+import { waStatusForViewer } from "@/lib/wa-status-view";
 
 type Config = Awaited<ReturnType<typeof getWaCloudConfig>>;
 type Status = Config["status"];
@@ -439,8 +440,9 @@ export function WhatsAppCard({ salonId }: { salonId: string }) {
       });
       // Говорим о результате словами состояния, а не списком технических шагов: «подключено,
       // тексты на проверке» понятнее, чем «template:visit_reminder — уже существует».
-      if (res.status.level === "ok") toast.success("WhatsApp подключён");
-      else toast.success(res.status.title);
+      const said = waStatusForViewer(res.status, isSuperAdmin);
+      if (said.level === "ok") toast.success("WhatsApp подключён");
+      else toast.success(said.title);
       await reload();
     } catch (e: any) {
       toast.error(humanError(e, "Не удалось завершить подключение"), { duration: 10000 });
@@ -455,8 +457,9 @@ export function WhatsAppCard({ salonId }: { salonId: string }) {
     try {
       const status = await recheck({ data: { salonId } });
       setCfg((c) => (c ? { ...c, status } : c));
-      toast[status.level === "error" ? "error" : status.level === "warn" ? "warning" : "success"](
-        status.title,
+      const said = waStatusForViewer(status, isSuperAdmin);
+      toast[said.level === "error" ? "error" : said.level === "warn" ? "warning" : "success"](
+        said.title,
       );
     } catch (e: any) {
       toast.error(humanError(e, "Проверка не удалась"));
@@ -517,7 +520,10 @@ export function WhatsAppCard({ salonId }: { salonId: string }) {
     );
   }
 
-  const status = cfg.status;
+  // Состояние глазами смотрящего. Сырое состояние знает про кредитную линию YCloud и про то, что
+  // WABA салона осталась без способа оплаты; владелице салона это ни о чём не говорит и чинится
+  // не ею. См. src/lib/wa-status-view.ts — правило одно на все четыре экрана.
+  const status = waStatusForViewer(cfg.status, isSuperAdmin);
   const connecting = busy === "connect";
 
   // Действие из состояния превращается в кнопку здесь и только здесь. Логика «что предлагать»

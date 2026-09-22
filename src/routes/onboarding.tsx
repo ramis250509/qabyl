@@ -56,6 +56,7 @@ import {
 } from "@/lib/onboarding.functions";
 import { WaConnectButton, type SignupOutcome } from "@/components/admin/WaConnectButton";
 import { finishWaOnboarding } from "@/lib/wa-onboarding.functions";
+import { waStatusForViewer } from "@/lib/wa-status-view";
 import { changeBillingPlan, getBillingOverview } from "@/lib/billing.functions";
 import { PlanCards, type PlanCardData } from "@/components/billing/PlanCards";
 import { markTourPending } from "@/components/admin/ProductTour";
@@ -712,7 +713,10 @@ function WhatsAppStep({
         },
       });
       setOk(true);
-      toast.success(res.status.level === "ok" ? "WhatsApp подключён" : res.status.title);
+      // Мастер настройки проходит владелец салона — платформенные состояния ему пересказываются
+      // (см. src/lib/wa-status-view.ts), поэтому isSuperAdmin здесь всегда false.
+      const said = waStatusForViewer(res.status, false);
+      toast.success(said.level === "ok" ? "WhatsApp подключён" : said.title);
       // Уведомления клиентам включаем сами: владелец только что подключил канал именно ради них,
       // и отдельный тумблер на следующем экране — это шаг, который забывают.
       await supabase.from("salons").update({ whatsapp_enabled: true }).eq("id", salonId);
@@ -989,7 +993,7 @@ function DoneStep({ slug, salonName }: { slug: string; salonName: string }) {
 
 function OnboardingWizard() {
   const navigate = useNavigate();
-  const { user, loading, rolesLoading, salonId, isSuperAdmin } = useAuth();
+  const { user, loading, rolesLoading, recovering, salonId, isSuperAdmin } = useAuth();
   const progressFn = useServerFn(getOnboardingProgress);
 
   const [step, setStep] = useState<StepKey | null>(null);
@@ -999,9 +1003,12 @@ function OnboardingWizard() {
   const [salonName, setSalonName] = useState("");
   const [waConnected, setWaConnected] = useState(false);
 
+  // recovering — то же правило, что и в /admin: пока auth-client поднимает сессию, человека
+  // никуда не уводим. Посреди мастера настройки такой вылет особенно дорог: теряется всё, что
+  // он успел заполнить.
   useEffect(() => {
-    if (!loading && !user) navigate({ to: "/auth", replace: true });
-  }, [loading, user, navigate]);
+    if (!loading && !recovering && !user) navigate({ to: "/auth", replace: true });
+  }, [loading, recovering, user, navigate]);
 
   // Куда попал человек, у которого уже что-то настроено. Шаг выбирается по СОСТОЯНИЮ БАЗЫ, а не
   // по тому, где он был в прошлый раз: перезагрузка страницы, второй браузер и возврат через
@@ -1042,7 +1049,7 @@ function OnboardingWizard() {
     })();
   }, [loading, rolesLoading, user, salonId, isSuperAdmin, navigate, progressFn]);
 
-  if (loading || rolesLoading || !step) return <FullScreenLoader />;
+  if (loading || recovering || rolesLoading || !step) return <FullScreenLoader />;
 
   const idx = STEPS.findIndex((s) => s.key === step);
   const canGoBack = idx > 0 && step !== "done";
