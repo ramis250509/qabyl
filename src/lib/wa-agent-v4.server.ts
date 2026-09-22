@@ -225,6 +225,7 @@ export function buildSystemPromptV4(
       ? `ФОРМАТ: можно оформлять сообщения структурно — короткие списки с маркером «-», переносы строк, несколько уместных эмодзи. НО markdown ЗАПРЕЩЁН (никаких **, __, \`, #) — мессенджер его не рендерит, клиент увидит сами звёздочки. Списки уместны там, где есть что перечислить (услуги, шаги, свободные времена); в обычном разговорном ответе на один вопрос пиши живым текстом, а не списком из одного пункта.`
       : `ФОРМАТ: один ответ — одно сообщение в мессенджере. Обычно 1–3 коротких абзаца; между разными мыслями ставь пустую строку, но не перенос после каждого предложения. Без списков, нумерации и markdown. Пример: «Да, конечно :)\n\nНа завтра есть 16:00 и 18:30. Какое время удобнее?»`,
     `ДЛИНА (ВАЖНО): пиши коротко, как человек в чате. Обычно 1–3 коротких предложения. Если достаточно одного предложения — отвечай одним. Длинные объяснения дроби на короткие мысли, не строчи «простынёй».`,
+    `АБЗАЦЫ (ВАЖНО): если в ответе больше одной мысли — раздели их ПУСТОЙ СТРОКОЙ, а не сваливай в один кусок. В мессенджере сплошной абзац из трёх предложений не читают. Это НЕ список: маркеры, дефисы и нумерация по-прежнему запрещены — просто мысль, пустая строка, следующая мысль. Правильно: «Отлично!⏎⏎Передаю ваш запрос администратору.⏎⏎Он свяжется с вами в ближайшее время.» Неправильно: те же три предложения подряд одной строкой.`,
     `Даже объясняя процедуру («что такое кератин?») — уложись в 2–3 живых предложения по сути и предложи спросить детали, а НЕ выдавай абзац-лекцию. Клиент в мессенджере не читает длинные тексты.`,
     config.rich_formatting
       ? `Тепло и по-человечески, без канцелярита. Эмодзи используй уместно — они должны помогать читать, а не превращать сообщение в ёлку. Никогда не говори, что ты бот, ИИ или ассистент.`
@@ -661,7 +662,8 @@ const V4_TOOL_DECLARATIONS = [
   },
   {
     name: "get_my_appointments",
-    description: "Предстоящие записи этого клиента (для отмены/переноса). Ответ содержит настоящие service_id и master_id: для check_time/get_available_slots используй ТОЛЬКО их, не угадывай UUID по имени.",
+    description:
+      "Предстоящие записи этого клиента (для отмены/переноса). Ответ содержит настоящие service_id и master_id: для check_time/get_available_slots используй ТОЛЬКО их, не угадывай UUID по имени.",
     parameters: { type: "object", properties: {} },
   },
   {
@@ -2662,6 +2664,35 @@ export function humanizeReply(raw: string, opts?: { rich?: boolean }): string {
 // is exactly the "техническая ошибка на каждый ответ" symptom. Fix: drop leading entries until
 // the first genuine user text message — always a valid, self-contained conversation start. This
 // also self-heals conversations already stuck with a corrupted history (no /restart needed).
+/**
+ * Разбить «простыню» на абзацы. Промпт просит об этом же, но просьба — не гарантия.
+ *
+ * ЗАЧЕМ. «Отлично! Я передаю Ваш запрос администратору. Он свяжется с Вами в ближайшее время,
+ * чтобы обсудить детали.» одной строкой в мессенджере не читают — глаз соскальзывает. Те же три
+ * предложения через пустую строку читаются мгновенно.
+ *
+ * ЧЕГО НЕ ТРОГАЕМ. Ответ, где переносы уже есть, — модель (или шаблон сводки подтверждения)
+ * расставила их осознанно, и переформатировать их значит сломать сводку. Короткие ответы тоже:
+ * дробить два предложения на два абзаца — это уже рубленая речь, а не забота о читателе.
+ *
+ * ГДЕ РЕЖЕМ. Только на границе предложений, и только если перед точкой не меньше трёх букв: иначе
+ * «Ахунбаева 189, г. Бишкек» разваливается по «г.» — адрес салона в каждом втором ответе.
+ */
+export function splitIntoParagraphs(reply: string): string {
+  const text = (reply ?? "").trim();
+  if (!text || text.includes("\n")) return reply;
+  // Совсем короткий ответ абзацами не улучшить — получится рубленая речь.
+  if (text.length < 90) return reply;
+
+  const parts = text.split(/(?<=[\p{Ll}\p{N}]{3}[.!?])\s+(?=[\p{Lu}])/gu).map((s) => s.trim());
+  // РЕШАЕТ ЧИСЛО МЫСЛЕЙ, А НЕ ДЛИНА. Порог по символам я поставил первым — и он промахнулся:
+  // «Мы находимся по адресу…, работаем с 9 до 21, ждём вас!» — три мысли и ровно та простыня, на
+  // которую жалуются, но в 122 символа, то есть ниже любого разумного порога. Два предложения
+  // оставляем вместе, больше четырёх не трогаем: это уже не забота о читателе, а рубка текста.
+  if (parts.length < 3 || parts.length > 4) return reply;
+  return parts.join("\n\n");
+}
+
 export function sanitizeGeminiHistory(history: GeminiV2Content[]): GeminiV2Content[] {
   if (!Array.isArray(history)) return [];
   let i = 0;
@@ -3420,9 +3451,10 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   // while still catching wholesale fabrication.
   const OFFER_RE =
     /(свободн|есть\s+окош|окошк|могу\s+предложить|предлож|подойд[её]т|удобно\s+будет|запишу\s+вас\s+на)|(бош\s+убак|орун\s+бар|жаз(ып)?\s+кой)|(available|free\s+slots?|i\s+can\s+offer|would\s+\w+\s+work)/i;
-  const clockTimesInReply = (text: string) => [...text.matchAll(/\b([01]?\d|2[0-3]):([0-5]\d)\b/g)].map(
-    (m) => `${m[1].padStart(2, "0")}:${m[2]}`,
-  );
+  const clockTimesInReply = (text: string) =>
+    [...text.matchAll(/\b([01]?\d|2[0-3]):([0-5]\d)\b/g)].map(
+      (m) => `${m[1].padStart(2, "0")}:${m[2]}`,
+    );
   // A fresh availability question is different from repeating an already agreed time later in
   // the chat. The latter may be safe without a new tool call; the former must never get invented
   // slot offers. This was observed when get_services ran but get_available_slots was skipped.
@@ -3430,14 +3462,24 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     .filter((m) => m.direction === "in")
     .map((m) => m.text_body ?? "")
     .join(" ");
-  const asksAvailability = /(завтра|послезавтра|сегодня|когда|врем[яени]|час|окош|свобод|можно|барбы|качан|эртең|бүгүн|available|tomorrow|today)/i.test(latestClientText);
-  if (!slotToolRanThisTurn && asksAvailability && OFFER_RE.test(reply) && clockTimesInReply(reply).length > 0) {
+  const asksAvailability =
+    /(завтра|послезавтра|сегодня|когда|врем[яени]|час|окош|свобод|можно|барбы|качан|эртең|бүгүн|available|tomorrow|today)/i.test(
+      latestClientText,
+    );
+  if (
+    !slotToolRanThisTurn &&
+    asksAvailability &&
+    OFFER_RE.test(reply) &&
+    clockTimesInReply(reply).length > 0
+  ) {
     debug.errors.push("unverified_slot_offer_forcing_retry");
     contents.push({
       role: "user",
-      parts: [{
-        text: "СИСТЕМА: ты предложил конкретные свободные часы, но НЕ проверил календарь в этом ходе. Это неподтверждённые слоты. Молча вызови get_available_slots для нужной услуги и даты (или check_time для одного конкретного часа), затем назови ТОЛЬКО времена из ответа инструмента. Если календарь недоступен — не называй часы, передай вопрос администратору.",
-      }],
+      parts: [
+        {
+          text: "СИСТЕМА: ты предложил конкретные свободные часы, но НЕ проверил календарь в этом ходе. Это неподтверждённые слоты. Молча вызови get_available_slots для нужной услуги и даты (или check_time для одного конкретного часа), затем назови ТОЛЬКО времена из ответа инструмента. Если календарь недоступен — не называй часы, передай вопрос администратору.",
+        },
+      ],
     });
     const retry = await runToolLoop();
     if (retry) reply = retry;
@@ -3828,6 +3870,10 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
         );
       })()
     : undefined;
+
+  // Последний шаг перед отправкой: разбить «простыню» на абзацы. Промпт просит о том же, но
+  // просьба — не гарантия, а читаемость ответа не должна зависеть от настроения модели.
+  reply = splitIntoParagraphs(reply);
 
   return {
     reply,
