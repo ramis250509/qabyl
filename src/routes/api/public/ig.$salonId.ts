@@ -889,7 +889,7 @@ async function ingestEvent(opts: {
       audio && /^audio\//i.test(audio.mime) ? audio.mime.split(";")[0].trim() : "audio/mp4";
     const tr = audio
       ? await transcribeAudio({
-          apiKey: (process.env.Gemini_API_Key || process.env.GEMINI_API_KEY) ?? "",
+          apiKey: process.env.GEMINI_API_KEY ?? "",
           audioBase64: Buffer.from(audio.bytes).toString("base64"),
           mime: audioMime,
         })

@@ -3,6 +3,8 @@
 // No Lovable Gateway, no tool-loop hallucinations — deterministic TS code drives
 // services/masters/slots from DB; Gemini only classifies intent and renders text.
 
+import { type PhotoPricingConfig, type PhotoClassification } from "./photo-pricing";
+
 type AdminClient = Awaited<ReturnType<typeof getAdmin>>;
 async function getAdmin() {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
@@ -1991,6 +1993,75 @@ export async function fetchMergedSlots(opts: {
 // Photo pricing (Gemini Vision)
 // ============================================================
 
+export async function classifyPhotoForPrice(opts: {
+  apiKey: string;
+  imageBase64: string;
+  mime: string;
+  serviceName: string;
+  config: PhotoPricingConfig;
+}): Promise<PhotoClassification | { error: string }> {
+  const criteria = opts.config.criteria.map((c) => ({
+    id: c.id,
+    label: c.label,
+    options: c.options.map((o) => ({ id: o.id, label: o.label })),
+  }));
+  const result = await callGemini({
+    model: MODEL_VISION,
+    apiKey: opts.apiKey,
+    systemInstruction: `Оцени фото для услуги «${opts.serviceName}». Верни только видимые признаки из списка: ${JSON.stringify(criteria)}. Не определяй и не называй цену. В values перечисли пары criterion_id/option_id только для различимых признаков; неразличимые добавь в uncertain. Если фото не относится к услуге — relevant=false. Не угадывай по плохому свету, обрезанным волосам или неподходящему ракурсу.`,
+    parts: [
+      { inline_data: { mime_type: opts.mime, data: opts.imageBase64 } },
+      { text: "Определи видимые признаки по фото. Не угадывай." },
+    ],
+    responseMimeType: "application/json",
+    responseSchema: {
+      type: "object",
+      properties: {
+        relevant: { type: "boolean" },
+        values: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              criterion_id: { type: "string" },
+              option_id: { type: "string" },
+            },
+            required: ["criterion_id", "option_id"],
+          },
+        },
+        uncertain: { type: "array", items: { type: "string" } },
+      },
+      required: ["relevant", "values", "uncertain"],
+    },
+    temperature: 0,
+    maxOutputTokens: 512,
+    thinkingBudget: 0,
+    mediaResolution: "MEDIA_RESOLUTION_MEDIUM",
+  });
+  if (!result.ok || !result.text) return { error: result.error ?? "vision failed" };
+  try {
+    const value = JSON.parse(result.text);
+    if (
+      typeof value.relevant !== "boolean" ||
+      !Array.isArray(value.values) ||
+      !Array.isArray(value.uncertain)
+    )
+      return { error: "invalid vision classification" };
+    const values: Record<string, string> = {};
+    for (const pair of value.values) {
+      if (typeof pair?.criterion_id === "string" && typeof pair?.option_id === "string")
+        values[pair.criterion_id] = pair.option_id;
+    }
+    return {
+      relevant: value.relevant,
+      values,
+      uncertain: value.uncertain.filter((x: unknown) => typeof x === "string"),
+    };
+  } catch {
+    return { error: "invalid vision JSON" };
+  }
+}
+
 // Deterministic 32-bit hash from a string — used to derive a stable Gemini `seed` per
 // (image + service + salon-config). Same photo + same salon → same seed → same price on
 // repeat calls. Cheap and dependency-free (djb2-xor).
@@ -2257,7 +2328,7 @@ function matchMasterByName(masters: DbMaster[], name: string | undefined): DbMas
 // ============================================================
 
 export async function runWaAgent(input: WaAgentInput): Promise<WaAgentResult> {
-  const apiKey = process.env.Gemini_API_Key || process.env.GEMINI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return {
       reply: "Ассистент временно недоступен. Администратор салона ответит вам в ближайшее время.",
@@ -3954,7 +4025,7 @@ async function translateGreetingV3(
 
 export async function runWaAgentV3(input: WaAgentInput): Promise<WaAgentResult> {
   const db = await getAdmin();
-  const apiKey = (process.env.Gemini_API_Key || process.env.GEMINI_API_KEY) ?? "";
+  const apiKey = process.env.GEMINI_API_KEY ?? "";
   const tz = input.salon.timezone;
   const debug: WaAgentResult["debug"] = { actions: [], errors: [] };
 

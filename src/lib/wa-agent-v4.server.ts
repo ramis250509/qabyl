@@ -23,7 +23,7 @@ import {
   loadMastersForService,
   nowInTz,
   buildDateMap,
-  priceFromPhoto,
+  classifyPhotoForPrice,
   type DbMaster,
   type GeminiV2Content,
   type WaAgentInput,
@@ -31,6 +31,7 @@ import {
   type WaAgentState,
   type WaAgentStateData,
 } from "@/lib/wa-agent.server";
+import { calculatePhotoPrice, photoBookingPrice, validatePhotoConfig } from "@/lib/photo-pricing";
 import { INDUSTRY_EXPERT } from "@/lib/wa-industries.server";
 import { INDUSTRIES_META, normalizeIndustry, type IndustryKey } from "@/lib/industries";
 import { bookingUrl } from "@/lib/booking-link";
@@ -222,7 +223,7 @@ export function buildSystemPromptV4(
     // whichever one is active, so prompt and post-processor can never disagree.
     config.rich_formatting
       ? `ФОРМАТ: можно оформлять сообщения структурно — короткие списки с маркером «-», переносы строк, несколько уместных эмодзи. НО markdown ЗАПРЕЩЁН (никаких **, __, \`, #) — мессенджер его не рендерит, клиент увидит сами звёздочки. Списки уместны там, где есть что перечислить (услуги, шаги, свободные времена); в обычном разговорном ответе на один вопрос пиши живым текстом, а не списком из одного пункта.`
-      : `ФОРМАТ (СТРОГО): только сплошной связный текст. ЗАПРЕЩЕНЫ списки, пункты, нумерация «1.» «2.» «3.», маркеры «-»/«•» и любой markdown (никаких ** и #). Даже сравнивая две процедуры — пиши обычными предложениями, а не списком. Неправильно: «1. Ботокс… 2. Кератин…». Правильно: «Ботокс — про восстановление и блеск, а кератин — про гладкость. После осветления я бы начала с ботокса.»`,
+      : `ФОРМАТ: один ответ — одно сообщение в мессенджере. Обычно 1–3 коротких абзаца; между разными мыслями ставь пустую строку, но не перенос после каждого предложения. Без списков, нумерации и markdown. Пример: «Да, конечно :)\n\nНа завтра есть 16:00 и 18:30. Какое время удобнее?»`,
     `ДЛИНА (ВАЖНО): пиши коротко, как человек в чате. Обычно 1–3 коротких предложения. Если достаточно одного предложения — отвечай одним. Длинные объяснения дроби на короткие мысли, не строчи «простынёй».`,
     `Даже объясняя процедуру («что такое кератин?») — уложись в 2–3 живых предложения по сути и предложи спросить детали, а НЕ выдавай абзац-лекцию. Клиент в мессенджере не читает длинные тексты.`,
     config.rich_formatting
@@ -273,7 +274,7 @@ export function buildSystemPromptV4(
       ? `Филиалы:\n${branches.map((b) => `- ${b.name}${b.address ? ` (${b.address})` : ""} [id: ${b.id}]`).join("\n")}`
       : "",
     mastersRoster
-      ? `${sn.nomPl.toUpperCase()} САЛОНА (ЕДИНСТВЕННО ВЕРНЫЙ список — называй ТОЛЬКО эти имена, НИКОГДА не выдумывай других ${sn.genPl}): ${mastersRoster}. Если клиент называет ${sn.accSg} НЕ из этого списка — скажи, что такого ${sn.genSg} нет, и назови реальных отсюда. Точный master_id для записи всё равно бери из get_masters (он отфильтрует по услуге и филиалу), но имена — только из этого списка.`
+      ? `${sn.nomPl.toUpperCase()} САЛОНА (ЕДИНСТВЕННО ВЕРНЫЙ список — называй ТОЛЬКО эти имена, НИКОГДА не выдумывай других ${sn.genPl}): ${mastersRoster}. Если клиент называет ${sn.accSg} НЕ из этого списка — скажи, что такого ${sn.genSg} нет, и назови реальных отсюда. Точный master_id для проверки времени и записи бери из get_masters (он отфильтрует по услуге и филиалу); НИКОГДА не угадывай UUID по имени. unknown_master от check_time означает ошибочный ID, а НЕ отсутствие названного человеком мастера — используй known_masters из ответа и повтори проверку. Имена — только из этого списка.`
       : "",
     // CLOSED-LIST grounding: the actual, complete price list for THIS salon. Same idea as the
     // masters roster right above — a text-based hard constraint the model reads before it starts
@@ -349,18 +350,16 @@ ${servicesRoster}
     ``,
     ...(ind.usesPhotoPricing
       ? [
-          `ОЦЕНКА СТОИМОСТИ ПО ФОТО — работай как ${sn.nomSg} с 20-летним опытом, а НЕ выдавай среднее число:`,
-          `- Сначала узнай вилку услуги из get_services (price_type=range даёт минимум и максимум). Оценка обязана лежать внутри этой вилки.`,
-          `- Определяй цену по тому, что видно на фото: длина волос, густота, объём, степень повреждения и пористость, следы прошлых окрашиваний/осветлений, сложность работы, предполагаемый расход состава и время работы ${sn.genSg}. Короткие/тонкие волосы — ближе к нижней границе; длинные/густые/повреждённые — ближе к верхней.`,
-          `- Назови УЗКИЙ диапазон (в идеале шириной ~200–500 сом), а не всю вилку и не ровную середину. Говори как живой ${sn.nomSg}, естественно. Пример стиля: «Ийинден болсо 3200–3700 эсептесеңиз болот, эже» / «По фото где-то 3200–3500 сом получится».`,
-          `- После УЗКОГО диапазона можно добавить одну мягкую фразу, что финальную цифру ${sn.nomSg} подтвердит на месте — но ТОЛЬКО как приписку к уже названной узкой оценке, а НЕ вместо неё. Отсылать к мастеру «на месте» вместо оценки, когда данные для оценки есть, — запрещено.`,
+          `ОЦЕНКА СТОИМОСТИ ПО ФОТО: фото помогает определить только заданные салоном видимые критерии. Не придумывай ни параметров, ни цены.`,
+          `- Узнай услугу из get_services. Для диапазонной услуги вызови estimate_price_from_photo. Только при success=true назови price_label из инструмента дословно.`,
+          `- Если инструмент вернул needs — коротко попроси другое фото или уточни недостающий параметр. Если unconfigured — скажи только общую вилку из каталога; точную сумму без правил салона обещать нельзя.`,
         ]
       : [
           `ЦЕНА для услуг с диапазоном (price_type=range) — НЕ отсылай сразу к мастеру «на месте». Порядок жёсткий:
   A) Назови актуальный диапазон из get_services («от X до Y сом»).
   B) Одним предложением объясни, от чего зависит итоговая цена в этой конкретной услуге (зона, длина, объём, сложность, вид процедуры — бери факторы из pricing_rules салона и из книги знаний). Не общими словами «зависит от сложности», а конкретными факторами именно для этой услуги.
   C) Задай ОДНИМ компактным сообщением все действительно нужные уточняющие вопросы, чтобы сузить оценку: подвид/зона услуги, длительность, объём, при необходимости — фото. НЕ задавай вопросы по одному, НЕ спрашивай данные, которые для этой услуги не влияют на цену.
-  D) Получив ответы — назови максимально точную цифру или ЗАМЕТНО суженный диапазон (в идеале ширина ≤ 500 сом от валюты салона). Только если после уточнений всё ещё честно нельзя оценить (клиент не даёт данных, фото не читается, случай пограничный) — тогда мягко предложи очную оценку у мастера/врача.
+  D) Получив ответы — называй точную цифру только если она однозначно следует из явных правил салона; иначе оставайся в каталожной вилке и предложи уточнение у специалиста. Не вычисляй стоимость на глаз.
   E) Пока вопрос о стоимости не закрыт — НЕ спрашивай имя клиента и НЕ предлагай запись. Когда цена согласована — действуй по стилю продаж: ${priceFollowUp}
   Пример правильного ответа: «Шугаринг бикини у нас стоит от 250 до 2000 сом — цена зависит от выбранной зоны (классическое или глубокое) и сложности. Подскажите, какое из двух вам нужно? Если сомневаетесь — можно прислать фото зоны, я подскажу точнее».
   Пример НЕПРАВИЛЬНОГО ответа (запрещено): «Стоит от X до Y. Точную назовёт мастер на месте. На какой день вас записать?» — здесь пропущены объяснение и уточнение, и происходит переход к записи без согласованной цены.`,
@@ -421,7 +420,7 @@ ${servicesRoster}
     `- ВЫБОР ${sn.genSg.toUpperCase()} (ОБЯЗАТЕЛЬНО перед подтверждением записи): вызови get_masters и называй ${sn.accPl} ИСКЛЮЧИТЕЛЬНО их реальными именами из ответа get_masters. НИКОГДА не выдумывай имена ${sn.genPl} и НЕ бери имена из примеров этой инструкции — у каждого салона свои ${sn.nomPl}. Если услугу выполняют НЕСКОЛЬКО ${sn.genPl} — до записи ОБЯЗАТЕЛЬНО предложи выбрать из этих реальных имён («К какому ${sn.datSg} записать? Или любой свободный?»). Если у ${sn.genSg} указана specialization/bio_short — порекомендуй по сильной стороне. Когда клиент называет ${sn.accSg} — сопоставь его слова с реальным списком get_masters (учитывай склонения и опечатки); если ни с кем не совпало — покажи реальные имена и переспроси, НЕ придумывай. В create_appointment передавай master_id ТОЛЬКО реального ${sn.genSg} из get_masters. «Всё равно / любой» — выбери сам и назови, кого записал. Если ${sn.nomSg} один — не спрашивай, просто веди к записи.`,
     `- СВОБОДНОЕ ВРЕМЯ ПРИВЯЗАНО К ${sn.datSg.toUpperCase()} (КРИТИЧНО): get_available_slots и check_time БЕЗ master_id показывают время, свободное У ЛЮБОГО ${sn.genSg} — это НЕ значит, что оно свободно у конкретного. Как только клиент выбрал конкретного ${sn.accSg}, а время уже обсуждалось (или наоборот — сначала время, потом ${sn.accSg}) — ОБЯЗАТЕЛЬНО перепроверь это время именно для выбранного ${sn.genSg}: вызови check_time с его master_id ПЕРЕД тем, как спрашивать имя и показывать сводку. Никогда не подтверждай время, не убедившись через инструмент, что оно свободно ИМЕННО у выбранного ${sn.genSg}.`,
     `- ЕСЛИ ВЫБРАННЫЙ ${sn.nomSg.toUpperCase()} НА ЭТО ВРЕМЯ ЗАНЯТ, А ДРУГОЙ СВОБОДЕН: check_time вернёт other_masters_free_at_this_time (а create_appointment — masters_free_at_requested_time) — это реальные имена ${sn.genPl}, свободных на ТО ЖЕ время. Сразу предложи их клиенту («К Айгуль на 17:00 занято, но на это же время свободна Айжан — записать к ней? Или подобрать другое время у Айгуль?»). НЕ упирайся молча в «занято» и не заставляй клиента менять время, если тот же час доступен у другого ${sn.genSg}. Запиши только после согласия клиента.`,
-    `- ЦЕНЫ: get_services даёт price_min, price_max (числа) и price_label. Для услуги с диапазоном сначала назови общую вилку, затем уточни у клиента параметры (см. блок ЦЕНА выше) и сузь оценку. Отсылка «точную цену назовёт ${sn.nomSg} на месте» допустима как приписка к УЖЕ СУЖЕННОЙ оценке или как честный ответ, когда данных для сужения нет — НЕ как замена оценки. Согласовали конкретную сумму → передай её в create_appointment как price_override (сервер удержит её в пределах price_min…price_max). Никогда не называй цену вне вилки и не считай стоимость «на глаз» без этих чисел.`,
+    `- ЦЕНЫ: get_services даёт price_min, price_max и price_label. Для услуги с диапазоном называй каталоговую вилку; более точную цену называй только когда она следует из явных правил салона или вернулась из estimate_price_from_photo с success=true. Без правил честно скажи, что точную цену уточнит ${sn.nomSg}. Не выдумывай скидку или промежуточное число. При записи цена по фото автоматически сохраняется сервером; никогда не передавай другую сумму как price_override.`,
     `- АКЦИИ И СПЕЦПРЕДЛОЖЕНИЯ (ОБЯЗАТЕЛЬНО): если в фактах о салоне / книге знаний есть акция или подарок, связанные с услугой, о которой спрашивает или на которую записывается клиент, — упомяни её САМ, естественно и заранее (при обсуждении услуги и до подтверждения записи), НЕ дожидаясь вопроса клиента. Пример: клиент интересуется кератином, а есть акция «кератин + стрижка + СПА + ботокс в подарок» — расскажи о ней («кстати, сейчас на кератин действует акция — …»). Никогда не выдумывай акции, которых нет в фактах салона.`,
     `- ИМЯ КЛИЕНТА (ОБЯЗАТЕЛЬНО, без него не записывать): перед записью ВСЕГДА спроси имя клиента естественным вопросом — «Как вас зовут?» или «Подскажите, пожалуйста, ваше имя». НИКОГДА не используй формулировку «Как вас записать?» — она непонятна клиентам. Пропустить вопрос можно в ДВУХ случаях: клиент сам назвал имя в этом диалоге, ИЛИ get_client_context вернул client_name — так он представился при прошлой записи. Во втором случае обратись по имени и НЕ переспрашивай: постоянный клиент, которого каждый раз спрашивают «как вас зовут», понимает, что его не помнят. НИКОГДА не придумывай имя, не бери его из WhatsApp-профиля/названия чата и не подставляй заглушки вроде «Клиент» — в client_name должно попасть имя, которое клиент назвал сам.`,
     `- ОБЯЗАТЕЛЬНОЕ ПОДТВЕРЖДЕНИЕ ПЕРЕД ЗАПИСЬЮ (КРИТИЧНО, железное правило): НИКОГДА не вызывай create_appointment, пока не показал клиенту полную сводку записи И не получил на неё явное «да». Сначала отправь клиенту красиво оформленную сводку ОТДЕЛЬНЫМ сообщением ровно в таком формате (каждый пункт с новой строки, эмодзи в НАЧАЛЕ строки, БЕЗ маркеров «-»/«•», без markdown-жирности «**», без нумерации — это единственное место, где допускается такой построчный формат вместо сплошного текста):
@@ -456,7 +455,7 @@ ${servicesRoster}
     `- ВЫХОДНЫЕ И ГРАФИК (КАТЕГОРИЧЕСКИ): НИКОГДА не выдумывай выходные, нерабочие дни, праздники и часы работы. Утверждать «в этот день выходной / мы не работаем» можно ТОЛЬКО в двух случаях: (1) инструмент вернул reason=closed_that_day, либо (2) эта дата прямо указана в блоке «ВЫХОДНЫЕ ДНИ» или в фактах салона выше. Во всех остальных случаях — включая reason=hours_not_configured, отсутствие данных или пустой календарь — говорить о выходном ЗАПРЕЩЕНО. Нет данных → скажи, что не видишь свободного времени на эту дату, предложи другие дни или передай администратору. Не предполагай график «по логике» (например, что понедельник или воскресенье обычно выходной) — у тебя нет такой информации.`,
     `- ГАРАНТИЯ/СРОКИ: точную гарантию салона называй ТОЛЬКО если она есть в фактах о салоне выше. Не придумывай срок гарантии. И следи за логикой: гарантия не может быть длиннее, чем держится результат (напр. если кератин держится 3–5 месяцев, гарантия в «10 месяцев» — бессмыслица). Если салон не задал гарантию — честно скажи, что условия уточнит ${sn.nomSg}, не выдумывай цифру.`,
     `- ЗДОРОВЬЕ И БЕЗОПАСНОСТЬ (АВТО-ЭСКАЛАЦИЯ, критично): если клиент сам сообщает о беременности, аллергии на препараты/материалы, хроническом заболевании, приёме лекарств, свежих травмах/операциях, кожных заболеваниях в зоне процедуры, онкологии, сердечно-сосудистых проблемах или другом потенциально опасном факторе — НЕ решай сам, безопасна ли услуга, и НЕ дожидайся, пока клиент спросит. Сразу вызови escalate_to_human (в reason кратко перечисли, что назвал клиент), а клиенту тепло скажи: «Спасибо, что предупредили — по такому случаю ${sn.datSg} нужно оценить лично, передаю ваш запрос ${sn.datSg}, он свяжется с вами». Общую информацию из базы знаний дать можно, но окончательное «можно/нельзя» — только специалист.`,
-    `- ЦЕНА ПО ФОТО ДЛЯ УСЛУГ С ДИАПАЗОНОМ (СТРОГО, детерминизм): НИКОГДА не выдумывай price_band сам. Как только у тебя есть фото И услуга price_type=range — ОБЯЗАТЕЛЬНО вызови estimate_price_from_photo (service_id). Инструмент вернёт {price_low, price_high, explanation, confidence}: используй его цифры дословно как узкий диапазон, скажи причину из explanation, и только потом сохрани в remember_photo. Одинаковое фото + одна услуга → всегда один диапазон. Если confidence=low — честно скажи, что точную назовёт мастер, и попроси доп. фото/данные. ЗАПРЕЩЕНО называть price_band, не вызвав estimate_price_from_photo.`,
+    `- ЦЕНА ПО ФОТО: не выводи цифры из изображения сам. Для услуги с диапазоном вызови estimate_price_from_photo (service_id). Только success=true разрешает назвать рассчитанную инструментом цену; при needs попроси другое фото или коротко уточни недостающий критерий, при unconfigured назови только общий диапазон каталога и скажи, что точную цену уточнит мастер. Никогда не обещай точную цену без настроенных правил салона.`,
     `- «НЕТ СВОБОДНОГО ВРЕМЕНИ» — только по факту инструмента (СТРОГО): фразы «свободных окон нет», «занято», «жок экен», «bош убакыт жок», «no free time», «all booked» РАЗРЕШЕНЫ только если В ЭТОМ ЖЕ ХОДЕ инструмент get_available_slots вернул reason=fully_booked / part_unavailable / closed_that_day / master_off_that_day / hours_not_configured. Если ты НЕ вызывал get_available_slots в этом ходе — не имеешь права утверждать, что времени нет. Вызови инструмент, посмотри реальный ответ, потом уже говори.`,
     `- Не обещай «100%» результат и не преувеличивай сроки.`,
     `- create_appointment — только после явного «да» («да», «записывайте», «ооба», «макул»).`,
@@ -609,7 +608,7 @@ const V4_TOOL_DECLARATIONS = [
   {
     name: "check_time",
     description:
-      "Проверить, свободно ли КОНКРЕТНОЕ время на дату (когда клиент называет час, напр. «17:00 барбы?»). Возвращает точный ответ да/нет из календаря и ближайшие свободные времена. Всегда используй это, прежде чем сказать, что время занято.",
+      "Проверить, свободно ли КОНКРЕТНОЕ время на дату (когда клиент называет час, напр. «17:00 барбы?»). Возвращает точный ответ да/нет из календаря и ближайшие свободные времена. Всегда используй это, прежде чем сказать, что время занято. master_id бери только из get_masters/get_my_appointments; не придумывай UUID из имени. unknown_master означает неверный ID, не отсутствие мастера.",
     parameters: {
       type: "object",
       properties: {
@@ -662,7 +661,7 @@ const V4_TOOL_DECLARATIONS = [
   },
   {
     name: "get_my_appointments",
-    description: "Предстоящие записи этого клиента (для отмены/переноса).",
+    description: "Предстоящие записи этого клиента (для отмены/переноса). Ответ содержит настоящие service_id и master_id: для check_time/get_available_slots используй ТОЛЬКО их, не угадывай UUID по имени.",
     parameters: { type: "object", properties: {} },
   },
   {
@@ -729,7 +728,7 @@ const V4_TOOL_DECLARATIONS = [
   {
     name: "estimate_price_from_photo",
     description:
-      "Детерминистичная оценка стоимости услуги с price_type=range по фото клиента. Инструмент сам берёт ПОСЛЕДНЕЕ фото из этого хода, вызывает vision-модель с фиксированным seed и правилами салона, и возвращает УЗКИЙ диапазон {price_low, price_high, explanation, confidence}, кратный 500 сомам. Одинаковое фото + одна услуга → всегда один и тот же диапазон. Используй ТОЛЬКО этот инструмент для цен по фото — сам price_band не выдумывай. Если фото в этом ходу нет — инструмент вернёт error, тогда попроси прислать фото.",
+      "Оценивает фото только по настроенным владельцем критериям услуги. Vision определяет признаки, цена вычисляется кодом. success=true содержит точную цену. needs означает, что фото не позволяет честно оценить; unconfigured — можно назвать только общий диапазон каталога, но не оценку по фото.",
     parameters: {
       type: "object",
       properties: {
@@ -799,6 +798,7 @@ type V4RunFlags = {
   needsHuman: boolean;
   escalateReason: string | null;
   photoNotes: PhotoNote[]; // structured photo analyses persisted across turns
+  photoQuote: { serviceId: string; price: number; at: number } | null;
   // Set the turn a booking is created, so the final reply can append the self-service link. The
   // INSERT confirmation trigger skips ai_assistant bookings, so this is the only delivery path.
   justBookedManageUrl?: string | null;
@@ -1547,6 +1547,23 @@ export async function executeV4Tool(
           note: "master_id некорректный (не UUID из get_masters). Вызови get_masters и передай настоящий id, либо не указывай master_id.",
         };
       }
+      if (args.master_id) {
+        const eligible = await loadMastersForService(
+          db,
+          input.salon.salonId,
+          args.service_id as string,
+          (args.branch_id as string | null) ?? flags.selectedBranchId ?? null,
+        );
+        if (!eligible.some((master) => master.id === args.master_id)) {
+          return {
+            date: args.date,
+            reason: "master_not_for_service",
+            free_times: [],
+            slots: [],
+            note: "Этот master_id не относится к активным мастерам данной услуги в этом салоне/филиале. НЕ говори клиенту, что график не заполнен или мастер занят. Вызови get_masters с этим service_id и выбери ID из ответа.",
+          };
+        }
+      }
       // Reject a past date UP FRONT — same class as the UUID guard above. Gemini has been
       // observed passing today when it meant tomorrow (or yesterday when it meant today), and the
       // SQL then correctly filters every already-past slot as unavailable → merged view returns
@@ -1650,6 +1667,24 @@ export async function executeV4Tool(
           reason: "unknown_master",
           note: "master_id некорректный (не UUID из get_masters). Вызови get_masters и передай настоящий id, либо не указывай master_id.",
         };
+      }
+      if (args.master_id) {
+        const eligible = await loadMastersForService(
+          db,
+          input.salon.salonId,
+          args.service_id as string,
+          (args.branch_id as string | null) ?? flags.selectedBranchId ?? null,
+        );
+        if (!eligible.some((master) => master.id === args.master_id)) {
+          return {
+            date: args.date,
+            requested: hhmm,
+            available: false,
+            reason: "unknown_master",
+            known_masters: eligible.map((master) => ({ id: master.id, name: master.name })),
+            note: "Неизвестный master_id НЕ означает, что мастера нет, он не оказывает услугу или занят. Это ошибка ID. Найди названного клиентом мастера в known_masters и повтори check_time с его настоящим id; если его там нет, уточни через get_masters.",
+          };
+        }
       }
       // Past-date guard mirrors get_available_slots: a "check_time" on yesterday must not lie
       // to the client with "занято" — say the date is past and ask them to pick a real day.
@@ -1982,15 +2017,36 @@ export async function executeV4Tool(
         _addon_ids: [],
         _source: "ai_assistant",
       };
-      if (args.price_override != null) {
+      const bookingPrice = photoBookingPrice(
+        flags.photoQuote,
+        String(args.service_id),
+        args.price_override,
+      );
+      if ("error" in bookingPrice)
+        return {
+          success: false,
+          error: bookingPrice.error,
+          note: "Указанная цена не совпадает с оценкой по фото. Уточни у клиента, не создавай запись с другой суммой.",
+        };
+      if (bookingPrice.price != null) {
         // Clamp the agreed price into the service's [min, max] range so the model can never
         // book below the floor or above the ceiling of a range-priced service.
         rpcArgs._price_override = await clampPriceOverride(
           db,
           input.salon.salonId,
           args.service_id as string,
-          Number(args.price_override),
+          bookingPrice.price,
         );
+        if (
+          flags.photoQuote?.serviceId === args.service_id &&
+          rpcArgs._price_override !== bookingPrice.price
+        ) {
+          return {
+            success: false,
+            error: "photo_quote_outside_current_catalog",
+            note: "Прайс изменился после оценки фото. Не создавай запись с другой суммой; уточни актуальную цену у администратора.",
+          };
+        }
       }
       // Photo-assessed duration for range-duration services. The RPC clamps it into the service's
       // [duration_min, duration_max_min] and ignores it for fixed-duration services, so it is safe
@@ -2018,6 +2074,7 @@ export async function executeV4Tool(
         }
         const h = held as any;
         flags.appointmentId = h.appointment_id as string;
+        flags.photoQuote = null;
         const cfgAny = prepayCfg as any;
         // Multi-tenant guard on the QR. prepayCfg was fetched by salon_id so a mismatch is
         // not reachable through normal code — but this image is about to be sent to a paying
@@ -2120,6 +2177,7 @@ export async function executeV4Tool(
         return { success: false, error: error.message };
       }
       flags.appointmentId = newId as string;
+      flags.photoQuote = null;
       if (args.branch_id) flags.selectedBranchId = args.branch_id as string;
       flags.justBookedManageUrl = await fetchManageUrlV4(db, newId as string);
       console.log(
@@ -2134,7 +2192,7 @@ export async function executeV4Tool(
       // is out of scope for this assistant, same as masters/schedule/slots above.
       let q = db
         .from("appointments")
-        .select("id, starts_at, services(name), masters(name)")
+        .select("id, service_id, master_id, starts_at, services(name), masters(name)")
         .eq("salon_id", input.salon.salonId)
         .eq("client_phone", clientPhone)
         .eq("status", "confirmed")
@@ -2151,6 +2209,8 @@ export async function executeV4Tool(
           const canManage = cutoffHours === 0 || hoursTo >= cutoffHours;
           return {
             id: a.id,
+            service_id: a.service_id,
+            master_id: a.master_id,
             service: a.services?.name ?? "?",
             master: a.masters?.name ?? "?",
             date: formatDateInTz(a.starts_at, tz),
@@ -2433,10 +2493,7 @@ export async function executeV4Tool(
     }
 
     case "estimate_price_from_photo": {
-      // Deterministic photo pricer for V4 — delegates to the SAME priceFromPhoto used by V3
-      // (temperature:0, seed derived from image bytes + service + salon rules, output quantized
-      // to a 500-som step). Fixes "same photo, different price" observed on repeat calls: with
-      // this tool the model NEVER authors a price band directly.
+      // Vision classifies only configured visible attributes. The server owns the price.
       const serviceId = String(args.service_id ?? "");
       if (!serviceId) return { error: "service_id обязателен" };
       // Find the most recent image in THIS turn (input.lastMessages) — bytes disappear after.
@@ -2452,8 +2509,9 @@ export async function executeV4Tool(
       // Load service to get the price bounds + confirm it's a range service.
       const { data: svcRow, error: svcErr } = await db
         .from("services")
-        .select("id, name, price, price_max, price_type")
+        .select("id, name, price, price_max, price_type, photo_pricing_config")
         .eq("id", serviceId)
+        .eq("salon_id", input.salon.salonId)
         .maybeSingle();
       if (svcErr || !svcRow)
         return { error: `Услуга не найдена: ${svcErr?.message ?? "не найдена"}` };
@@ -2464,35 +2522,52 @@ export async function executeV4Tool(
       }
       const priceMin = Number((svcRow as any).price);
       const priceMax = Number((svcRow as any).price_max ?? (svcRow as any).price);
+      const config = validatePhotoConfig((svcRow as any).photo_pricing_config);
+      if (!config)
+        return {
+          success: false,
+          unconfigured: true,
+          catalog_range: `${priceMin}–${priceMax} сом`,
+          note: "Точной оценки по фото нет: владелец не настроил критерии этой услуги. Назови только диапазон из каталога и предложи уточнить у мастера.",
+        };
       // Fetch the image bytes. downloadImageAsBase64 handles data: URLs (simulator) and
       // HTTP URLs (Green-API signed links) uniformly, with a 12s timeout.
       const dl = await downloadImageAsBase64(lastImage.media_signed_url);
       if ("error" in dl) return { error: `Не удалось получить фото: ${dl.error}` };
-      const apiKey = (process.env.Gemini_API_Key || process.env.GEMINI_API_KEY) ?? "";
+      const apiKey = process.env.GEMINI_API_KEY ?? "";
       if (!apiKey) return { error: "GEMINI_API_KEY not configured on server" };
-      const priced = await priceFromPhoto({
+      const classification = await classifyPhotoForPrice({
         apiKey,
         imageBase64: dl.base64,
         mime: dl.mime,
         serviceName: (svcRow as any).name,
-        priceMin,
-        priceMax,
-        pricingRules: input.config.pricing_rules ?? null,
-        language: (input.stateData.language as any) ?? "ru",
-        priceStep: 500,
+        config,
       });
-      if ("error" in priced) return { error: `Vision failed: ${priced.error}` };
+      if ("error" in classification) return { error: `Vision failed: ${classification.error}` };
+      const priced = calculatePhotoPrice(config, classification, {
+        price: priceMin,
+        price_max: priceMax,
+      });
+      if ("needs" in priced)
+        return {
+          success: false,
+          needs: priced.needs,
+          note: "Не угадывай цену. Коротко попроси другое фото или уточни видимый параметр.",
+        };
+      if ("error" in priced)
+        return {
+          error: priced.error,
+          note: "Правила цены салона противоречат диапазону услуги — передай администратору, не называй цену.",
+        };
+      flags.photoQuote = { serviceId, price: priced.price, at: Date.now() };
       return {
+        success: true,
         service_name: (svcRow as any).name,
-        price_low: priced.price_low,
-        price_high: priced.price_high,
-        price_label:
-          priced.price_low === priced.price_high
-            ? `${priced.price_low} сом`
-            : `${priced.price_low}–${priced.price_high} сом`,
-        explanation: priced.explanation,
-        confidence: priced.confidence,
-        note: "Используй эти цифры дословно как узкий диапазон. НЕ округляй и НЕ выдумывай другую цену. Если confidence=low — честно скажи, что точную назовёт мастер.",
+        price_low: priced.price,
+        price_high: priced.price,
+        price_label: `${priced.price} сом`,
+        selected: priced.selected,
+        note: "Цена рассчитана кодом по правилам владельца. Назови её дословно, не округляй.",
       };
     }
 
@@ -2603,7 +2678,7 @@ export function sanitizeGeminiHistory(history: GeminiV2Content[]): GeminiV2Conte
 
 export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> {
   const db = await getAdmin();
-  const apiKey = (process.env.Gemini_API_Key || process.env.GEMINI_API_KEY) ?? "";
+  const apiKey = process.env.GEMINI_API_KEY ?? "";
 
   const debug: WaAgentResult["debug"] = { actions: [], errors: [], toolTrace: [] };
   const priorPhotoNotes: PhotoNote[] = Array.isArray((input.stateData as any).photo_notes)
@@ -2615,6 +2690,9 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     needsHuman: false,
     escalateReason: null,
     photoNotes: [...priorPhotoNotes],
+    photoQuote: input.lastMessages.some((m) => m.kind === "image")
+      ? null
+      : ((input.stateData as any)?.photo_quote ?? null),
   };
 
   const v4History: GeminiV2Content[] = sanitizeGeminiHistory(
@@ -3342,9 +3420,34 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   // while still catching wholesale fabrication.
   const OFFER_RE =
     /(свободн|есть\s+окош|окошк|могу\s+предложить|предлож|подойд[её]т|удобно\s+будет|запишу\s+вас\s+на)|(бош\s+убак|орун\s+бар|жаз(ып)?\s+кой)|(available|free\s+slots?|i\s+can\s+offer|would\s+\w+\s+work)/i;
-  const mentionedTimes = [...reply.matchAll(/\b([01]?\d|2[0-3]):([0-5]\d)\b/g)].map(
+  const clockTimesInReply = (text: string) => [...text.matchAll(/\b([01]?\d|2[0-3]):([0-5]\d)\b/g)].map(
     (m) => `${m[1].padStart(2, "0")}:${m[2]}`,
   );
+  // A fresh availability question is different from repeating an already agreed time later in
+  // the chat. The latter may be safe without a new tool call; the former must never get invented
+  // slot offers. This was observed when get_services ran but get_available_slots was skipped.
+  const latestClientText = (input.lastMessages ?? [])
+    .filter((m) => m.direction === "in")
+    .map((m) => m.text_body ?? "")
+    .join(" ");
+  const asksAvailability = /(завтра|послезавтра|сегодня|когда|врем[яени]|час|окош|свобод|можно|барбы|качан|эртең|бүгүн|available|tomorrow|today)/i.test(latestClientText);
+  if (!slotToolRanThisTurn && asksAvailability && OFFER_RE.test(reply) && clockTimesInReply(reply).length > 0) {
+    debug.errors.push("unverified_slot_offer_forcing_retry");
+    contents.push({
+      role: "user",
+      parts: [{
+        text: "СИСТЕМА: ты предложил конкретные свободные часы, но НЕ проверил календарь в этом ходе. Это неподтверждённые слоты. Молча вызови get_available_slots для нужной услуги и даты (или check_time для одного конкретного часа), затем назови ТОЛЬКО времена из ответа инструмента. Если календарь недоступен — не называй часы, передай вопрос администратору.",
+      }],
+    });
+    const retry = await runToolLoop();
+    if (retry) reply = retry;
+    if (!slotToolRanThisTurn && OFFER_RE.test(reply) && clockTimesInReply(reply).length > 0) {
+      debug.errors.push("unverified_slot_offer_suppressed");
+      flags.needsHuman = true;
+      reply = "Не хочу обещать время без проверки календаря. Передам ваш вопрос администратору.";
+    }
+  }
+  const mentionedTimes = clockTimesInReply(reply);
   const noneVerified =
     mentionedTimes.length > 0 && !mentionedTimes.some((t) => verifiedFreeTimes.has(t));
   // ПРОВЕРЯЕМ ТОЛЬКО ХОДЫ, ГДЕ ИНСТРУМЕНТ РЕАЛЬНО ОТРАБОТАЛ.
@@ -3644,6 +3747,7 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     ...(flags.photoNotes.length
       ? ({ photo_notes: flags.photoNotes.slice(-PHOTO_NOTES_CAP) } as any)
       : {}),
+    ...({ photo_quote: flags.photoQuote } as any),
     ...(persistedCache ? ({ gemini_cache: persistedCache } as any) : {}),
     // Instagram: once the client has given a phone, it becomes their identity for every later turn
     // (the webhook feeds it back in as input.client.phone), so "перенеси мою запись" a day later

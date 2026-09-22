@@ -533,7 +533,7 @@ async function ingestEvent(opts: {
     const tr =
       audio && !looksLikeHtml(audio.bytes, audio.mime)
         ? await transcribeAudio({
-            apiKey: (process.env.Gemini_API_Key || process.env.GEMINI_API_KEY) ?? "",
+            apiKey: process.env.GEMINI_API_KEY ?? "",
             audioBase64: Buffer.from(audio.bytes).toString("base64"),
             mime: audioMime,
           })

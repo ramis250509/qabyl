@@ -105,11 +105,14 @@ export const Route = createFileRoute("/api/internal/cron/$job")({
           // Диагностика Gemini: какой ключ реально подставлен и отвечает ли модель. Ключ наружу
           // не отдаётся — только его источник, код ответа, время и начало текста ошибки.
           if (job === "gemini-ping") {
-            const fromNew = (process.env.Gemini_API_Key ?? "").trim();
-            const fromOld = (process.env.GEMINI_API_KEY ?? "").trim();
-            const key = fromNew || fromOld;
-            const keySource = fromNew ? "Gemini_API_Key" : fromOld ? "GEMINI_API_KEY" : "none";
-            if (!key) return json({ ok: false, keySource });
+            // Временный секрет Gemini_API_Key (заведён 15.09.2026, пока на основном аккаунте висел
+            // долг) убран 22.09.2026 вместе с остальными его упоминаниями. Диагностика продолжает
+            // смотреть, не остался ли он заданным в окружении: если да — его надо удалить из
+            // Cloudflare, иначе он просто лежит мёртвым грузом и путает следующего разбирающегося.
+            const stale = (process.env.Gemini_API_Key ?? "").trim();
+            const key = (process.env.GEMINI_API_KEY ?? "").trim();
+            const keySource = key ? "GEMINI_API_KEY" : "none";
+            if (!key) return json({ ok: false, keySource, staleSecretPresent: Boolean(stale) });
 
             // ?replay=1 — повторить последний запрос ассистента, на котором Gemini не ответил
             // (его сохраняет callGeminiTools), с долгим таймаутом: отвечает медленно или никогда.
@@ -150,6 +153,7 @@ export const Route = createFileRoute("/api/internal/cron/$job")({
               return json({
                 ok: res.ok,
                 keySource,
+                staleSecretPresent: Boolean(stale),
                 keyTail: key.slice(-4),
                 replayOf,
                 bodyChars: requestBody.length,
@@ -161,6 +165,7 @@ export const Route = createFileRoute("/api/internal/cron/$job")({
               return json({
                 ok: false,
                 keySource,
+                staleSecretPresent: Boolean(stale),
                 keyTail: key.slice(-4),
                 ms: Date.now() - t0,
                 error: e?.message ?? String(e),

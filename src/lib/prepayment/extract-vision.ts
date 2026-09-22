@@ -29,7 +29,7 @@ export interface VisionExtractResult {
 export async function extractTextWithVision(
   input: VisionExtractInput,
 ): Promise<VisionExtractResult> {
-  const apiKey = (process.env.Gemini_API_Key || process.env.GEMINI_API_KEY);
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return { ok: false, text: "", error: "GEMINI_API_KEY missing" };
   }

@@ -47,6 +47,7 @@ import {
 } from "@/lib/industries";
 import { WaSimulator } from "./WaSimulator";
 import { ExcludedSuggestions } from "./ExcludedSuggestions";
+import { PhotoPricingEditor } from "./PhotoPricingEditor";
 
 type Assistant = {
   salon_id: string;
@@ -164,8 +165,7 @@ function toPromoList(v: unknown): { title: string; details: string; until: strin
     .filter((p) => p.title || p.details);
 }
 
-const DEFAULT_GREETING =
-  "Здравствуйте! 👋 Я помощник салона. Подскажу по услугам, ценам и помогу записаться на удобное время.";
+const DEFAULT_GREETING = "Здравствуйте :)";
 const DEFAULT_TONE =
   "Общайся вежливо, дружелюбно и по делу. Отвечай на русском или кыргызском — на том языке, на котором написал клиент. Если клиент пишет на другом языке, отвечай на русском. Не используй сложных терминов.";
 
@@ -807,6 +807,8 @@ export function AiAssistantTab({
               " В этой сфере фото для оценки не используется — цена называется из списка услуг."}
           </p>
         </div>
+
+        <PhotoPricingEditor salonId={salonId} />
 
         {data.engine === "v4" &&
           (() => {

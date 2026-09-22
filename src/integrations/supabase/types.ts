@@ -2158,6 +2158,7 @@ export type Database = {
           id: string
           is_active: boolean
           name: string
+          photo_pricing_config: Json | null
           price: number
           price_max: number | null
           price_type: string
@@ -2175,6 +2176,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           name: string
+          photo_pricing_config?: Json | null
           price?: number
           price_max?: number | null
           price_type?: string
@@ -2192,6 +2194,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           name?: string
+          photo_pricing_config?: Json | null
           price?: number
           price_max?: number | null
           price_type?: string

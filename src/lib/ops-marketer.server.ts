@@ -115,7 +115,7 @@ function prompt(f: PlatformFacts): string {
 }
 
 async function askModel(f: PlatformFacts): Promise<ContentPlan | null> {
-  const apiKey = (process.env.Gemini_API_Key || process.env.GEMINI_API_KEY);
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return null;
   if (!(await llmBudgetLeft())) {
     await audit("marketer", "marketer.budget_exhausted", { limit: MAX_LLM_PER_DAY });

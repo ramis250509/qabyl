@@ -64,7 +64,7 @@ export async function extractReceiptFields(input: {
   /** Salon timezone. A receipt prints local wall-clock with no offset. */
   timezone?: string;
 }): Promise<FieldExtractResult> {
-  const apiKey = (process.env.Gemini_API_Key || process.env.GEMINI_API_KEY);
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return { ok: false, fields: null, error: "GEMINI_API_KEY missing" };
 
   const body = {
