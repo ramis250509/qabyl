@@ -6,7 +6,7 @@
 // день сообщала, что продукт сломан.
 import { describe, expect, test } from "bun:test";
 import { waChipText, waStatusForViewer } from "./src/lib/wa-status-view";
-import { computeWaStatus } from "./src/lib/wa-connection.server";
+import { computeWaStatus, notifiesSalon } from "./src/lib/wa-connection.server";
 
 const healthy = () => ({
   whatsapp_cloud_phone_number_id: "1",
@@ -90,5 +90,20 @@ describe("подпись плашки", () => {
   test("поломка владельца зовёт его посмотреть", () => {
     expect(waChipText({ connected: true, level: "error" })).toBe("требует внимания");
     expect(waChipText({ connected: true, level: "warn" })).toBe("требует внимания");
+  });
+});
+
+describe("уведомления салону из ежечасной проверки", () => {
+  test("про оплату сообщений салону не пишем — ни когда платит платформа, ни когда карта своя", () => {
+    const row = { ...healthy(), wa_payment_ready: false };
+    expect(notifiesSalon(computeWaStatus(row, { platformBilling: true }))).toBe(false);
+    expect(notifiesSalon(computeWaStatus(row))).toBe(false);
+  });
+
+  test("остальные поломки по-прежнему уходят салону", () => {
+    expect(notifiesSalon(computeWaStatus({ ...healthy(), wa_token_status: "invalid" }))).toBe(true);
+    expect(
+      notifiesSalon(computeWaStatus({ ...healthy(), wa_account_review_status: "DISABLED" })),
+    ).toBe(true);
   });
 });

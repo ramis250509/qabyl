@@ -620,16 +620,18 @@ export async function runWaHealthCheck(limit = 100): Promise<{
     // обесценивает колокольчик быстрее, чем чинится проблема.
     if (wasBroken) continue;
 
-    try {
-      await supabaseAdmin.from("notifications").insert({
-        salon_id: salonId,
-        type: "wa.connection",
-        title: status.title,
-        body: status.body,
-      } as any);
-      notified++;
-    } catch {
-      /* уведомление не обязано долететь, чтобы состояние было записано */
+    if (notifiesSalon(status)) {
+      try {
+        await supabaseAdmin.from("notifications").insert({
+          salon_id: salonId,
+          type: "wa.connection",
+          title: status.title,
+          body: status.body,
+        } as any);
+        notified++;
+      } catch {
+        /* уведомление не обязано долететь, чтобы состояние было записано */
+      }
     }
 
     const { logError } = await import("@/lib/error-log.server");
@@ -643,6 +645,18 @@ export async function runWaHealthCheck(limit = 100): Promise<{
   }
 
   return { checked, broken, notified };
+}
+
+/**
+ * Уходит ли поломка салону в колокольчик.
+ *
+ * Оплата сообщений — нет. Проверка раз в час, а «переход в поломку» выше отслеживается только по
+ * токену, поэтому салон без привязанной оплаты получал одно и то же уведомление каждый час — да
+ * ещё сырым текстом для платформы («привяжите кредитную линию YCloud»). Оплату закрывает Qabyl;
+ * поломка по-прежнему видна на экране канала и попадает в журнал ошибок платформы (logError).
+ */
+export function notifiesSalon(status: Pick<WaStatus, "code">): boolean {
+  return status.code !== "needs_payment";
 }
 
 // ---------------------------------------------------------------------------
