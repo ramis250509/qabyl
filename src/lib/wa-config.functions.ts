@@ -15,10 +15,7 @@ async function assertSalonAccess(supabase: any, userId: string, salonId: string)
 
 function publicBaseUrl(): string {
   // Stable production URL pattern. Override with PUBLIC_APP_URL if needed.
-  return (
-    process.env.PUBLIC_APP_URL?.replace(/\/$/, "") ||
-    "https://qabyl.com"
-  );
+  return process.env.PUBLIC_APP_URL?.replace(/\/$/, "") || "https://qabyl.com";
 }
 
 // Build the Green-API webhook URL from a salon's stored webhook token, so the admin UI
@@ -55,28 +52,48 @@ export const getWaWebhookConfig = createServerFn({ method: "POST" })
 export const simulateWaMessage = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) =>
-    z.object({
-      salonId: z.string().uuid(),
-      messageText: z.string(),
-      history: z.array(z.any()).default([]),
-      state: z.string().default("idle"),
-      stateData: z.record(z.unknown()).default({}),
-      selectedBranchId: z.string().nullable().default(null),
-      selectedId: z.string().nullable().default(null),
-      imageBase64: z.string().optional(),
-      imageMime: z.string().optional(),
-    }).parse(input)
+    z
+      .object({
+        salonId: z.string().uuid(),
+        messageText: z.string(),
+        history: z.array(z.any()).default([]),
+        state: z.string().default("idle"),
+        stateData: z.record(z.unknown()).default({}),
+        selectedBranchId: z.string().nullable().default(null),
+        selectedId: z.string().nullable().default(null),
+        imageBase64: z.string().optional(),
+        imageMime: z.string().optional(),
+      })
+      .parse(input),
   )
   .handler(async ({ data, context }) => {
     await assertSalonAccess(context.supabase, context.userId, data.salonId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const [salonResult, assistantResult, branchResult] = await Promise.all([
-      supabaseAdmin.from("salons").select("id, name, timezone, working_hours, address").eq("id", data.salonId).maybeSingle(),
-      supabaseAdmin.from("salon_ai_assistant").select("greeting, tone_instructions, pricing_rules, languages, manage_cutoff_hours, engine, knowledge_base, ai_rules, rich_formatting, client_addressing, industry, knowledge_answers, sales_style, sales_mode, sales_usp, sales_objections, sales_promos, booking_link_mode").eq("salon_id", data.salonId).maybeSingle(),
-      supabaseAdmin.from("branches").select("id, name, address").eq("salon_id", data.salonId).eq("is_active", true).order("sort_order"),
+      supabaseAdmin
+        .from("salons")
+        .select("id, name, timezone, working_hours, address")
+        .eq("id", data.salonId)
+        .maybeSingle(),
+      supabaseAdmin
+        .from("salon_ai_assistant")
+        .select(
+          "greeting, tone_instructions, pricing_rules, languages, manage_cutoff_hours, engine, knowledge_base, ai_rules, rich_formatting, client_addressing, industry, knowledge_answers, sales_style, sales_mode, sales_usp, sales_objections, sales_promos, booking_link_mode",
+        )
+        .eq("salon_id", data.salonId)
+        .maybeSingle(),
+      supabaseAdmin
+        .from("branches")
+        .select("id, name, address")
+        .eq("salon_id", data.salonId)
+        .eq("is_active", true)
+        .order("sort_order"),
     ]);
 
-    if (salonResult.error) throw new Error(`DB error (проверьте SUPABASE_SERVICE_ROLE_KEY): ${salonResult.error.message}`);
+    if (salonResult.error)
+      throw new Error(
+        `DB error (проверьте SUPABASE_SERVICE_ROLE_KEY): ${salonResult.error.message}`,
+      );
     if (!salonResult.data) throw new Error("Salon not found");
     const salon = salonResult.data;
     const assistant = assistantResult.data;
@@ -91,9 +108,27 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
 
     // For the simulator, pass the image as a data URL directly — no Supabase upload needed.
     // downloadImageAsBase64() in the agent handles data: URLs by extracting the base64 inline.
-    const imageSignedUrl = (data.imageBase64 && data.imageMime)
-      ? `data:${data.imageMime};base64,${data.imageBase64}`
-      : null;
+    const imageSignedUrl =
+      data.imageBase64 && data.imageMime
+        ? `data:${data.imageMime};base64,${data.imageBase64}`
+        : null;
+    // ...но ещё и кладём снимок в то же хранилище, что и фото настоящих клиентов. Без пути в
+    // storage фото жило только в своём сообщении: «вот мои ногти» → ассистент назвал цены
+    // вариантов → «однотон» — и на этом ходу оценивать было уже нечего, хотя в WhatsApp тот же
+    // диалог работает. Владелец видел поломку, которой у клиентов нет. Не загрузилось — фото
+    // всё равно уйдёт в этот ход как data URL, просто не переживёт его.
+    let imagePath: string | null = null;
+    if (data.imageBase64 && data.imageMime) {
+      const ext = (data.imageMime.split("/")[1] || "jpg").replace(/[^a-z0-9]/gi, "") || "jpg";
+      const path = `${data.salonId}/simulator/${crypto.randomUUID()}.${ext}`;
+      const { error } = await supabaseAdmin.storage
+        .from("wa-media")
+        .upload(path, Buffer.from(data.imageBase64, "base64"), {
+          contentType: data.imageMime,
+          upsert: false,
+        });
+      if (!error) imagePath = path;
+    }
     const incomingMsg: WaIncomingMessage = {
       id: crypto.randomUUID(),
       direction: "in",
@@ -101,7 +136,7 @@ export const simulateWaMessage = createServerFn({ method: "POST" })
       text_body: data.messageText || null,
       media_signed_url: imageSignedUrl,
       media_mime: data.imageMime ?? null,
-      media_path: null,
+      media_path: imagePath,
       created_at: new Date().toISOString(),
       selected_id: data.selectedId ?? null,
     };
@@ -175,10 +210,12 @@ export const regenerateWaWebhookToken = createServerFn({ method: "POST" })
     await assertSalonAccess(context.supabase, context.userId, data.salonId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const token = genToken();
-    const { error } = await supabaseAdmin.from("salon_secrets").upsert(
-      { salon_id: data.salonId, greenapi_webhook_token: token },
-      { onConflict: "salon_id" },
-    );
+    const { error } = await supabaseAdmin
+      .from("salon_secrets")
+      .upsert(
+        { salon_id: data.salonId, greenapi_webhook_token: token },
+        { onConflict: "salon_id" },
+      );
     if (error) throw new Error(error.message);
     return buildWebhookUrls(data.salonId, token);
   });
