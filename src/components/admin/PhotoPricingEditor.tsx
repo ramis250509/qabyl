@@ -7,7 +7,12 @@ import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import type { Json } from "@/integrations/supabase/types";
 import {
-  PHOTO_PRESETS,
+  PHOTO_SUBJECTS,
+  guessPhotoSubject,
+  photoPresetsFor,
+  photoZoneOf,
+  photoPriceTable,
+  photoRequestLine,
   photoRuleRangeError,
   validatePhotoConfig,
   type PhotoCriterion,
@@ -17,12 +22,20 @@ import {
 type Service = {
   id: string;
   name: string;
+  category: string | null;
   price: number;
   price_max: number | null;
   price_type: string;
   photo_pricing_config: unknown;
 };
 const empty: PhotoPricingConfig = { enabled: false, criteria: [] };
+/** «от 1500», а не «1500–null»: у части услуг-вилок в прайсе нет верхней цены. */
+const priceLabel = (s: Service) =>
+  s.price_type !== "range"
+    ? String(s.price)
+    : s.price_max == null
+      ? `от ${s.price}`
+      : `${s.price}–${s.price_max}`;
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 
 export function PhotoPricingEditor({ salonId }: { salonId: string }) {
@@ -35,7 +48,7 @@ export function PhotoPricingEditor({ salonId }: { salonId: string }) {
     let active = true;
     supabase
       .from("services")
-      .select("id, name, price, price_max, price_type, photo_pricing_config")
+      .select("id, name, category, price, price_max, price_type, photo_pricing_config")
       .eq("salon_id", salonId)
       .eq("is_active", true)
       .order("sort_order")
@@ -58,6 +71,8 @@ export function PhotoPricingEditor({ salonId }: { salonId: string }) {
     setConfig(raw && typeof raw === "object" ? clone(raw as PhotoPricingConfig) : clone(empty));
   }, [serviceId, services]);
   const service = services.find((s) => s.id === serviceId);
+  // Готовые критерии — только для зоны этой услуги: у ресниц нет «густоты волос».
+  const presets = photoPresetsFor(photoZoneOf(config, service));
   const updateCriterion = (id: string, change: (c: PhotoCriterion) => PhotoCriterion) =>
     setConfig((prev) => ({
       ...prev,
@@ -131,7 +146,7 @@ export function PhotoPricingEditor({ salonId }: { salonId: string }) {
         >
           {services.map((s) => (
             <option key={s.id} value={s.id}>
-              {s.name} ({s.price_type === "range" ? `${s.price}–${s.price_max}` : s.price})
+              {`${s.name} (${priceLabel(s)})`}
             </option>
           ))}
         </select>
@@ -145,15 +160,71 @@ export function PhotoPricingEditor({ salonId }: { salonId: string }) {
           <div className="flex items-center gap-2">
             <Switch
               checked={!!config.enabled}
-              onCheckedChange={(enabled) => setConfig((c) => ({ ...c, enabled }))}
+              onCheckedChange={(enabled) =>
+                setConfig((c) => ({
+                  ...c,
+                  enabled,
+                  // Первое включение: зону угадываем по названию услуги, чтобы маникюру сразу
+                  // предлагались критерии ногтей, а не «длина и густота волос».
+                  subject:
+                    c.subject ?? (c.criteria.length ? undefined : guessPhotoSubject(service)),
+                }))
+              }
             />
             <Label>Оценивать фото для этой услуги</Label>
           </div>
+          {config.enabled && service.price_max == null && (
+            <p className="rounded-md border border-destructive/40 p-3 text-sm">
+              В прайсе у этой услуги нет цены «до» — ассистент не сможет назвать больше{" "}
+              {service.price}. Укажите верхнюю цену во вкладке «Услуги», иначе доплаты не
+              сохранятся.
+            </p>
+          )}
           {config.enabled && (
             <>
+              {/* Две настройки вместо абзаца текста: что клиент фотографирует и нужен ли
+                  референс. Из них собирается фраза-просьба, которую владелец видит тут же —
+                  ровно ту, что услышит клиент. Печатать вручную ничего не нужно. */}
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block space-y-1 text-sm">
+                  Что клиент фотографирует
+                  <select
+                    aria-label="Что клиент фотографирует"
+                    className="w-full rounded-md border bg-background p-2"
+                    value={config.subject ?? ""}
+                    onChange={(e) =>
+                      setConfig((c) => ({ ...c, subject: e.target.value || undefined }))
+                    }
+                  >
+                    <option value="">Не указывать</option>
+                    {PHOTO_SUBJECTS.map((s) => (
+                      <option key={s.id} value={s.genitive}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="flex items-center gap-2 pt-6">
+                  <Switch
+                    checked={!!config.needs_reference}
+                    onCheckedChange={(needs_reference) =>
+                      setConfig((c) => ({ ...c, needs_reference }))
+                    }
+                  />
+                  <Label>Нужно ещё фото желаемого результата</Label>
+                </div>
+              </div>
+              <div className="rounded-md bg-muted p-3 text-sm">
+                <span className="text-xs text-muted-foreground">Ассистент напишет клиенту:</span>
+                <p className="mt-1">
+                  {photoRequestLine({ ...config, enabled: true }) ||
+                    "Добавьте хотя бы один критерий."}
+                </p>
+              </div>
               <div className="flex flex-wrap gap-2">
-                {PHOTO_PRESETS.filter((p) => !config.criteria.some((c) => c.id === p.id)).map(
-                  (p) => (
+                {presets
+                  .filter((p) => !config.criteria.some((c) => c.id === p.id))
+                  .map((p) => (
                     <Button
                       type="button"
                       size="sm"
@@ -163,8 +234,7 @@ export function PhotoPricingEditor({ salonId }: { salonId: string }) {
                     >
                       + {p.label}
                     </Button>
-                  ),
-                )}
+                  ))}
                 <Button
                   type="button"
                   size="sm"
@@ -191,6 +261,11 @@ export function PhotoPricingEditor({ salonId }: { salonId: string }) {
                   + Свой критерий
                 </Button>
               </div>
+              {!presets.length && (
+                <p className="text-xs text-muted-foreground">
+                  Для этой зоны готовых критериев нет — добавьте свой.
+                </p>
+              )}
               {config.criteria.map((c) => (
                 <div className="space-y-2 rounded-md border p-3" key={c.id}>
                   <div className="flex items-center gap-2">
@@ -214,6 +289,22 @@ export function PhotoPricingEditor({ salonId }: { salonId: string }) {
                     >
                       <option value="base">Цена</option>
                       <option value="surcharge">Доплата</option>
+                    </select>
+                    {/* На каком снимке искать признак. Сложность дизайна видна на референсе, а
+                        не на фото «до» — без этой пометки ИИ читал бы её не с того кадра. */}
+                    <select
+                      aria-label="По какому фото"
+                      className="rounded-md border bg-background p-2 text-sm"
+                      value={c.shot === "reference" ? "reference" : "current"}
+                      onChange={(e) =>
+                        updateCriterion(c.id, (v) => ({
+                          ...v,
+                          shot: e.target.value as "current" | "reference",
+                        }))
+                      }
+                    >
+                      <option value="current">Видно сейчас</option>
+                      <option value="reference">Видно на референсе</option>
                     </select>
                     <Button
                       type="button"
@@ -296,10 +387,12 @@ export function PhotoPricingEditor({ salonId }: { salonId: string }) {
                   </Button>
                 </div>
               ))}
+              <PriceTablePreview config={config} service={service} />
               <p className="text-xs text-muted-foreground">
-                Для «Цены» укажите полную стоимость; «Доплата» прибавляется к ней. Итог обязан
-                оставаться в диапазоне услуги {service.price}–{service.price_max}. Неразличимый
-                признак → просьба прислать другое фото, не догадка.
+                «Цена» — полная стоимость услуги, её варианты пишите целиком. «Доплата» прибавляется
+                к ней, у самого простого варианта ставьте 0. Итог обязан оставаться в прайсе услуги{" "}
+                {service.price}–{service.price_max ?? service.price}. Не видно признака на фото —
+                ассистент попросит переснять, а не угадает.
               </p>
             </>
           )}
@@ -333,6 +426,60 @@ export function PhotoPricingEditor({ salonId }: { salonId: string }) {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * Итоговые цены таблицей — ответ на вопрос «сколько выйдет, если длинные и густые», который
+ * иначе владелец считает в уме. Комбинации вне прайса подсвечены: сохранить такие правила
+ * кабинет не даст, и по таблице сразу видно, какая именно строка виновата.
+ */
+function PriceTablePreview({ config, service }: { config: PhotoPricingConfig; service: Service }) {
+  const table = photoPriceTable({ ...config, enabled: true }, service);
+  if (!table) return null;
+  const max = service.price_max ?? service.price;
+  const outside = (price: number) => price < service.price || price > max;
+  return (
+    <div className="space-y-1 rounded-md border p-3">
+      <span className="text-xs text-muted-foreground">Какие цены назовёт ассистент:</span>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-xs text-muted-foreground">
+              <th className="p-1 text-left font-normal">
+                {table.colTitle ? `${table.rowTitle} / ${table.colTitle}` : table.rowTitle}
+              </th>
+              {(table.cols.length ? table.cols : ["Цена"]).map((col, j) => (
+                <th key={j} className="p-1 text-right font-normal">
+                  {col}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {table.rows.map((row, i) => (
+              <tr key={i} className="border-t">
+                <td className="p-1">{row}</td>
+                {table.prices[i].map((price, j) => (
+                  <td
+                    key={j}
+                    className={`p-1 text-right tabular-nums ${outside(price) ? "font-medium text-destructive" : ""}`}
+                  >
+                    {price}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {table.extras.map((extra, i) => (
+        <p key={i} className="text-xs text-muted-foreground">
+          + доплата за «{extra.label}»:{" "}
+          {extra.min === extra.max ? extra.min : `от ${extra.min} до ${extra.max}`}
+        </p>
+      ))}
     </div>
   );
 }

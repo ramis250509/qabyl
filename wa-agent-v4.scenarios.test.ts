@@ -890,7 +890,12 @@ test("промпт: правило «цена сразу» + мультиусл�
   const prompt = buildSystemPromptV4(makeInput("привет"));
   // Price-first rule
   expect(prompt).toContain("ЦЕНА СРАЗУ");
-  expect(prompt).toMatch(/не шире 500 сом|шириной ~200–500/);
+  expect(prompt).toContain("success=true → назови price_label дословно");
+  // Цена по фото — это НЕ анкета: правило про запрет вопросов о видимых признаках должно
+  // доезжать до модели дословно, иначе она возвращается к «какая у вас длина волос?».
+  expect(prompt).toContain("ЦЕНА ПО ФОТО — БЕЗ АНКЕТ");
+  expect(prompt).toContain("Спрашивать словами то, что видно на снимке, ЗАПРЕЩЕНО");
+  expect(prompt).toContain("НЕ придумывай характеристики, которых на фото не видно");
   // Multi-service sequential-booking rule
   expect(prompt).toContain("НЕСКОЛЬКО УСЛУГ В ОДИН ВИЗИТ");
   expect(prompt).toContain("суммарную цену");
@@ -1190,7 +1195,7 @@ test("разбор фото есть у КАЖДОЙ отрасли (не тол
 test("beauty (по умолчанию): без мед-границ, но с оценкой по фото", () => {
   const prompt = buildSystemPromptV4(makeInput("хочу маникюр"));
   expect(prompt).not.toContain("НЕ ставишь диагноз");
-  expect(prompt).toContain("ОЦЕНКА СТОИМОСТИ ПО ФОТО");
+  expect(prompt).toContain("ЦЕНА ПО ФОТО — БЕЗ АНКЕТ");
 });
 
 // ============================================================
@@ -1270,6 +1275,26 @@ test("выдуманные слоты: инструмент вернул 0 вр�
   expect(res.reply).not.toContain("13:00");
   expect(res.reply).not.toContain("15:00");
   expect(res.reply).not.toContain("17:00");
+});
+
+test("первое предложение свободных часов без проверки календаря принудительно перепроверяется", async () => {
+  (globalThis as any).__WA_DB__ = makeDb();
+  geminiQueue = [
+    [fc("get_services")],
+    [{ text: "Завтра свободны 12:00, 14:00 и 16:00. Что удобно?" }],
+    [
+      fc("get_available_slots", {
+        service_id: "11111111-1111-4111-8111-111111111111",
+        date: "2099-01-01",
+      }),
+    ],
+    [{ text: "Завтра свободно в 10:00. Подойдёт?" }],
+  ];
+  const res = await runWaAgentV4(makeInput("Маникюр завтра днём можно?"));
+  expect(res.debug.errors).toContain("unverified_slot_offer_forcing_retry");
+  expect(res.debug.actions).toContain("tool:get_available_slots");
+  expect(res.reply).toContain("10:00");
+  expect(res.reply).not.toContain("14:00");
 });
 
 test("НЕ ложное срабатывание: модель назвала время, которое инструмент реально вернул", async () => {

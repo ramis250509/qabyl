@@ -92,7 +92,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "bun test --isolate",
-    "qa:assistant": "bun --preload ./qa/assistant-sim/preload.ts ./qa/assistant-sim/run.ts"
+    "qa:assistant": "bun --preload ./qa/assistant-sim/preload.ts ./qa/assistant-sim/run.ts",
+    "qa:photo": "bun qa/photo-regression/run.ts"
   },
   "sideEffects": false,
   "type": "module"

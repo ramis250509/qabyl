@@ -41,6 +41,8 @@ supabase/.branches/
 
 # Отчёты прогонов AI Assistant Quality Test (содержат переписки, большие)
 qa/assistant-sim/reports/
+qa/photo-regression/images/
+qa/api-budget-local.json
 
 # Служебный кэш хуков Claude Code (журнал правок, флаги напоминаний)
 .claude/.cache/

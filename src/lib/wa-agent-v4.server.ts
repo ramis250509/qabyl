@@ -31,7 +31,18 @@ import {
   type WaAgentState,
   type WaAgentStateData,
 } from "@/lib/wa-agent.server";
-import { calculatePhotoPrice, photoBookingPrice, validatePhotoConfig } from "@/lib/photo-pricing";
+import {
+  applyClientChoice,
+  calculatePhotoPrice,
+  photoBookingPrice,
+  photoPriceByChoice,
+  photoRequestLine,
+  photoShotsNeeded,
+  photoSubjectOf,
+  photoSubjectsMentioned,
+  validatePhotoConfig,
+  type PhotoClassification,
+} from "@/lib/photo-pricing";
 import { INDUSTRY_EXPERT } from "@/lib/wa-industries.server";
 import { INDUSTRIES_META, normalizeIndustry, type IndustryKey } from "@/lib/industries";
 import { bookingUrl } from "@/lib/booking-link";
@@ -87,6 +98,11 @@ const GEMINI_CACHE_ENABLED = false;
 // turns rarely add value and the sanitizer keeps the prefix valid.
 const HISTORY_CAP = 20; // Gemini contents kept in state_data.v4_history between turns
 const PHOTO_NOTES_CAP = 6; // structured photo analyses kept in state_data.photo_notes
+// Сколько последних снимков клиента держим для оценки цены. Трёх хватает на «что сейчас» +
+// «что хочу» + один переснятый кадр; больше — лишние мегабайты в каждый вызов vision.
+const PHOTO_SHOTS_CAP = 3;
+// Фото старше суток к цене «сегодня» отношения не имеет: клиент мог успеть перекраситься.
+const PHOTO_SHOT_TTL_MS = 24 * 60 * 60 * 1000;
 // The agent must see the WHOLE day's free start-times, not a truncated head of the list.
 // A capped list (was 8) made the model think a full working day ended at 11:45 and wrongly
 // tell clients that later times like 17:00 were "занято". 64 covers any realistic salon day
@@ -351,9 +367,14 @@ ${servicesRoster}
     ``,
     ...(ind.usesPhotoPricing
       ? [
-          `ОЦЕНКА СТОИМОСТИ ПО ФОТО: фото помогает определить только заданные салоном видимые критерии. Не придумывай ни параметров, ни цены.`,
-          `- Узнай услугу из get_services. Для диапазонной услуги вызови estimate_price_from_photo. Только при success=true назови price_label из инструмента дословно.`,
-          `- Если инструмент вернул needs — коротко попроси другое фото или уточни недостающий параметр. Если unconfigured — скажи только общую вилку из каталога; точную сумму без правил салона обещать нельзя.`,
+          `ЦЕНА ПО ФОТО — БЕЗ АНКЕТ (ЖЁСТКОЕ ПРАВИЛО, важнее привычки задавать вопросы):`,
+          `- У услуги из get_services есть поле photo_quote. photo_quote=true значит: цену определяет ФОТО, а не рассказ клиента. Спрашивать словами то, что видно на снимке, ЗАПРЕЩЕНО. Под запретом в том числе: «какая у вас длина волос», «какая густота», «осветляли/красили раньше», «волосы повреждены?», «что сейчас на ногтях», «какая длина ногтей», «свои или наращённые», «сложный ли дизайн», «какой эффект ресниц» — и любой другой вопрос о том, что ты увидишь сам.`,
+          `- Вместо анкеты ОДНИМ коротким сообщением попроси ровно те снимки, которые перечислены в photo_shots_needed этой услуги: current — что у клиента сейчас, reference — фото желаемого результата. Формулировку бери из photo_ask (можно сказать своими словами, но так же коротко и на языке клиента). Пример: «Да, конечно 🙂⏎⏎Стоимость зависит от волос — пришлите, пожалуйста, фото, и я сразу сориентирую по цене.» Для двух снимков: «Пришлите, пожалуйста, фото ваших ногтей сейчас и фото того, что хотите сделать — сразу сориентирую по стоимости 🙂».`,
+          `- Просьба о фото — это ОДНО короткое сообщение, а не список требований. Не объясняй, как фотографировать, не проси «со спины, сбоку, при дневном свете» заранее: прислали — оценивай тем, что есть, и только если не вышло, скажи, что именно переснять.`,
+          `- ФОТО УЖЕ ПРИСЛАЛИ (в этом сообщении или раньше) → НИ ОДНОГО уточняющего вопроса. Молча вызови get_services, затем estimate_price_from_photo(service_id) и сразу назови цену. Инструмент сам достаёт и свежие снимки, и присланные ходом раньше.`,
+          `- success=true → назови price_label дословно, не округляй и не превращай в «примерно». needs → выполни ровно то, что написано в поле ask (попросить фото-референс либо переснять кадр), НЕ переключайся на опрос текстом. unconfigured → назови только общую вилку из каталога и скажи, что точную сумму подтвердит мастер.`,
+          `- ЖЕЛАЕМЫЙ РЕЗУЛЬТАТ МОЖНО НАЗВАТЬ СЛОВАМИ. Примера нет («хочу просто однотон», «сделайте 2D») — это нормально: инструмент вернёт price_by_choice, назови варианты с ценами одним сообщением. Клиент выбрал словами — вызови estimate_price_from_photo ещё раз с chosen=[choice выбранного варианта] и назови цену. Словами можно выбрать ТОЛЬКО желаемый результат; то, что у клиента сейчас (длина, густота, покрытие, старое наращивание), определяет только фото.`,
+          `- Услуга без photo_quote (photo_quote=false) — фото не поможет, работай обычными уточняющими вопросами о том, что на снимке не видно: зона, длительность, подвид процедуры.`,
         ]
       : [
           `ЦЕНА для услуг с диапазоном (price_type=range) — НЕ отсылай сразу к мастеру «на месте». Порядок жёсткий:
@@ -395,8 +416,10 @@ ${servicesRoster}
     ``,
     `ЦЕНА СРАЗУ (ЖЁСТКОЕ ПРАВИЛО, критично для конверсии): как только клиент называет услугу — «хочу записаться на маникюр», «сколько стоит стрижка», «можно на окрашивание» — ПЕРВЫМ делом определи цену. Порядок:
   A) ФИКСИРОВАННАЯ цена (price_type=fixed) — назови точное число сразу. ${priceFollowUp}
-  B) ДИАПАЗОН (price_type=range) — НЕ выдавай сразу общий диапазон и НЕ называй среднее. Сначала подумай, какие данные нужны для точной оценки ИМЕННО этой услуги (посмотри в pricing_rules и в книге знаний салона): для окрашивания/кератина/ботокса — фото волос + длина + густота + следы прошлого осветления; для маникюра-дизайна — фото ногтей + сколько ногтей с дизайном; для наращивания ресниц — фото своих ресниц + желаемый эффект (2D/3D/объём); для эпиляции — зона + тип волос; для массажа — длительность (60/90 мин) + зона; для стоматологии/медицины — обычно оценка только на приёме.
-  Собери ВСЁ необходимое ОДНИМ компактным сообщением, не по одному пункту. Пример: «Чтобы точнее назвать стоимость, пришлите, пожалуйста, фото волос при хорошем освещении со спины и сбоку. Ещё напишите примерную длину и делали ли вы раньше окрашивание или осветление». Проверь диалог — не переспрашивай то, что клиент уже прислал (фото/длину/детали).
+  B) ДИАПАЗОН (price_type=range) — НЕ выдавай сразу общий диапазон и НЕ называй среднее. Сначала посмотри поле photo_quote у этой услуги в get_services.
+  B1) photo_quote=true — цену определяет ФОТО. Одним коротким сообщением попроси снимки из photo_shots_needed и ничего не спрашивай словами: ни длину, ни густоту, ни прошлое осветление, ни что сейчас на ногтях — всё это ты увидишь сам. Пришло фото — сразу estimate_price_from_photo, без единого уточняющего вопроса. Подробные правила — в блоке «ЦЕНА ПО ФОТО — БЕЗ АНКЕТ».
+  B2) photo_quote=false — фото цену не определяет. Подумай, какие данные реально нужны для этой услуги (pricing_rules и книга знаний салона): для эпиляции — зона; для массажа — длительность (60/90 мин) и зона; для стоматологии/медицины — обычно оценка только на приёме. Собери ВСЁ необходимое ОДНИМ компактным сообщением, не по одному пункту, и не спрашивай того, что на цену не влияет.
+  Проверь диалог — не переспрашивай то, что клиент уже прислал (фото, зону, детали).
   Получив данные — оцени выполнимость, рассчитай цену и назови УЗКИЙ диапазон (кратный 500 сомам, ширина ≤500) с короткой причиной разброса. ${priceFollowUp} Если данных всё ещё недостаточно ДЛЯ НАДЁЖНОЙ оценки (плохое фото, нет ответа) — попроси ровно недостающее ОДИН раз; если и после этого не выходит — честно скажи, что точную цену подтвердит ${sn.nomSg} на месте, и предложи запись на консультацию/осмотр. НЕ придумывай характеристики, которых на фото не видно.
   ДЕТЕРМИНИРОВАННОСТЬ: одинаковое фото + одинаковая услуга + одинаковая история → ОДИН И ТОТ ЖЕ диапазон. Всегда кратно 500 сомам, ширина ≤500.`,
     `ФАЗЫ ДИАЛОГА (СТРОГИЙ ПОРЯДОК — не смешивай):
@@ -456,7 +479,7 @@ ${servicesRoster}
     `- ВЫХОДНЫЕ И ГРАФИК (КАТЕГОРИЧЕСКИ): НИКОГДА не выдумывай выходные, нерабочие дни, праздники и часы работы. Утверждать «в этот день выходной / мы не работаем» можно ТОЛЬКО в двух случаях: (1) инструмент вернул reason=closed_that_day, либо (2) эта дата прямо указана в блоке «ВЫХОДНЫЕ ДНИ» или в фактах салона выше. Во всех остальных случаях — включая reason=hours_not_configured, отсутствие данных или пустой календарь — говорить о выходном ЗАПРЕЩЕНО. Нет данных → скажи, что не видишь свободного времени на эту дату, предложи другие дни или передай администратору. Не предполагай график «по логике» (например, что понедельник или воскресенье обычно выходной) — у тебя нет такой информации.`,
     `- ГАРАНТИЯ/СРОКИ: точную гарантию салона называй ТОЛЬКО если она есть в фактах о салоне выше. Не придумывай срок гарантии. И следи за логикой: гарантия не может быть длиннее, чем держится результат (напр. если кератин держится 3–5 месяцев, гарантия в «10 месяцев» — бессмыслица). Если салон не задал гарантию — честно скажи, что условия уточнит ${sn.nomSg}, не выдумывай цифру.`,
     `- ЗДОРОВЬЕ И БЕЗОПАСНОСТЬ (АВТО-ЭСКАЛАЦИЯ, критично): если клиент сам сообщает о беременности, аллергии на препараты/материалы, хроническом заболевании, приёме лекарств, свежих травмах/операциях, кожных заболеваниях в зоне процедуры, онкологии, сердечно-сосудистых проблемах или другом потенциально опасном факторе — НЕ решай сам, безопасна ли услуга, и НЕ дожидайся, пока клиент спросит. Сразу вызови escalate_to_human (в reason кратко перечисли, что назвал клиент), а клиенту тепло скажи: «Спасибо, что предупредили — по такому случаю ${sn.datSg} нужно оценить лично, передаю ваш запрос ${sn.datSg}, он свяжется с вами». Общую информацию из базы знаний дать можно, но окончательное «можно/нельзя» — только специалист.`,
-    `- ЦЕНА ПО ФОТО: не выводи цифры из изображения сам. Для услуги с диапазоном вызови estimate_price_from_photo (service_id). Только success=true разрешает назвать рассчитанную инструментом цену; при needs попроси другое фото или коротко уточни недостающий критерий, при unconfigured назови только общий диапазон каталога и скажи, что точную цену уточнит мастер. Никогда не обещай точную цену без настроенных правил салона.`,
+    `- ЦЕНА ПО ФОТО: не выводи цифры из изображения сам. Для услуги с диапазоном вызови estimate_price_from_photo (service_id). Только success=true разрешает назвать рассчитанную инструментом цену (и цены вариантов из price_by_choice — как варианты на выбор); при needs сделай то, что написано в поле ask, при unconfigured назови только общий диапазон каталога и скажи, что точную цену уточнит мастер. Никогда не обещай точную цену без настроенных правил салона.`,
     `- «НЕТ СВОБОДНОГО ВРЕМЕНИ» — только по факту инструмента (СТРОГО): фразы «свободных окон нет», «занято», «жок экен», «bош убакыт жок», «no free time», «all booked» РАЗРЕШЕНЫ только если В ЭТОМ ЖЕ ХОДЕ инструмент get_available_slots вернул reason=fully_booked / part_unavailable / closed_that_day / master_off_that_day / hours_not_configured. Если ты НЕ вызывал get_available_slots в этом ходе — не имеешь права утверждать, что времени нет. Вызови инструмент, посмотри реальный ответ, потом уже говори.`,
     `- Не обещай «100%» результат и не преувеличивай сроки.`,
     `- create_appointment — только после явного «да» («да», «записывайте», «ооба», «макул»).`,
@@ -730,7 +753,7 @@ const V4_TOOL_DECLARATIONS = [
   {
     name: "estimate_price_from_photo",
     description:
-      "Оценивает фото только по настроенным владельцем критериям услуги. Vision определяет признаки, цена вычисляется кодом. success=true содержит точную цену. needs означает, что фото не позволяет честно оценить; unconfigured — можно назвать только общий диапазон каталога, но не оценку по фото.",
+      "Считает цену по фото, которое клиент УЖЕ прислал — в этом сообщении или ходом раньше, искать снимок самому не нужно. Берёт все последние снимки сразу, так что пара «что сейчас» + «желаемый результат» обрабатывается одним вызовом. Vision определяет только настроенные владельцем видимые признаки, цену вычисляет код. success=true — точная цена; needs — чего не хватило и что попросить (поле ask), опрос текстом взамен ЗАПРЕЩЁН; price_by_choice — цены по вариантам желаемого результата, когда примера нет; unconfigured — можно назвать только общий диапазон каталога.",
     parameters: {
       type: "object",
       properties: {
@@ -738,6 +761,12 @@ const V4_TOOL_DECLARATIONS = [
           type: "string",
           description:
             "ID услуги из get_services. Обязательно услуга с price_type=range (для fixed цена уже известна).",
+        },
+        chosen: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Только если клиент САМ словами выбрал желаемый результат из price_by_choice прошлого вызова («однотон», «2D»): поле choice выбранного варианта, как есть. Не угадывай за клиента и не передавай то, что видно на фото сейчас.",
         },
       },
       required: ["service_id"],
@@ -801,6 +830,13 @@ type V4RunFlags = {
   escalateReason: string | null;
   photoNotes: PhotoNote[]; // structured photo analyses persisted across turns
   photoQuote: { serviceId: string; price: number; at: number } | null;
+  /**
+   * Пути в storage к последним фото клиента — чтобы оценить цену по снимку, присланному ХОДОМ
+   * РАНЬШЕ. Байты картинки живут только в своём ходе, и раньше это значило вот что: клиент
+   * кидает фото ногтей, следом отдельным сообщением «сколько будет?» — и оценка уже невозможна,
+   * ассистент просил то же фото повторно. Путь в storage вечен, ссылку подпишем заново.
+   */
+  photoShots: { path: string; at: number }[];
   // Set the turn a booking is created, so the final reply can append the self-service link. The
   // INSERT confirmation trigger skips ai_assistant bookings, so this is the only delivery path.
   justBookedManageUrl?: string | null;
@@ -1400,6 +1436,10 @@ export async function executeV4Tool(
       return {
         services: services.map((s: any) => {
           const isRange = s.price_type === "range";
+          // Какие фото нужны для точной цены ИМЕННО этой услуги. Модель узнаёт это тем же
+          // вызовом, которым узнаёт цену, — иначе она физически не может выполнить правило
+          // «спроси фото, а не характеристики», не угадывая, что именно просить.
+          const shots = isRange ? photoShotsNeeded(s.photo_pricing_config) : [];
           return {
             id: s.id,
             name: s.name,
@@ -1416,6 +1456,11 @@ export async function executeV4Tool(
             // from the photo. duration_max == duration_min → fixed length.
             duration_max: s.duration_max_min ?? s.duration_min,
             duration_range: s.duration_max_min != null && s.duration_max_min > s.duration_min,
+            // Цена этой услуги определяется по фото. Пока true — характеристики, видимые на
+            // снимке, спрашивать словами ЗАПРЕЩЕНО, см. правило «ЦЕНА ПО ФОТО — БЕЗ АНКЕТ».
+            photo_quote: shots.length > 0,
+            photo_shots_needed: shots,
+            photo_ask: shots.length ? photoRequestLine(s.photo_pricing_config) : null,
           };
         }),
       };
@@ -2498,23 +2543,50 @@ export async function executeV4Tool(
       // Vision classifies only configured visible attributes. The server owns the price.
       const serviceId = String(args.service_id ?? "");
       if (!serviceId) return { error: "service_id обязателен" };
-      // Find the most recent image in THIS turn (input.lastMessages) — bytes disappear after.
-      const lastImage = [...input.lastMessages]
-        .reverse()
-        .find((m) => m.kind === "image" && m.media_signed_url);
-      if (!lastImage?.media_signed_url) {
-        return {
-          error:
-            "В этом ходу фото нет. Попроси клиента прислать фото ещё раз — оценка возможна только по свежему фото в текущем сообщении.",
-        };
-      }
-      // Load service to get the price bounds + confirm it's a range service.
-      const { data: svcRow, error: svcErr } = await db
-        .from("services")
-        .select("id, name, price, price_max, price_type, photo_pricing_config")
-        .eq("id", serviceId)
-        .eq("salon_id", input.salon.salonId)
-        .maybeSingle();
+      // Снимки этого хода и снимки предыдущих ходов — в одной куче, от старых к новым.
+      //
+      // Раньше брался только последний кадр текущего хода, и это ломало ровно тот сценарий, ради
+      // которого всё затевалось: клиент кидает фото ногтей, следующим сообщением спрашивает цену —
+      // а оценивать уже нечего. И два кадра («сейчас» + «хочу») тоже почти никогда не приходят
+      // одним сообщением. Ссылку на storage подписываем заново, байты никуда не делись.
+      const fresh = input.lastMessages
+        .filter((m) => m.kind === "image" && m.media_signed_url)
+        .map((m) => ({ path: m.media_path ?? null, url: String(m.media_signed_url) }));
+      const stale = flags.photoShots
+        .filter((s) => Date.now() - s.at < PHOTO_SHOT_TTL_MS)
+        .filter((s) => !fresh.some((f) => f.path === s.path));
+      const signed = await Promise.all(
+        stale.map(async (s) => {
+          const { data } = await db.storage.from("wa-media").createSignedUrl(s.path, 600);
+          return data?.signedUrl ? { path: s.path, url: data.signedUrl } : null;
+        }),
+      );
+      const shots = [...signed.filter((s): s is { path: string; url: string } => !!s), ...fresh]
+        .slice(-PHOTO_SHOTS_CAP)
+        .map((s) => s.url);
+      const chosen: unknown[] = Array.isArray(args.chosen) ? args.chosen : [];
+      const noPhotoYet = {
+        error:
+          "Фото от клиента пока нет. Одним коротким сообщением попроси нужные снимки — без вопросов о том, что видно на фото.",
+      };
+      if (!shots.length && !chosen.length) return noPhotoYet;
+      // Load service to get the price bounds + confirm it's a range service. Колонка правил может
+      // отсутствовать, если воркер уехал раньше миграции — тогда читаем услугу без неё и честно
+      // отвечаем «правила не настроены», а не «услуга не найдена».
+      const loadService = (columns: string) =>
+        db
+          .from("services")
+          .select(columns)
+          .eq("id", serviceId)
+          .eq("salon_id", input.salon.salonId)
+          .maybeSingle();
+      let { data: svcRow, error: svcErr } = await loadService(
+        "id, name, price, price_max, price_type, photo_pricing_config",
+      );
+      if (svcErr)
+        ({ data: svcRow, error: svcErr } = await loadService(
+          "id, name, price, price_max, price_type",
+        ));
       if (svcErr || !svcRow)
         return { error: `Услуга не найдена: ${svcErr?.message ?? "не найдена"}` };
       if ((svcRow as any).price_type !== "range") {
@@ -2532,30 +2604,70 @@ export async function executeV4Tool(
           catalog_range: `${priceMin}–${priceMax} сом`,
           note: "Точной оценки по фото нет: владелец не настроил критерии этой услуги. Назови только диапазон из каталога и предложи уточнить у мастера.",
         };
-      // Fetch the image bytes. downloadImageAsBase64 handles data: URLs (simulator) and
-      // HTTP URLs (Green-API signed links) uniformly, with a 12s timeout.
-      const dl = await downloadImageAsBase64(lastImage.media_signed_url);
-      if ("error" in dl) return { error: `Не удалось получить фото: ${dl.error}` };
-      const apiKey = process.env.GEMINI_API_KEY ?? "";
-      if (!apiKey) return { error: "GEMINI_API_KEY not configured on server" };
-      const classification = await classifyPhotoForPrice({
-        apiKey,
-        imageBase64: dl.base64,
-        mime: dl.mime,
-        serviceName: (svcRow as any).name,
-        config,
-      });
-      if ("error" in classification) return { error: `Vision failed: ${classification.error}` };
-      const priced = calculatePhotoPrice(config, classification, {
-        price: priceMin,
-        price_max: priceMax,
-      });
-      if ("needs" in priced)
+      const range = { price: priceMin, price_max: priceMax };
+      let detected: PhotoClassification;
+      let imageCount = 0;
+      if (!shots.length) {
+        // Фото нет, но клиент словами выбрал желаемый результат («хочу 2D»). Этого хватает, только
+        // если цена вообще не зависит от того, что у клиента сейчас, — иначе нужен снимок.
+        if (photoShotsNeeded(config).includes("current")) return noPhotoYet;
+        detected = { relevant: true, values: {}, uncertain: [] };
+      } else {
+        // Fetch the image bytes. downloadImageAsBase64 handles data: URLs (simulator) and
+        // HTTP URLs (signed storage links) uniformly, with a 12s timeout.
+        const downloaded = await Promise.all(shots.map((url) => downloadImageAsBase64(url)));
+        const images = downloaded
+          .filter((d): d is { base64: string; mime: string } => !("error" in d))
+          .map((d) => ({ base64: d.base64, mime: d.mime }));
+        if (!images.length) {
+          const first = downloaded[0];
+          return { error: `Не удалось получить фото: ${"error" in first ? first.error : "пусто"}` };
+        }
+        const apiKey = process.env.GEMINI_API_KEY ?? "";
+        if (!apiKey) return { error: "GEMINI_API_KEY not configured on server" };
+        const vision = await classifyPhotoForPrice({
+          apiKey,
+          images,
+          serviceName: (svcRow as any).name,
+          config,
+        });
+        if ("error" in vision) return { error: `Vision failed: ${vision.error}` };
+        detected = vision;
+        imageCount = images.length;
+      }
+      const classification = applyClientChoice(config, detected, chosen);
+      const priced = calculatePhotoPrice(config, classification, range);
+      if ("needs" in priced) {
+        // Не хватает только желаемого результата — называем цену каждого варианта. Клиент без
+        // примера («просто однотон») иначе застревал: ассистент по кругу просил референс, а
+        // спросить словами ему запрещено.
+        const byChoice = photoPriceByChoice(config, classification, range);
+        if (byChoice)
+          return {
+            success: false,
+            needs: priced.needs,
+            price_by_choice: byChoice.options,
+            ask: `Одним коротким сообщением назови варианты «${byChoice.criterion}» с ценами из price_by_choice (label — price сом) и предложи прислать пример, если он есть. Клиент выберет словами — вызови estimate_price_from_photo ещё раз с chosen=[choice этого варианта]. О том, что видно на фото, не спрашивай.`,
+            note: "Цены вариантов посчитаны кодом по правилам владельца — называй их дословно.",
+          };
+        // ЧЕГО НЕ ХВАТИЛО — СНИМКА ИЛИ РАКУРСА. Разница принципиальная: в первом случае нужно
+        // попросить фото желаемого результата (его клиент просто не присылал), во втором —
+        // переснять то же самое. Без этого ассистент писал «пришлите другое фото волос» там,
+        // где на самом деле не видел дизайн с референса, и клиент слал тот же кадр по кругу.
+        const missingReference =
+          priced.needShots.includes("reference") &&
+          photoShotsNeeded(config).includes("reference") &&
+          imageCount < photoShotsNeeded(config).length;
         return {
           success: false,
           needs: priced.needs,
-          note: "Не угадывай цену. Коротко попроси другое фото или уточни видимый параметр.",
+          need_shots: priced.needShots,
+          ask: missingReference
+            ? "Попроси ОДНИМ коротким предложением фото желаемого результата — референс, скрин или пример. Вопросов словами не задавай."
+            : "Попроси ОДНИМ коротким предложением переснять фото — скажи, что именно не видно (ракурс, свет). Вопросов о видимых признаках словами не задавай.",
+          note: "Не угадывай цену и не переходи на опрос текстом.",
         };
+      }
       if ("error" in priced)
         return {
           error: priced.error,
@@ -2693,6 +2805,89 @@ export function splitIntoParagraphs(reply: string): string {
   return parts.join("\n\n");
 }
 
+/**
+ * Ответ спрашивает словами то, что видно на фото?
+ *
+ * Ловим ФОРМУ вопроса, а не тему. «Стоимость зависит от длины и густоты волос» — нормальное
+ * объяснение, его трогать нельзя; «какая у вас длина волос?» — та самая анкета, ради которой
+ * клиент уходит, так и не узнав цену. Поэтому список узкий и состоит из вопросительных и
+ * повелительных оборотов, а не из одних лишь слов «длина» и «густота».
+ */
+export function asksVisibleAttribute(reply: string): boolean {
+  const text = (reply ?? "").toLowerCase();
+  return [
+    /кака(я|ую|ой|ие)\s+(у\s+вас\s+|сейчас\s+)?(длин|густот|толщин|покрыти|форма ногт)/,
+    /какой\s+(длины|густоты)/,
+    /(напишите|укажите|уточните|подскажите|скажите|сообщите)[^.?!]{0,40}(длин|густот|осветл|покрыти|наращ|дизайн)/,
+    // ВНИМАНИЕ: \w в JS — это [A-Za-z0-9_], кириллицу он не матчит. Ровно на этом уже один раз
+    // молча сломался guard ложной занятости, поэтому тут везде [а-яё]*.
+    /(осветл|обесцвеч|окрашива|красил|мелирова)[а-яё]*\s+(ли\s+)?(вы|раньше|ранее)/,
+    /(раньше|ранее)\s+(осветл|обесцвеч|окрашива|красил)/,
+    /(волосы|ногти|ресницы)\s+(повреждены|сожжены|осветлены|окрашены|наращённые|наращенные)\s*\?/,
+    /что\s+(сейчас\s+)?(у\s+вас\s+)?на\s+ногтях/,
+    /(свои|натуральные)\s+или\s+наращ/,
+    /наращ[а-яё]*\s+или\s+свои/,
+    /сложн[а-яё]*\s+(ли\s+)?дизайн/,
+    /какой\s+(эффект|объ[её]м)\s+(ресниц|наращивания)/,
+    /сколько\s+ногтей\s+с\s+дизайном/,
+  ].some((re) => re.test(text));
+}
+
+/**
+ * Услуги салона с настроенной оценкой по фото: зона каждой и её фраза-просьба. Зона нужна, чтобы
+ * guard не путал ногти с волосами: если по фото настроены только волосы, вопрос «что сейчас на
+ * ногтях?» — законное уточнение, а не анкета.
+ */
+async function loadPhotoPricedServices(
+  db: AdminClient,
+  salonId: string,
+): Promise<{ subject: string | null; line: string }[]> {
+  const { data } = await db
+    .from("services")
+    .select("name, category, photo_pricing_config")
+    .eq("salon_id", salonId)
+    .eq("is_active", true);
+  return ((data as any[]) ?? [])
+    .filter((s) => validatePhotoConfig(s?.photo_pricing_config))
+    .map((s) => ({
+      subject: photoSubjectOf(s.photo_pricing_config, s),
+      line: photoRequestLine(s.photo_pricing_config),
+    }));
+}
+
+/**
+ * Настроенные по фото услуги, к которым относится разговор. Зону по тексту не узнать — годятся
+ * все: лучше лишний раз попросить фото, чем пропустить анкету.
+ */
+export function photoServicesInTopic<T extends { subject: string | null }>(
+  services: T[],
+  text: string,
+): T[] {
+  const mentioned = photoSubjectsMentioned(text);
+  if (!mentioned.length) return services;
+  return services.filter((s) => !s.subject || mentioned.includes(s.subject));
+}
+
+/**
+ * Просьба о фото словами салона — последний рубеж, когда модель не вышла из режима анкеты.
+ *
+ * Фраза одна на все подходящие услуги — берём её. Фразы разные («фото волос» и «фото ногтей») —
+ * отдаём общую: клиентке про маникюр «пришлите фото волос» хуже, чем просто «пришлите фото».
+ */
+export function photoAskFallback(
+  services: { line: string }[],
+  language: "ru" | "ky" | "en",
+): string {
+  if (language === "ky")
+    return "Сүрөт жиберсеңиз, баасын так айтып берем 🙂 Сураныч, фото жөнөтүңүз.";
+  if (language === "en")
+    return "Could you send a photo? I'll tell you the exact price right away 🙂";
+  const lines = [...new Set(services.map((s) => s.line).filter(Boolean))];
+  return lines.length === 1
+    ? lines[0]
+    : "Пришлите, пожалуйста, фото — сразу сориентирую по стоимости 🙂";
+}
+
 export function sanitizeGeminiHistory(history: GeminiV2Content[]): GeminiV2Content[] {
   if (!Array.isArray(history)) return [];
   let i = 0;
@@ -2724,6 +2919,18 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     photoQuote: input.lastMessages.some((m) => m.kind === "image")
       ? null
       : ((input.stateData as any)?.photo_quote ?? null),
+    photoShots: [
+      ...(Array.isArray((input.stateData as any)?.photo_shots)
+        ? ((input.stateData as any).photo_shots as { path: string; at: number }[]).filter(
+            (s) => s && typeof s.path === "string" && Number.isFinite(s.at),
+          )
+        : []),
+      ...input.lastMessages
+        .filter((m) => m.kind === "image" && m.media_path)
+        .map((m) => ({ path: String(m.media_path), at: Date.now() })),
+    ]
+      .filter((s, i, all) => all.findIndex((x) => x.path === s.path) === i)
+      .slice(-PHOTO_SHOTS_CAP),
   };
 
   const v4History: GeminiV2Content[] = sanitizeGeminiHistory(
@@ -3103,6 +3310,8 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   // passes because those append to the same conversation.
   const verifiedFreeTimes = new Set<string>();
   let slotToolRanThisTurn = false;
+  // Считал ли ассистент цену по фото в этом ходе — нужно guard'у «анкета вместо фото» ниже.
+  let photoToolRanThisTurn = false;
 
   // One agentic pass: loop tool-calls until the model returns a plain-text reply. Mutates
   // `contents`, `debug` and `flags`. Returned separately so we can run a second pass if the
@@ -3191,6 +3400,7 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
               const r = result as any;
               // Record what the calendar REALLY offered, for the invented-times guard after the
               // loop. Only slot-bearing tools count; get_services/get_masters carry no times.
+              if (name === "estimate_price_from_photo") photoToolRanThisTurn = true;
               if (name === "get_available_slots" || name === "check_time") {
                 slotToolRanThisTurn = true;
                 // Feeds the sales governor (how many rounds of "вот свободные окошки" the
@@ -3555,6 +3765,50 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     }
   }
 
+  // АНКЕТА ВМЕСТО ФОТО.
+  //
+  // Просьба в промпте — не гарантия: «какая у вас длина волос? осветляли раньше?» модель пишет
+  // на рефлексе, потому что так устроены тысячи диалогов в её обучающих данных. Клиент в ответ
+  // печатает три сообщения про свои волосы, ассистент всё равно не может посчитать цену — и в
+  // итоге либо выдумывает её, либо отправляет к мастеру. Фото решает это за один ход.
+  //
+  // Guard узкий намеренно. Ловим только вопросительные ФОРМЫ про видимые признаки, а не любое
+  // упоминание длины: «стоимость зависит от длины и густоты волос» — правильная фраза, и её
+  // трогать нельзя. И только когда у салона реально настроена оценка по фото: без правил владельца
+  // спросить словами — единственный доступный способ, запрещать его было бы вредительством.
+  // Причём настроена для ТОЙ ЖЕ зоны: по фото считаются волосы, а клиентка спрашивает про
+  // маникюр — ногти ассистенту приходится уточнять словами, и это не анкета.
+  const photoTopic = asksVisibleAttribute(reply)
+    ? photoServicesInTopic(
+        await loadPhotoPricedServices(db, input.salon.salonId),
+        `${reply} ${latestClientText}`,
+      )
+    : [];
+  if (photoTopic.length) {
+    const hasPhoto = flags.photoShots.some((s) => Date.now() - s.at < PHOTO_SHOT_TTL_MS);
+    debug.errors.push(
+      hasPhoto ? "photo_questionnaire_despite_photo" : "photo_questionnaire_instead_of_photo",
+    );
+    contents.push({
+      role: "user",
+      parts: [
+        {
+          text: hasPhoto
+            ? "СИСТЕМА: клиент УЖЕ прислал фото, а ты переспрашиваешь словами то, что на нём видно. Это запрещено. Перепиши ответ: молча вызови get_services и estimate_price_from_photo(service_id) и назови цену из инструмента. Инструмент сам берёт и свежие снимки, и присланные ходом раньше. Ни одного вопроса о длине, густоте, покрытии, осветлении, наращивании или сложности дизайна."
+            : "СИСТЕМА: ты спрашиваешь словами то, что видно на фото. Для этой услуги цену определяет снимок, анкета запрещена. Перепиши ответ: ОДНИМ коротким сообщением попроси нужные фото (поля photo_shots_needed и photo_ask из get_services) и не задавай ни одного вопроса о длине, густоте, покрытии, осветлении, наращивании или сложности дизайна.",
+        },
+      ],
+    });
+    const retry = await runToolLoop();
+    if (retry) reply = retry;
+    // Повторный заход не сработал — вопрос всё равно уходить клиенту не должен, но и молчать
+    // нельзя. Отдаём ту самую просьбу о фото: она короткая, честная и ведёт к цене.
+    if (asksVisibleAttribute(reply) && !photoToolRanThisTurn) {
+      debug.errors.push("photo_questionnaire_suppressed");
+      reply = photoAskFallback(photoTopic, language);
+    }
+  }
+
   // СВОДКА БЕЗ ИМЕНИ (sim B14-next-week, 2026-09-17). Шаблон сводки требует строку «🙍 Имя», а
   // create_appointment без client_name невозможен — но модель периодически выпускает сводку без
   // неё. Дальше идёт худший из возможных порядков: клиент читает сводку, отвечает «да,
@@ -3790,6 +4044,10 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
       ? ({ photo_notes: flags.photoNotes.slice(-PHOTO_NOTES_CAP) } as any)
       : {}),
     ...({ photo_quote: flags.photoQuote } as any),
+    // Пути к последним снимкам: оценка по фото должна пережить ход, в котором фото пришло.
+    ...({
+      photo_shots: flags.photoShots.filter((s) => Date.now() - s.at < PHOTO_SHOT_TTL_MS),
+    } as any),
     ...(persistedCache ? ({ gemini_cache: persistedCache } as any) : {}),
     // Instagram: once the client has given a phone, it becomes their identity for every later turn
     // (the webhook feeds it back in as input.client.phone), so "перенеси мою запись" a day later

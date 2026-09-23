@@ -1799,14 +1799,26 @@ type MergedSlot = {
   master_ids: string[];
 };
 
+const SERVICE_COLUMNS =
+  "id, name, category, price, price_max, price_type, duration_min, duration_max_min";
+
 export async function loadServicesForSalon(db: AdminClient, salonId: string) {
-  const { data } = await db
-    .from("services")
-    .select("id, name, category, price, price_max, price_type, duration_min, duration_max_min")
-    .eq("salon_id", salonId)
-    .eq("is_active", true)
-    .order("sort_order");
-  return data ?? [];
+  const query = (columns: string) =>
+    db
+      .from("services")
+      .select(columns)
+      .eq("salon_id", salonId)
+      .eq("is_active", true)
+      .order("sort_order");
+  // ПОРЯДОК ДЕПЛОЯ НЕ ГАРАНТИРОВАН. Код уезжает на Cloudflare сам, миграции применяются руками —
+  // значит существует окно, где воркер уже новый, а колонки photo_pricing_config в базе ещё нет.
+  // PostgREST на неизвестную колонку отвечает 42703, и это не «оценка по фото не работает», а
+  // «список услуг пустой»: ассистент перестаёт знать прайс целиком. Дешевле один повторный
+  // запрос без колонки, чем салон, которому ИИ сутки отвечает «не вижу услуг».
+  const withPhoto = await query(`${SERVICE_COLUMNS}, photo_pricing_config`);
+  if (!withPhoto.error) return ((withPhoto.data as any[]) ?? []) as any[];
+  const fallback = await query(SERVICE_COLUMNS);
+  return ((fallback.data as any[]) ?? []) as any[];
 }
 
 // The service list the AI assistant actually shows/matches against in WhatsApp — layered
@@ -1995,23 +2007,48 @@ export async function fetchMergedSlots(opts: {
 
 export async function classifyPhotoForPrice(opts: {
   apiKey: string;
-  imageBase64: string;
-  mime: string;
+  /** Одно фото — короткая форма для одно-снимочных услуг и для тестов контракта. */
+  imageBase64?: string;
+  mime?: string;
+  /**
+   * Несколько снимков сразу. Цена маникюра зависит и от того, что на ногтях СЕЙЧАС, и от
+   * сложности ЖЕЛАЕМОГО дизайна: два разных фото, один вызов. Классифицировать их по очереди
+   * нельзя — модель должна видеть оба, чтобы понять, какой из них референс.
+   */
+  images?: { base64: string; mime: string }[];
   serviceName: string;
   config: PhotoPricingConfig;
 }): Promise<PhotoClassification | { error: string }> {
+  const images = opts.images?.length
+    ? opts.images
+    : opts.imageBase64
+      ? [{ base64: opts.imageBase64, mime: opts.mime ?? "image/jpeg" }]
+      : [];
+  if (!images.length) return { error: "no image" };
   const criteria = opts.config.criteria.map((c) => ({
     id: c.id,
     label: c.label,
+    // На каком снимке искать признак. Без этой пометки модель на паре «ногти сейчас + референс»
+    // читала дизайн с фото «до» и уверенно возвращала «однотон» там, где клиент хотел роспись.
+    shot: c.shot === "reference" ? "желаемый результат (референс)" : "текущее состояние клиента",
     options: c.options.map((o) => ({ id: o.id, label: o.label })),
   }));
+  // Цена считается только по желаемому результату (например, объём ресниц) — фото «как сейчас»
+  // клиента не просили, значит всё присланное и есть пример. Без подсказки модель на снимке
+  // красивых ресниц гадала, свои ли это, и отправляла признак в uncertain.
+  const referenceOnly = opts.config.criteria.every((c) => c.shot === "reference");
   const result = await callGemini({
     model: MODEL_VISION,
     apiKey: opts.apiKey,
-    systemInstruction: `Оцени фото для услуги «${opts.serviceName}». Верни только видимые признаки из списка: ${JSON.stringify(criteria)}. Не определяй и не называй цену. В values перечисли пары criterion_id/option_id только для различимых признаков; неразличимые добавь в uncertain. Если фото не относится к услуге — relevant=false. Не угадывай по плохому свету, обрезанным волосам или неподходящему ракурсу.`,
+    systemInstruction: `Оцени фото для услуги «${opts.serviceName}». Верни только видимые признаки из списка: ${JSON.stringify(criteria)}. У каждого признака поле shot говорит, на каком из присланных фото его искать: «текущее состояние клиента» или «желаемый результат (референс)».${referenceOnly ? " Клиента просили прислать только пример желаемого результата — считай референсом каждое присланное фото." : ""} Если нужного снимка среди присланных нет — добавь признак в uncertain, НЕ переноси его на другое фото. Не определяй и не называй цену. В values перечисли пары criterion_id/option_id только для различимых признаков; неразличимые добавь в uncertain. Если ни одно фото не относится к услуге — relevant=false. Не угадывай по плохому свету, обрезанным волосам или неподходящему ракурсу.`,
     parts: [
-      { inline_data: { mime_type: opts.mime, data: opts.imageBase64 } },
-      { text: "Определи видимые признаки по фото. Не угадывай." },
+      ...images.map((img) => ({ inline_data: { mime_type: img.mime, data: img.base64 } })),
+      {
+        text:
+          images.length > 1
+            ? `Фото ${images.length}, порядок — от старого к новому. Определи видимые признаки. Не угадывай.`
+            : "Определи видимые признаки по фото. Не угадывай.",
+      },
     ],
     responseMimeType: "application/json",
     responseSchema: {

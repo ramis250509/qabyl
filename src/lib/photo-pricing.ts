@@ -1,24 +1,57 @@
 // A photograph may classify salon-defined attributes; it must never invent a price.
 // Keep this module pure so the same validation/pricing is used by the agent and regression tests.
 export type PhotoOption = { id: string; label: string; amount: number };
+/**
+ * Какой именно снимок нужен, чтобы увидеть признак.
+ *
+ * "current" — что у клиента сейчас (волосы, ногти, зона).
+ * "reference" — что клиент хочет получить (скрин из Instagram, картинка с Pinterest).
+ *
+ * Зачем разделение: для ногтей цена зависит и от текущего покрытия, и от сложности желаемого
+ * дизайна. Без пометки «этот критерий читается с референса» ассистент считал бы цену по одному
+ * фото «до» и промахивался на дизайне — либо, что хуже, начинал выспрашивать дизайн текстом.
+ */
+export type PhotoShot = "current" | "reference";
 export type PhotoCriterion = {
   id: string;
   label: string;
   mode: "base" | "surcharge";
   options: PhotoOption[];
+  /** Снимок, на котором виден признак. Отсутствует = "current" (так читаются и старые конфиги). */
+  shot?: PhotoShot;
 };
-export type PhotoPricingConfig = { enabled: boolean; criteria: PhotoCriterion[] };
+export type PhotoPricingConfig = {
+  enabled: boolean;
+  criteria: PhotoCriterion[];
+  /** Что клиент фотографирует — одно слово в родительном падеже: «волос», «ногтей», «зоны». */
+  subject?: string;
+  /** Нужен ли снимок желаемого результата, даже если ни один критерий цены с него не читается. */
+  needs_reference?: boolean;
+  /** Необязательная своя формулировка просьбы. Пусто — фразу собираем сами из subject. */
+  ask?: string;
+};
 export type PhotoClassification = {
   relevant: boolean;
   values: Record<string, string | null>;
   uncertain?: string[];
 };
 
+/** Слово для фразы-просьбы: владелец выбирает из списка, а не печатает руками. */
+export const PHOTO_SUBJECTS: { id: string; label: string; genitive: string }[] = [
+  { id: "hair", label: "Волосы", genitive: "волос" },
+  { id: "nails", label: "Ногти", genitive: "ногтей" },
+  { id: "lashes", label: "Ресницы", genitive: "ресниц" },
+  { id: "brows", label: "Брови", genitive: "бровей" },
+  { id: "skin", label: "Кожа", genitive: "кожи" },
+  { id: "zone", label: "Зона процедуры", genitive: "зоны" },
+];
+
 export const PHOTO_PRESETS: PhotoCriterion[] = [
   {
     id: "length",
     label: "Длина волос",
     mode: "base",
+    shot: "current",
     options: [
       { id: "short", label: "До плеч", amount: 0 },
       { id: "medium", label: "Ниже плеч", amount: 0 },
@@ -30,13 +63,227 @@ export const PHOTO_PRESETS: PhotoCriterion[] = [
     id: "density",
     label: "Густота",
     mode: "surcharge",
+    shot: "current",
     options: [
       { id: "normal", label: "Обычная", amount: 0 },
       { id: "thick", label: "Густая", amount: 0 },
       { id: "very_thick", label: "Очень густая", amount: 0 },
     ],
   },
+  {
+    id: "bleached",
+    label: "Следы осветления",
+    mode: "surcharge",
+    shot: "current",
+    options: [
+      { id: "no", label: "Натуральные", amount: 0 },
+      { id: "partial", label: "Отросшее осветление", amount: 0 },
+      { id: "yes", label: "Осветлённые по длине", amount: 0 },
+    ],
+  },
+  {
+    id: "nail_state",
+    label: "Что сейчас на ногтях",
+    mode: "base",
+    shot: "current",
+    options: [
+      { id: "bare", label: "Без покрытия", amount: 0 },
+      { id: "gel", label: "Старый гель-лак", amount: 0 },
+      { id: "extended", label: "Наращённые", amount: 0 },
+    ],
+  },
+  {
+    id: "nail_length",
+    label: "Длина ногтей",
+    mode: "surcharge",
+    shot: "current",
+    options: [
+      { id: "short", label: "Короткие", amount: 0 },
+      { id: "medium", label: "Средние", amount: 0 },
+      { id: "long", label: "Длинные", amount: 0 },
+    ],
+  },
+  {
+    id: "design",
+    label: "Сложность дизайна",
+    mode: "surcharge",
+    shot: "reference",
+    options: [
+      { id: "plain", label: "Однотон", amount: 0 },
+      { id: "accent", label: "Пара акцентных", amount: 0 },
+      { id: "complex", label: "Сложный дизайн", amount: 0 },
+    ],
+  },
+  {
+    id: "lash_effect",
+    label: "Желаемый объём ресниц",
+    mode: "base",
+    shot: "reference",
+    options: [
+      { id: "classic", label: "Классика (1D)", amount: 0 },
+      { id: "2d", label: "2D", amount: 0 },
+      { id: "3d", label: "3D", amount: 0 },
+      { id: "mega", label: "Мега-объём (4D и больше)", amount: 0 },
+    ],
+  },
+  {
+    id: "lash_state",
+    label: "Что сейчас на ресницах",
+    mode: "surcharge",
+    shot: "current",
+    options: [
+      { id: "natural", label: "Свои ресницы", amount: 0 },
+      { id: "extended", label: "Старое наращивание (снятие)", amount: 0 },
+    ],
+  },
 ];
+
+/**
+ * Какие готовые критерии относятся к какой зоне. Владельцу, который настраивает наращивание
+ * ресниц, «длина и густота волос» — шум: он их либо пропустит, либо, хуже, добавит.
+ */
+const PRESET_SUBJECT: Record<string, string> = {
+  length: "hair",
+  density: "hair",
+  bleached: "hair",
+  nail_state: "nails",
+  nail_length: "nails",
+  design: "nails",
+  lash_effect: "lashes",
+  lash_state: "lashes",
+};
+
+/** В конфиге зона хранится словом для фразы («ногтей»), а сравнивать удобнее по id. */
+function subjectId(genitive: string | undefined): string | null {
+  const word = genitive?.trim();
+  return PHOTO_SUBJECTS.find((s) => s.genitive === word)?.id ?? null;
+}
+
+/** Готовые критерии для зоны (id из PHOTO_SUBJECTS). Зона неизвестна — показываем все. */
+export function photoPresetsFor(subject: string | null): PhotoCriterion[] {
+  return subject ? PHOTO_PRESETS.filter((p) => PRESET_SUBJECT[p.id] === subject) : PHOTO_PRESETS;
+}
+
+/**
+ * Зона по названию и категории услуги — чтобы для «Маникюра с дизайном» кабинет сразу предлагал
+ * критерии ногтей. Возвращает слово для фразы («ногтей») или undefined, если непонятно.
+ *
+ * Название проверяется раньше категории: «Вечерний макияж» лежит в категории «Макияж и причёски»
+ * и по категории стал бы «волосами». По той же причине ресницы и брови проверяются раньше волос:
+ * «Окрашивание бровей» — это брови, хотя «окрашивание» обычно про волосы.
+ */
+export function guessPhotoSubject(service: {
+  name?: string | null;
+  category?: string | null;
+}): string | undefined {
+  for (const text of [service.name, service.category]) {
+    const t = (text ?? "").toLowerCase();
+    if (!t.trim()) continue;
+    if (/макияж|make-?up/.test(t)) return undefined;
+    if (/ресниц|lash/.test(t)) return "ресниц";
+    if (/бров|brow/.test(t)) return "бровей";
+    if (/ногт|маникюр|педикюр|nail/.test(t)) return "ногтей";
+    if (
+      /волос|стрижк|окрашив|тонирова|мелирова|балаяж|кератин|завивк|причёск|прическ|укладк/.test(t)
+    )
+      return "волос";
+  }
+  return undefined;
+}
+
+/**
+ * Зона услуги (id из PHOTO_SUBJECTS): выбранная владельцем, иначе по уже добавленным готовым
+ * критериям, иначе по названию. Правила, сохранённые до появления выбора зоны, так тоже её
+ * получают — по «Длине волос» понятно, что это волосы. null — определить не удалось.
+ *
+ * Правила не проверяются: кабинет спрашивает и про черновик, в котором ещё нет ни одного критерия.
+ */
+export function photoZoneOf(
+  config: { subject?: string; criteria?: PhotoCriterion[] },
+  service?: { name?: string | null; category?: string | null },
+): string | null {
+  const own = subjectId(config.subject);
+  if (own) return own;
+  const fromPresets = new Set(
+    (config.criteria ?? []).map((c) => PRESET_SUBJECT[c.id]).filter(Boolean),
+  );
+  if (fromPresets.size === 1) return [...fromPresets][0];
+  return subjectId(guessPhotoSubject(service ?? {}));
+}
+
+/**
+ * Зона настроенной услуги — для guard'а в ассистенте. null — не настроена или зона неизвестна;
+ * такую услугу считаем подходящей к любому разговору.
+ */
+export function photoSubjectOf(
+  raw: unknown,
+  service?: { name?: string | null; category?: string | null },
+): string | null {
+  const config = validatePhotoConfig(raw);
+  return config ? photoZoneOf(config, service) : null;
+}
+
+/**
+ * О какой зоне идёт речь в тексте. Нужно guard'у «анкета вместо фото»: вопрос «что сейчас на
+ * ногтях?» законен, если у салона по фото настроены только волосы, — ногти ассистенту приходится
+ * уточнять словами.
+ */
+export function photoSubjectsMentioned(text: string): string[] {
+  const t = (text ?? "").toLowerCase();
+  const words: [string, RegExp][] = [
+    ["lashes", /ресниц/],
+    ["brows", /бров/],
+    ["nails", /ногт|маникюр|педикюр|покрыти|гель-?лак|дизайн/],
+    ["hair", /волос|густот|осветл|обесцвеч|окрашив|мелирова|кератин|стрижк|причёс|причес/],
+  ];
+  return words.filter(([, re]) => re.test(t)).map(([id]) => id);
+}
+
+/** Снимок, с которого читается критерий. Старый конфиг без поля — всегда «текущее состояние». */
+export function criterionShot(criterion: PhotoCriterion): PhotoShot {
+  return criterion.shot === "reference" ? "reference" : "current";
+}
+
+/**
+ * Какие снимки просить у клиента. Референс нужен, если владелец включил его явно ИЛИ если с него
+ * читается хоть один критерий цены — иначе ассистент попросил бы одно фото и всё равно не смог бы
+ * посчитать цену, а дальше по привычке полез бы выспрашивать дизайн словами.
+ *
+ * Фото «как сейчас» не просим, если с него не читается ни один критерий: для ресниц, где цену
+ * задаёт только желаемый объём, снимок своих глаз ничего не даёт — только лишний шаг для клиента.
+ */
+export function photoShotsNeeded(raw: unknown): PhotoShot[] {
+  const config = validatePhotoConfig(raw);
+  if (!config) return [];
+  const current = config.criteria.some((c) => criterionShot(c) === "current");
+  const reference =
+    config.needs_reference === true ||
+    config.criteria.some((c) => criterionShot(c) === "reference");
+  const shots: PhotoShot[] = [];
+  if (current) shots.push("current");
+  if (reference) shots.push("reference");
+  return shots;
+}
+
+/**
+ * Готовая короткая просьба — ровно то, что ассистент говорит вместо анкеты.
+ *
+ * Живёт в коде, а не только в промпте, по двум причинам: владелец видит в кабинете ту самую фразу,
+ * которую услышит клиент, и она же подставляется в детерминированную страховку, когда модель всё
+ * равно скатывается в опрос текстом.
+ */
+export function photoRequestLine(raw: unknown): string {
+  const config = validatePhotoConfig(raw);
+  if (!config) return "";
+  if (config.ask?.trim()) return config.ask.trim();
+  const of = config.subject?.trim() ? ` ${config.subject.trim()}` : "";
+  const shots = photoShotsNeeded(config);
+  if (shots.length === 2)
+    return `Пришлите, пожалуйста, фото${of} сейчас и фото того, что хотите сделать — сразу сориентирую по стоимости 🙂`;
+  if (shots[0] === "reference")
+    return "Пришлите, пожалуйста, пример того, что хотите сделать, — фото или скрин, сразу сориентирую по стоимости 🙂";
+  return `Пришлите, пожалуйста, фото${of} — сразу сориентирую по стоимости 🙂`;
+}
 
 export function validatePhotoConfig(raw: unknown): PhotoPricingConfig | null {
   if (!raw || typeof raw !== "object") return null;
@@ -48,6 +295,11 @@ export function validatePhotoConfig(raw: unknown): PhotoPricingConfig | null {
     config.criteria.length > 8
   )
     return null;
+  if (config.subject != null && (typeof config.subject !== "string" || config.subject.length > 40))
+    return null;
+  if (config.ask != null && (typeof config.ask !== "string" || config.ask.length > 300))
+    return null;
+  if (config.needs_reference != null && typeof config.needs_reference !== "boolean") return null;
   const ids = new Set<string>();
   let bases = 0;
   for (const criterion of config.criteria) {
@@ -60,6 +312,7 @@ export function validatePhotoConfig(raw: unknown): PhotoPricingConfig | null {
       !criterion.label.trim() ||
       criterion.label.length > 80 ||
       !["base", "surcharge"].includes(criterion.mode) ||
+      (criterion.shot != null && !["current", "reference"].includes(criterion.shot)) ||
       !Array.isArray(criterion.options) ||
       criterion.options.length < 2 ||
       criterion.options.length > 12
@@ -92,26 +345,41 @@ export function calculatePhotoPrice(
   raw: unknown,
   classification: PhotoClassification,
   service: { price: number; price_max: number },
-): { price: number; selected: Record<string, string> } | { needs: string[] } | { error: string } {
+):
+  | { price: number; selected: Record<string, string> }
+  | { needs: string[]; needShots: PhotoShot[] }
+  | { error: string } {
   const config = validatePhotoConfig(raw);
   if (!config) return { error: "photo_rules_not_configured" };
   if (!classification.relevant)
-    return { needs: ["Фото не относится к выбранной услуге — попросите подходящее фото."] };
+    return {
+      needs: ["Фото не относится к выбранной услуге — попросите подходящее фото."],
+      needShots: photoShotsNeeded(config),
+    };
   const selected: Record<string, string> = {};
   const needs: string[] = [];
-  let price = service.price;
+  const needShots = new Set<PhotoShot>();
+  // Полная цена и доплаты копятся отдельно и складываются в конце. Раньше цена менялась прямо в
+  // цикле, и порядок критериев решал исход: владелец добавил в кабинете «Густоту» раньше «Длины» —
+  // доплата прибавлялась, а потом «Длина» её затирала. Густые длинные волосы стоили как обычные.
+  let base: number | null = null;
+  let surcharges = 0;
   for (const criterion of config.criteria) {
     const value = classification.values?.[criterion.id];
     const option = criterion.options.find((o) => o.id === value);
     if (!option || classification.uncertain?.includes(criterion.id)) {
       needs.push(criterion.label);
+      // Какого СНИМКА не хватило. Иначе ассистент просит «другое фото волос», хотя на самом деле
+      // не увидел дизайн — то есть референс, которого клиент вообще не присылал.
+      needShots.add(criterionShot(criterion));
       continue;
     }
     selected[criterion.id] = option.id;
-    if (criterion.mode === "base") price = option.amount;
-    else price += option.amount;
+    if (criterion.mode === "base") base = option.amount;
+    else surcharges += option.amount;
   }
-  if (needs.length) return { needs };
+  if (needs.length) return { needs, needShots: [...needShots] };
+  const price = (base ?? service.price) + surcharges;
   if (
     !Number.isFinite(service.price) ||
     !Number.isFinite(service.price_max) ||
@@ -121,6 +389,118 @@ export function calculatePhotoPrice(
   )
     return { error: "photo_price_outside_service_range" };
   return { price, selected };
+}
+
+/**
+ * Желаемый результат — это выбор клиента, а не признак, который надо «разглядеть». Примера у
+ * клиента часто нет: «хочу просто однотон», «сделайте 2D». Такие слова принимаем, но ТОЛЬКО для
+ * критериев, которые владелец пометил «видно на референсе». Что у клиента сейчас (длина, густота,
+ * покрытие, старое наращивание), по-прежнему решает только фото: словам «у меня короткие» цена не
+ * верит — ради этого оценка по фото и затевалась.
+ *
+ * chosen — строки «критерий:вариант» (например "design:plain"); их отдаёт модели сам инструмент в
+ * price_by_choice, так что собирать id ей не нужно. Всё, что не подходит, молча отбрасывается.
+ */
+export function applyClientChoice(
+  raw: unknown,
+  classification: PhotoClassification,
+  chosen: unknown,
+): PhotoClassification {
+  const config = validatePhotoConfig(raw);
+  if (!config || !Array.isArray(chosen)) return classification;
+  const values = { ...classification.values };
+  const uncertain = new Set(classification.uncertain ?? []);
+  let applied = false;
+  for (const token of chosen) {
+    if (typeof token !== "string") continue;
+    const [criterionId, optionId] = token.split(":");
+    const criterion = config.criteria.find((c) => c.id === criterionId);
+    if (!criterion || criterionShot(criterion) !== "reference") continue;
+    if (!criterion.options.some((o) => o.id === optionId)) continue;
+    values[criterionId] = optionId;
+    uncertain.delete(criterionId);
+    applied = true;
+  }
+  return applied ? { ...classification, values, uncertain: [...uncertain] } : classification;
+}
+
+/**
+ * Примера нет, а всё остальное по фото понятно, — считаем цену для каждого варианта желаемого
+ * результата. Клиент сразу видит «однотон — 900, сложный дизайн — 1200» вместо третьей просьбы
+ * прислать пример, которого у него нет. Это ровно то, что сделал бы живой администратор.
+ *
+ * Только когда не хватает ровно одного критерия и он читается с референса. Не хватает большего —
+ * вариантов становится столько, что это уже не ответ, а прайс-лист.
+ */
+export function photoPriceByChoice(
+  raw: unknown,
+  classification: PhotoClassification,
+  service: { price: number; price_max: number },
+): { criterion: string; options: { choice: string; label: string; price: number }[] } | null {
+  const config = validatePhotoConfig(raw);
+  if (!config || !classification.relevant) return null;
+  const missing = config.criteria.filter(
+    (c) =>
+      !c.options.some((o) => o.id === classification.values?.[c.id]) ||
+      classification.uncertain?.includes(c.id),
+  );
+  if (missing.length !== 1 || criterionShot(missing[0]) !== "reference") return null;
+  const criterion = missing[0];
+  const options: { choice: string; label: string; price: number }[] = [];
+  for (const option of criterion.options) {
+    const choice = `${criterion.id}:${option.id}`;
+    const priced = calculatePhotoPrice(
+      config,
+      applyClientChoice(config, classification, [choice]),
+      service,
+    );
+    if (!("price" in priced)) return null;
+    options.push({ choice, label: option.label, price: priced.price });
+  }
+  return { criterion: criterion.label, options };
+}
+
+/**
+ * Какие цены получит клиент — таблицей, для кабинета. Строки — критерий «Цена» (или первая
+ * доплата, если «Цены» нет), столбцы — следующая доплата. Владелец видит «Ниже лопаток + Очень
+ * густая = 7000» до того, как это услышит клиент, и сразу замечает комбинации вне прайса.
+ */
+export type PhotoPriceTable = {
+  rowTitle: string;
+  rows: string[];
+  colTitle: string | null;
+  cols: string[];
+  /** prices[строка][столбец]. Без второго критерия — один столбец. */
+  prices: number[][];
+  /** Критерии сверх двух: к цене из таблицы прибавляется их доплата от min до max. */
+  extras: { label: string; min: number; max: number }[];
+};
+
+export function photoPriceTable(raw: unknown, service: { price: number }): PhotoPriceTable | null {
+  const config = validatePhotoConfig(raw);
+  if (!config) return null;
+  const base = config.criteria.find((c) => c.mode === "base");
+  const surcharges = config.criteria.filter((c) => c.mode === "surcharge");
+  const rowCriterion = base ?? surcharges[0];
+  const colCriterion = base ? surcharges[0] : surcharges[1];
+  const extras = surcharges.filter((c) => c !== rowCriterion && c !== colCriterion);
+  const cheapest = (c: PhotoCriterion) => Math.min(...c.options.map((o) => o.amount));
+  const extraMin = extras.reduce((sum, c) => sum + cheapest(c), 0);
+  const start = (o: PhotoOption) => (base ? o.amount : service.price + o.amount);
+  return {
+    rowTitle: rowCriterion.label,
+    rows: rowCriterion.options.map((o) => o.label),
+    colTitle: colCriterion?.label ?? null,
+    cols: colCriterion?.options.map((o) => o.label) ?? [],
+    prices: rowCriterion.options.map((r) =>
+      (colCriterion?.options ?? [null]).map((c) => start(r) + (c?.amount ?? 0) + extraMin),
+    ),
+    extras: extras.map((c) => ({
+      label: c.label,
+      min: cheapest(c),
+      max: Math.max(...c.options.map((o) => o.amount)),
+    })),
+  };
 }
 
 export function photoRuleRangeError(
