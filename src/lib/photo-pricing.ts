@@ -439,11 +439,7 @@ export function photoPriceByChoice(
 ): { criterion: string; options: { choice: string; label: string; price: number }[] } | null {
   const config = validatePhotoConfig(raw);
   if (!config || !classification.relevant) return null;
-  const missing = config.criteria.filter(
-    (c) =>
-      !c.options.some((o) => o.id === classification.values?.[c.id]) ||
-      classification.uncertain?.includes(c.id),
-  );
+  const missing = missingCriteria(config, classification);
   if (missing.length !== 1 || criterionShot(missing[0]) !== "reference") return null;
   const criterion = missing[0];
   const options: { choice: string; label: string; price: number }[] = [];
@@ -458,6 +454,55 @@ export function photoPriceByChoice(
     options.push({ choice, label: option.label, price: priced.price });
   }
   return { criterion: criterion.label, options };
+}
+
+/**
+ * На снимке не разобрать то, что у клиента сейчас (чаще всего густоту), а остальное видно.
+ * Вместо голого «пришлите другое фото» — честная вилка по этому признаку: «ниже лопаток — от
+ * 6000 до 7000, зависит от густоты». Клиентка сразу понимает порядок цены, а переснять её
+ * просят уже ради точности, а не ради ответа вообще. В тесте Avrora так и было: по фото длинных
+ * волос ассистент не разобрал густоту и ответил одной просьбой переснять — без единой цифры.
+ *
+ * Только когда не хватает ровно одного признака и он читается с текущего фото. Выбрать его
+ * словами нельзя (см. applyClientChoice), поэтому это вилка, а не варианты на выбор.
+ */
+export function photoPriceRange(
+  raw: unknown,
+  classification: PhotoClassification,
+  service: { price: number; price_max: number },
+): { criterion: string; min: number; max: number } | null {
+  const config = validatePhotoConfig(raw);
+  if (!config || !classification.relevant) return null;
+  const missing = missingCriteria(config, classification);
+  if (missing.length !== 1 || criterionShot(missing[0]) !== "current") return null;
+  const criterion = missing[0];
+  const prices: number[] = [];
+  for (const option of criterion.options) {
+    const priced = calculatePhotoPrice(
+      config,
+      {
+        ...classification,
+        values: { ...classification.values, [criterion.id]: option.id },
+        uncertain: (classification.uncertain ?? []).filter((id) => id !== criterion.id),
+      },
+      service,
+    );
+    if (!("price" in priced)) return null;
+    prices.push(priced.price);
+  }
+  return { criterion: criterion.label, min: Math.min(...prices), max: Math.max(...prices) };
+}
+
+/** Критерии, которые по фото не определились: нет варианта, выдуманный вариант или «не уверен». */
+function missingCriteria(
+  config: PhotoPricingConfig,
+  classification: PhotoClassification,
+): PhotoCriterion[] {
+  return config.criteria.filter(
+    (c) =>
+      !c.options.some((o) => o.id === classification.values?.[c.id]) ||
+      classification.uncertain?.includes(c.id),
+  );
 }
 
 /**

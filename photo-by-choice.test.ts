@@ -196,3 +196,62 @@ describe("ресницы по желаемому объёму", () => {
     ]);
   });
 });
+
+describe("густоту не разобрать — вилка, а не голое «переснимите»", () => {
+  // Настройки кератина Avrora на 23.09.2026: длина — цена, густота — доплата.
+  const keratin: PhotoPricingConfig = {
+    enabled: true,
+    subject: "волос",
+    criteria: [
+      {
+        id: "length",
+        label: "Длина волос",
+        mode: "base",
+        shot: "current",
+        options: [
+          { id: "short", label: "До плеч", amount: 2500 },
+          { id: "very_long", label: "Ниже лопаток", amount: 6000 },
+        ],
+      },
+      {
+        id: "density",
+        label: "Густота",
+        mode: "surcharge",
+        shot: "current",
+        options: [
+          { id: "normal", label: "Обычная", amount: 0 },
+          { id: "thick", label: "Густая", amount: 500 },
+          { id: "very_thick", label: "Очень густая", amount: 1000 },
+        ],
+      },
+    ],
+  };
+
+  test("длина видна, густота нет — клиентка слышит «6000–7000» и просьбу переснять", async () => {
+    visionSees({ length: "very_long" }, ["density"]);
+    const result = await executeV4Tool(
+      "estimate_price_from_photo",
+      { service_id: SERVICE_ID },
+      inputWith([{ ...photo, media_path: "salon/hair-back.jpg" }]),
+      makeDb(keratin, { price: 2500, price_max: 7000 }),
+      newFlags(),
+    );
+    expect(result.success).toBe(false);
+    expect(result.price_range).toBe("6000–7000 сом");
+    expect(result.ask).toContain("Густота");
+    expect(result.ask).toContain("переснять");
+  });
+
+  test("не видно ничего — вилки нет, только просьба переснять", async () => {
+    visionSees({}, ["length", "density"]);
+    const result = await executeV4Tool(
+      "estimate_price_from_photo",
+      { service_id: SERVICE_ID },
+      inputWith([{ ...photo, media_path: "salon/dark.jpg" }]),
+      makeDb(keratin, { price: 2500, price_max: 7000 }),
+      newFlags(),
+    );
+    expect(result.price_range).toBeUndefined();
+    expect(result.ask).toContain("переснять");
+  });
+});

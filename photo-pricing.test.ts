@@ -6,6 +6,7 @@ import {
   photoBookingPrice,
   photoPresetsFor,
   photoPriceByChoice,
+  photoPriceRange,
   photoPriceTable,
   photoRequestLine,
   photoRuleRangeError,
@@ -163,6 +164,30 @@ const nails: PhotoPricingConfig = {
   ],
 };
 const manicure = { price: 800, price_max: 1200 };
+
+describe("не разобрать один признак того, что есть сейчас, — вилка по нему", () => {
+  test("длина видна, густоты нет — от цены «Обычной» до цены самой густой", () => {
+    expect(
+      photoPriceRange(
+        config,
+        { relevant: true, values: { length: "long" }, uncertain: ["density"] },
+        service,
+      ),
+    ).toEqual({ criterion: "Густота", min: 5000, max: 6000 });
+  });
+
+  test("не видно двух признаков или признак с референса — вилки нет", () => {
+    expect(photoPriceRange(config, { relevant: true, values: {} }, service)).toBeNull();
+    // Дизайн — выбор клиентки: для него варианты с ценами (photoPriceByChoice), а не вилка.
+    expect(
+      photoPriceRange(
+        nails,
+        { relevant: true, values: { nail_state: "gel" }, uncertain: ["design"] },
+        manicure,
+      ),
+    ).toBeNull();
+  });
+});
 
 describe("желаемый результат можно назвать словами", () => {
   test("слова клиента закрывают только критерий с референса", () => {
