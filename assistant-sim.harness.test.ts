@@ -304,6 +304,29 @@ describe("webhook pipeline under real-world delivery", () => {
     }
   }, 60_000);
 
+  test("после ответа администратора новое сообщение сохраняется, но ИИ не отвечает и это не потеря", async () => {
+    const h = world.createSalon(DEFAULT_SALON);
+    const phone = "996700200096";
+    brain = () => [{ text: "Здравствуйте!" }];
+    const s = session(h, phone);
+    await s.say(["Здравствуйте"]);
+    expect((await s.adminReply("Я администратор, помогу с записью.")).paused).toBe(true);
+    const result = await s.say(["Мне удобно в 14:00"]);
+    expect(result.replies).toEqual([]);
+    expect(result.lostInbound).toBe(0);
+    const conv = world.conversationOf(h, phone);
+    expect(
+      world.db
+        .table("wa_messages")
+        .some(
+          (m) =>
+            m.conversation_id === conv?.id &&
+            m.direction === "in" &&
+            m.text_body === "Мне удобно в 14:00",
+        ),
+    ).toBe(true);
+  });
+
   test("database fault while storing the conversation: webhook still acks, no reply, no crash", async () => {
     const h = world.createSalon(DEFAULT_SALON);
     world.db.injectFault({
@@ -555,6 +578,88 @@ describe("нельзя утверждать то, чего система не �
     expect(withoutTime.filtered_by).toBeUndefined();
   });
 
+  test("календарь отличает свободную Айжан в 15:00 от чужого ID мастера", async () => {
+    const h = world.createSalon(DEFAULT_SALON);
+    const { executeV4Tool } = await import("@/lib/wa-agent-v4.server");
+    const { input, flags } = toolCtx(h, "996700300090");
+    const date = h.localDate(1);
+    const serviceId = h.serviceId("Женская стрижка");
+    const valid: any = await executeV4Tool(
+      "get_available_slots",
+      { service_id: serviceId, master_id: h.masterId("Айжан"), date },
+      input,
+      world.db as any,
+      flags,
+    );
+    expect(valid.reason).toBe("ok");
+    expect(valid.free_times).toContain("15:00");
+
+    const invalid: any = await executeV4Tool(
+      "get_available_slots",
+      { service_id: serviceId, master_id: h.masterId("Бекзат"), date },
+      input,
+      world.db as any,
+      flags,
+    );
+    expect(invalid.reason).toBe("master_not_for_service");
+  });
+
+  test("перенос получает настоящие ID из записи, а неизвестный UUID не маскируется под пустой график", async () => {
+    const h = world.createSalon(DEFAULT_SALON);
+    const { executeV4Tool } = await import("@/lib/wa-agent-v4.server");
+    const phone = "996700300091";
+    const date = h.localDate(1);
+    const seeded = world.addAppointment(h, {
+      master: "Айжан",
+      service: "Женская стрижка",
+      date,
+      time: "11:00",
+      phone,
+      name: "Жибек",
+    });
+    const { input, flags } = toolCtx(h, phone);
+    const mine: any = await executeV4Tool("get_my_appointments", {}, input, world.db as any, flags);
+    expect(mine.appointments[0]).toMatchObject({
+      id: seeded.id,
+      service_id: h.serviceId("Женская стрижка"),
+      master_id: h.masterId("Айжан"),
+    });
+
+    const valid: any = await executeV4Tool(
+      "check_time",
+      {
+        service_id: h.serviceId("Женская стрижка"),
+        master_id: h.masterId("Айжан"),
+        date,
+        time: "15:00",
+      },
+      input,
+      world.db as any,
+      flags,
+    );
+    expect(valid.available).toBe(true);
+    const unknown: any = await executeV4Tool(
+      "check_time",
+      {
+        service_id: h.serviceId("Женская стрижка"),
+        master_id: "00000000-0000-4000-8000-000000000001",
+        date,
+        time: "15:00",
+      },
+      input,
+      world.db as any,
+      flags,
+    );
+    expect(unknown.reason).toBe("unknown_master");
+    expect(unknown.known_masters).toEqual(
+      expect.arrayContaining([
+        { id: h.masterId("Айгуль"), name: "Айгуль" },
+        { id: h.masterId("Айжан"), name: "Айжан" },
+      ]),
+    );
+    expect(unknown.note).toContain("НЕ означает, что мастера нет");
+  });
+
   test("когда в это время свободных нет, инструмент говорит это причиной, а не пустым списком", async () => {
     // 21:00 — позже смены обеих. Пустой список без причины модель читала как «такого мастера
     // нет»: в промпте написано «нет в списке → скажи, что такого нет».
@@ -690,7 +795,11 @@ describe("внутренняя кухня не должна попадать в 
       // Первый ответ — с утечкой. Второй (после требования переписать) — человеческий.
       return call === 1
         ? [{ text: "Извините, не могу найти мастера с таким ID. Уточните имя?" }]
-        : [{ text: "Не нашла такого мастера. У нас работают Айгуль, Айжан и Бекзат — к кому записать?" }];
+        : [
+            {
+              text: "Не нашла такого мастера. У нас работают Айгуль, Айжан и Бекзат — к кому записать?",
+            },
+          ];
     };
     const s = session(h, "996700600001");
     const r = await s.say(["запишите к Гульмире"]);

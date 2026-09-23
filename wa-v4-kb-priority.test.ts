@@ -28,18 +28,20 @@ describe("KB priority — salon overrides block at prompt tail", () => {
   });
 
   // rich_formatting (migration 20260812120000) is the ONLY way a salon can get lists/emoji:
-  // writing "используй буллиты" into ai_rules used to lose to the hard "ФОРМАТ (СТРОГО)" line
+  // writing "используй буллиты" into ai_rules used to lose to the hard FORMAT line
   // above it, and humanizeReply() flattened whatever survived. Prompt and post-processor must
   // switch together, so lock both directions of the prompt half here.
-  test("rich_formatting=false keeps the strict prose-only FORMAT rule", () => {
+  test("rich_formatting=false keeps one bubble, short paragraphs and no list FORMAT rule", () => {
     const p = buildSystemPromptV4(inputFor({}));
-    expect(p).toContain("ФОРМАТ (СТРОГО): только сплошной связный текст");
+    expect(p).toContain("один ответ — одно сообщение");
+    expect(p).toContain("между разными мыслями ставь пустую строку");
+    expect(p).toContain("Без списков, нумерации и markdown");
     expect(p).toContain("Эмодзи — максимум один на сообщение");
   });
 
   test("rich_formatting=true swaps in the permissive FORMAT rule, markdown still banned", () => {
     const p = buildSystemPromptV4(inputFor({ rich_formatting: true }));
-    expect(p).not.toContain("ФОРМАТ (СТРОГО): только сплошной связный текст");
+    expect(p).not.toContain("один ответ — одно сообщение");
     expect(p).not.toContain("Эмодзи — максимум один на сообщение");
     expect(p).toContain("можно оформлять сообщения структурно");
     expect(p).toMatch(/markdown ЗАПРЕЩ/i);
@@ -81,7 +83,9 @@ describe("KB priority — salon overrides block at prompt tail", () => {
   });
 
   test("pricing_rules is a RULE, not a fact", () => {
-    const p = buildSystemPromptV4(inputFor({ pricing_rules: "На детей до 12 лет действует -20%." }));
+    const p = buildSystemPromptV4(
+      inputFor({ pricing_rules: "На детей до 12 лет действует -20%." }),
+    );
     expect(p).toContain("[ПРАВИЛО] На детей до 12 лет действует -20%");
   });
 

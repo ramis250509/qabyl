@@ -16,6 +16,31 @@ export type CustomerMove = {
   note?: string;
 };
 
+/** A simulated customer cannot mark a booking complete before answering the salon's final
+ * confirmation question. This corrects the customer's own false-positive goal detection;
+ * the production assistant still must wait for an explicit yes. */
+export function normalizeCustomerMove(
+  move: CustomerMove,
+  transcript: TranscriptLine[],
+  expectsBooking: boolean,
+): CustomerMove {
+  const lastAssistant =
+    [...transcript].reverse().find((line) => line.from === "assistant")?.text ?? "";
+  if (
+    expectsBooking &&
+    move.status === "goal_reached" &&
+    move.messages.length === 0 &&
+    /подтвердите запись|всё верно\?/i.test(lastAssistant)
+  ) {
+    return {
+      status: "continue",
+      messages: ["Да, всё верно, подтверждаю."],
+      note: "confirm booking",
+    };
+  }
+  return move;
+}
+
 const SYSTEM = `Ты играешь роль РЕАЛЬНОГО клиента салона красоты в Бишкеке, который пишет администратору салона в WhatsApp.
 Ты НЕ ассистент и НЕ помогаешь администратору. Ты человек со своей целью, характером и манерой письма.
 

@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { SimWorld, ClientSession, DEFAULT_SALON, type SalonHandle, type Row } from "./world";
 import { SCENARIOS, type Scenario, type ScenarioCtx } from "./scenarios";
 import { runAssertions, describeAppt, type AssertionResult, type Expectations } from "./assertions";
-import { nextCustomerMove, type TranscriptLine } from "./customer";
+import { nextCustomerMove, normalizeCustomerMove, type TranscriptLine } from "./customer";
 import { judgeConversation, averageScore, type Verdict } from "./evaluator";
 import { localDateOf, localTimeOf } from "./fake-db";
 
@@ -121,7 +121,9 @@ const { processWaCloudPayload } = await import("@/routes/api/public/wacloud.$sal
 type ConversationRecord = {
   phone: string;
   persona: string;
-  transcript: Array<TranscriptLine & { tools?: string[]; errors?: string[] }>;
+  transcript: Array<
+    TranscriptLine & { tools?: string[]; errors?: string[]; toolTrace?: unknown[] }
+  >;
   endStatus: string;
   lostInbound: number;
   assertions: AssertionResult[];
@@ -235,6 +237,7 @@ async function converse(
       (r.meta?.actions ?? []).filter((a: string) => a.startsWith("tool:")),
     );
     const errors = outRows.flatMap((r) => r.meta?.errors ?? []);
+    const toolTrace = outRows.flatMap((r) => r.meta?.tool_trace ?? []);
     if (res.replies.length === 0) {
       transcript.push({
         from: "system",
@@ -251,7 +254,7 @@ async function converse(
       transcript.push({
         from: "assistant",
         text,
-        ...(i === res.replies.length - 1 ? { tools, errors } : {}),
+        ...(i === res.replies.length - 1 ? { tools, errors, toolTrace } : {}),
       }),
     );
     if (res.reconciled)
@@ -269,7 +272,7 @@ async function converse(
       messages = next;
       continue;
     }
-    const move = await nextCustomerMove({
+    const generatedMove = await nextCustomerMove({
       persona: sc.persona,
       goal: sc.goal,
       todayHuman,
@@ -277,6 +280,7 @@ async function converse(
       turn: turn + 1,
       maxTurns,
     });
+    const move = normalizeCustomerMove(generatedMove, transcript, Boolean(base.expect.booking));
     if (move.status !== "continue") {
       endStatus = move.status;
       if (move.messages.length) {

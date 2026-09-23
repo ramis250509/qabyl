@@ -582,9 +582,9 @@ export class ClientSession {
     }
     await Promise.all(runs);
 
-    // A message stored but never answered is a LOST message in production (it waits for the
-    // reconcile cron, minutes later). Count it, then do what the cron does, so the conversation can
-    // continue — the loss itself is reported as a finding.
+    // A message stored but never answered is a LOST message only while the AI owns the chat.
+    // After human takeover the inbound is deliberately kept for the administrator; the AI must
+    // stay silent, and the reconcile cron must not process it as an AI backlog.
     const conv = this.world.conversationOf(this.salon, this.phone);
     const pending = conv
       ? this.world.db
@@ -611,7 +611,7 @@ export class ClientSession {
       .filter((m) => m.to === this.phone)
       .slice(before)
       .map((m) => m.text);
-    return { replies, lostInbound: pending.length, reconciled };
+    return { replies, lostInbound: conv?.ai_paused ? 0 : pending.length, reconciled };
   }
 
   /**

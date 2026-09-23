@@ -1,5 +1,11 @@
 # AI Assistant Quality Test
 
+Paid Gemini requests in this simulator share `qa/api-budget-local.json` with photo regression.
+Each Flash request reserves $0.10 (Pro judge $0.25) before sending; testing stops at $2.99
+reserved across repeated runs. Photo requests reserve $0.05 from the same ledger.
+This is a conservative local guard, not a guarantee about other traffic on the Google project or
+Google's delayed billing. Do not enable auto-reload for this test.
+
 Система, которая разговаривает с ИИ-ассистентом Qabyl как десятки настоящих клиентов, проверяет
 **фактическое состояние базы** после каждого разговора и выдаёт отчёт.
 
@@ -7,7 +13,7 @@
 
 | Часть            | Что проверяет                                                                                                  | Нужен ключ            | Запуск                                                               |
 | ---------------- | -------------------------------------------------------------------------------------------------------------- | --------------------- | -------------------------------------------------------------------- |
-| **Живой прогон** | Качество разговора на настоящем Gemini: 71 сценарий, LLM-клиенты, независимый судья                           | да (`GEMINI_API_KEY`) | `bun run qa:assistant`                                               |
+| **Живой прогон** | Качество разговора на настоящем Gemini: 71 сценарий, LLM-клиенты, независимый судья                            | да (`GEMINI_API_KEY`) | `bun run qa:assistant`                                               |
 | **Harness**      | Детерминированные edge cases пайплайна: дубли вебхуков, пачки, гонка за слот, падение модели и базы, регрессии | нет                   | `bun test --isolate assistant-sim.harness` (входит в `bun run test`) |
 
 ## Как устроено
