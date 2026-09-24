@@ -4,6 +4,7 @@ import {
   dodgesPhotoPrice,
   photoAskFallback,
   photoServicesInTopic,
+  stripRetryAck,
 } from "./src/lib/wa-agent-v4.server";
 import { loadServicesForSalon } from "./src/lib/wa-agent.server";
 import {
@@ -182,5 +183,27 @@ describe("guard: фото есть, а цену по нему не посчит�
       "Я вижу, что на фото лицо, а не волосы.",
     ])
       expect(dodgesPhotoPrice(reply)).toBe(false);
+  });
+});
+
+describe("переписанный по guard'у ответ без отписок", () => {
+  // Дословно из теста 24.09: служебную заметку клиентка не видит, а извинение получала.
+  test("убирает «Хорошо, поняла!» и «Приношу извинения за неточность»", () => {
+    expect(stripRetryAck("Хорошо, поняла!\n\nПо фото видно, что у Вас сейчас гель-лак.")).toBe(
+      "По фото видно, что у Вас сейчас гель-лак.",
+    );
+    expect(
+      stripRetryAck("Приношу извинения за неточность.\n\nМаникюр с дизайном стоит от 800 до 1200 сом."),
+    ).toBe("Маникюр с дизайном стоит от 800 до 1200 сом.");
+    expect(stripRetryAck("Поняла! Однотон — 900 сом.")).toBe("Однотон — 900 сом.");
+  });
+
+  test("не трогает фразы, где «хорошо» и «извините» — часть смысла", () => {
+    for (const reply of [
+      "Хорошо, записала вас на завтра в 15:00.",
+      "Понятно, тогда подберу время.",
+      "Извините, на это время уже занято.",
+    ])
+      expect(stripRetryAck(reply)).toBe(reply);
   });
 });

@@ -2565,9 +2565,15 @@ export async function executeV4Tool(
           return data?.signedUrl ? { path: s.path, url: data.signedUrl } : null;
         }),
       );
-      const shots = [...signed.filter((s): s is { path: string; url: string } => !!s), ...fresh]
-        .slice(-PHOTO_SHOTS_CAP)
-        .map((s) => s.url);
+      // Какой снимок пришёл в этом сообщении, а какой раньше: распознаванию это нужно, чтобы
+      // «хочу такой» относилось к новому фото, а не ко всем сразу.
+      const shotList = [
+        ...signed
+          .filter((s): s is { path: string; url: string } => !!s)
+          .map((s) => ({ url: s.url, fresh: false })),
+        ...fresh.map((f) => ({ url: f.url, fresh: true })),
+      ].slice(-PHOTO_SHOTS_CAP);
+      const shots = shotList.map((s) => s.url);
       const chosen: unknown[] = Array.isArray(args.chosen) ? args.chosen : [];
       const noPhotoYet = {
         error:
@@ -2620,9 +2626,9 @@ export async function executeV4Tool(
         // Fetch the image bytes. downloadImageAsBase64 handles data: URLs (simulator) and
         // HTTP URLs (signed storage links) uniformly, with a 12s timeout.
         const downloaded = await Promise.all(shots.map((url) => downloadImageAsBase64(url)));
-        const images = downloaded
-          .filter((d): d is { base64: string; mime: string } => !("error" in d))
-          .map((d) => ({ base64: d.base64, mime: d.mime }));
+        const images = downloaded.flatMap((d, i) =>
+          "error" in d ? [] : [{ base64: d.base64, mime: d.mime, fresh: shotList[i].fresh }],
+        );
         if (!images.length) {
           const first = downloaded[0];
           return { error: `Не удалось получить фото: ${"error" in first ? first.error : "пусто"}` };
@@ -2669,27 +2675,42 @@ export async function executeV4Tool(
       const possible = Object.fromEntries(
         Object.entries(classification.possible ?? {}).filter(([, ids]) => ids.length > 1),
       );
-      // Что распознано — словами владельца. Модель иначе пересказывала по-своему: распознано «До
-      // лопаток», а клиентке ушло «волосы средней длины» (тест 24.09).
-      const seen = seenLabels(
-        config,
+      // Что распознано УВЕРЕННО — словами владельца. Модель иначе пересказывала по-своему
+      // (распознано «До лопаток», клиентке ушло «средней длины») и выдавала догадку за факт: на
+      // силуэте против солнца — «обычной густоты», хотя густота там под вопросом (тест 24.09).
+      const bestGuess =
         estimate.kind === "exact" || estimate.kind === "range"
           ? estimate.selected
-          : classification.values,
+          : classification.values;
+      const seen = seenLabels(
+        config,
+        Object.fromEntries(
+          Object.entries(bestGuess).filter(([id]) => (possible[id]?.length ?? 1) <= 1),
+        ),
       );
       const describe =
-        "Описывая, что видно на фото, используй только формулировки из seen — своих оценок длины, густоты и прочего не добавляй.";
+        "Описывая фото, говори только о признаках из seen и только этими словами. Признаки из not_sure не называй — по фото их точно не видно, это и есть причина вилки.";
       const toBooking =
         "Сразу после цены одним вопросом предложи записаться — подобрать удобный день и время.";
-      // Ничего из нужного на фото не видно (прислали лицо вместо волос) — это не повод называть
-      // весь прайс «оценкой по фото». Один раз просим нужный снимок; если клиентка уже переснимала,
-      // честно называем вилку, чтобы не зацикливаться.
-      if (estimate.kind === "range" && !Object.keys(estimate.selected).length && !reshotAlready)
+      // На фото нет ничего, от чего зависит цена: лицо вместо волос, чек, скриншот. Выдавать весь
+      // прайс за «оценку по фото» нельзя (тест 24.09: «по фото от 2500 до 7000»), но и отвечать
+      // одной просьбой переснять — тоже: так и рождалась петля «сфотографируйте волосы до пояса».
+      // Сначала ориентир — честный, диапазон прайса под своим именем, — потом один раз и коротко
+      // другое фото.
+      const nothingSeen =
+        (estimate.kind === "needs" && estimate.reason === "irrelevant") ||
+        (estimate.kind === "range" && !Object.keys(estimate.selected).length);
+      if (nothingSeen)
         return {
           success: false,
+          estimate: "not_visible",
+          service_name: (svcRow as any).name,
+          catalog_range: `${priceMin}–${priceMax} сом`,
           needs: ["На фото не видно того, от чего зависит цена этой услуги."],
-          ask: `ОДНИМ коротким предложением попроси прислать фото${config.subject ? ` ${config.subject}` : ""} — по этому снимку оценить нечего. Вопросов словами не задавай, цену не называй.`,
-          note: "Не угадывай цену.",
+          ask: reshotAlready
+            ? `Одним коротким сообщением скажи, что по фото точнее оценить не получилось, и назови общий диапазон по прайсу catalog_range — как диапазон прайса, не как оценку по фото; точную цену мастер назовёт на месте. Переснять больше не предлагай. ${toBooking}`
+            : `Одним коротким сообщением: скажи, что по этому снимку цену не оценить, назови общий диапазон по прайсу catalog_range — как диапазон прайса, не как оценку по фото, — и одной фразой предложи прислать нужное фото (${photoRequestLine(config)}), чтобы назвать точную цену. Вопросов словами не задавай.`,
+          note: "Признаков для цены на фото нет — цену по нему не угадывай.",
         };
       switch (estimate.kind) {
         case "exact":
@@ -2915,6 +2936,30 @@ export function asksVisibleAttribute(reply: string): boolean {
 }
 
 /**
+ * Ответ на служебную заметку guard'а, а не клиенту. Переписывая ответ по просьбе «СИСТЕМА: …»,
+ * модель начинала с «Хорошо, поняла!» или «Приношу извинения за неточность» — клиентка этой
+ * заметки не видела и получала извинение ни за что (тест 24.09, дважды, хотя в заметке прямо
+ * сказано так не писать). Убираем только абзац или первую фразу, целиком состоящие из такой
+ * отписки: «Хорошо, записываю вас на 15:00» не трогаем.
+ */
+export function stripRetryAck(reply: string): string {
+  const ACK =
+    /^(?:хорошо[,!.]?\s*)?(?:я\s+)?(?:поняла?|понятно)[.!]*|^(?:приношу\s+(?:свои\s+)?извинения|извините|прошу\s+прощения)(?:\s+за\s+[^.!?\n]{0,40})?[.!]*/i;
+  const paras = reply
+    .split(/\n{2,}/)
+    .map((p) => {
+      const t = p.trim();
+      const m = t.match(ACK);
+      if (!m) return t;
+      const rest = t.slice(m[0].length).trim();
+      // Отписка без продолжения — абзац целиком; с продолжением — только она сама.
+      return m[0].length === t.length ? "" : /^[,—-]/.test(rest) ? t : rest;
+    })
+    .filter(Boolean);
+  return paras.length ? paras.join("\n\n") : reply;
+}
+
+/**
  * Одна строка для журнала: что оценка по фото распознала и какую цену посчитала. По ней видно,
  * ошиблось распознавание («ниже лопаток» вместо «до плеч») или правила салона, — без этого
  * разбор любой жалобы на цену начинался с догадок. Без кавычек и пробелов, чтобы строку было
@@ -2936,6 +2981,7 @@ export function photoTrace(result: any): string {
     return `photo:choice:${(result.price_by_choice ?? [])
       .map((o: any) => `${label(o.label)}=${label(o.price_label)}`)
       .join(",")}:${pairs(result.selected)}${may}`;
+  if (result?.estimate === "not_visible") return `photo:not_visible:${label(result.catalog_range)}`;
   if (result?.needs) return `photo:needs:${label((result.needs ?? []).join("/"))}`;
   return `photo:error:${label(result?.error ?? result?.note)}`;
 }
@@ -3933,7 +3979,7 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
       ],
     });
     const retry = await runToolLoop();
-    if (retry) reply = retry;
+    if (retry) reply = stripRetryAck(retry);
     // Повторный заход не сработал — вопрос всё равно уходить клиенту не должен, но и молчать
     // нельзя. Отдаём ту самую просьбу о фото: она короткая, честная и ведёт к цене.
     if (asksVisibleAttribute(reply) && !photoToolRanThisTurn) {
@@ -3971,7 +4017,7 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
         ],
       });
       const retry = await runToolLoop();
-      if (retry) reply = retry;
+      if (retry) reply = stripRetryAck(retry);
     }
   }
 
