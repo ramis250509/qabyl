@@ -139,21 +139,69 @@ const keratin = {
   },
 };
 
+const MANICURE_ID = "22222222-2222-4222-8222-222222222222";
+const manicure = {
+  id: MANICURE_ID,
+  name: "Маникюр с дизайном",
+  category: null,
+  price: 800,
+  price_max: 1200,
+  price_type: "range",
+  duration_min: 90,
+  is_active: true,
+  photo_pricing_config: {
+    enabled: true,
+    subject: "ногтей",
+    criteria: [
+      {
+        id: "nail_state",
+        label: "Что сейчас на ногтях",
+        mode: "base",
+        shot: "current",
+        options: [
+          { id: "bare", label: "Без покрытия", amount: 800 },
+          { id: "gel", label: "Старый гель-лак", amount: 900 },
+        ],
+      },
+      {
+        id: "design",
+        label: "Сложность дизайна",
+        mode: "surcharge",
+        shot: "reference",
+        options: [
+          { id: "plain", label: "Однотон", amount: 0 },
+          { id: "complex", label: "Сложный дизайн", amount: 200 },
+        ],
+      },
+    ],
+  },
+};
+
+// Фильтры .eq() учитываются для полей, которые у строки есть: инструмент читает услугу по id.
 function query(rows: any[]): any {
+  const filters: [string, unknown][] = [];
+  const picked = () => rows.filter((r) => filters.every(([k, v]) => !(k in r) || r[k] === v));
   const q: any = new Proxy(
     {},
     {
       get(_t, prop) {
         if (prop === "then")
-          return (resolve: any) => resolve({ data: rows, error: null, count: rows.length });
+          return (resolve: any) => resolve({ data: picked(), error: null, count: picked().length });
         if (prop === "maybeSingle" || prop === "single")
-          return async () => ({ data: rows[0] ?? null, error: null });
+          return async () => ({ data: picked()[0] ?? null, error: null });
+        if (prop === "eq")
+          return (k: string, v: unknown) => {
+            filters.push([k, v]);
+            return q;
+          };
         return () => q;
       },
     },
   );
   return q;
 }
+
+let vision: "hair" | "irrelevant" = "hair";
 
 let modelReplies: any[][] = [];
 let modelRequests: any[] = [];
@@ -168,16 +216,28 @@ globalThis.fetch = (async (url: any, init?: RequestInit) => {
   if (u.includes("/cachedContents")) return new Response('{"error":"skip"}', { status: 400 });
   if (u.includes("generativelanguage.googleapis.com")) {
     const body = JSON.parse(String(init?.body ?? "{}"));
-    // Распознавание фото: длина видна, густота — обычная или густая.
+    // Распознавание фото: волосы — длина видна, густота обычная или густая; ногти — гель-лак,
+    // примера дизайна нет; «лицо» — ничего нужного.
     if (body.generationConfig?.responseSchema?.properties?.relevant) {
-      const text = JSON.stringify({
-        relevant: true,
-        values: [
-          { criterion_id: "length", option_id: "very_long", possible: ["very_long"] },
-          { criterion_id: "density", option_id: "normal", possible: ["normal", "thick"] },
-        ],
-        uncertain: [],
-      });
+      const nails = JSON.stringify(body.systemInstruction).includes("nail_state");
+      const text = JSON.stringify(
+        vision === "irrelevant"
+          ? { relevant: false, values: [], uncertain: [] }
+          : nails
+            ? {
+                relevant: true,
+                values: [{ criterion_id: "nail_state", option_id: "gel", possible: ["gel"] }],
+                uncertain: ["design"],
+              }
+            : {
+                relevant: true,
+                values: [
+                  { criterion_id: "length", option_id: "very_long", possible: ["very_long"] },
+                  { criterion_id: "density", option_id: "normal", possible: ["normal", "thick"] },
+                ],
+                uncertain: [],
+              },
+      );
       return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text }] } }] }), {
         status: 200,
       });
@@ -195,8 +255,9 @@ globalThis.fetch = (async (url: any, init?: RequestInit) => {
 beforeEach(() => {
   modelReplies = [];
   modelRequests = [];
+  vision = "hair";
   (globalThis as any).__WA_DB__ = {
-    from: (table: string) => query(table === "services" ? [keratin] : []),
+    from: (table: string) => query(table === "services" ? [keratin, manicure] : []),
     rpc: async () => ({ data: null, error: null }),
     storage: { from: () => ({ createSignedUrl: async () => ({ data: null }) }) },
   };
@@ -266,4 +327,37 @@ test("густоту по фото не видно, а модель её наз�
   expect(res.debug.errors).toContain("photo_unsure_density_claimed");
   expect(lastUserText(modelRequests[2])).toContain("Густоту волос по этому фото точно не видно");
   expect(res.reply).not.toContain("густые");
+});
+
+test("варианты одной услуги — не «выдуманные услуги»: цены вариантов доходят до клиента", async () => {
+  // Тест 25.09: guard выдуманных услуг принял «однотонное покрытие, пару акцентных» за услуги, которых
+  // нет в прайсе, модель извинилась и назвала вилку прайса «от 800 до 1200».
+  const variants =
+    "Можем предложить однотонное покрытие или сложный дизайн: однотон — 900 сом, сложный дизайн — 1100 сом. Какой выберете?";
+  modelReplies = [
+    [{ functionCall: { name: "estimate_price_from_photo", args: { service_id: MANICURE_ID } } }],
+    [{ text: variants }],
+  ];
+  const res = await runWaAgentV4(photoTurn("Сколько будет маникюр с дизайном?"));
+  expect(res.debug.errors).not.toContain("invented_services_forcing_retry");
+  expect(res.debug.errors).not.toContain("photo_price_mismatch");
+  expect(modelRequests).toHaveLength(2);
+  expect(res.reply).toContain("1100 сом");
+});
+
+test("на фото ничего не видно, а прайс не назван — просим назвать именно прайс", async () => {
+  // Тест 25.09 (H9): заметка просила «назови 2500–7000» и тут же «без общей вилки прайса» —
+  // модель выкинула цену совсем.
+  vision = "irrelevant";
+  modelReplies = [
+    [{ functionCall: { name: "estimate_price_from_photo", args: { service_id: SERVICE_ID } } }],
+    [{ text: "По этому фото не могу оценить. Пришлите, пожалуйста, фото волос." }],
+    [{ text: "По этому фото не оценить: кератин у нас по прайсу 2500–7000 сом. Пришлите фото волос." }],
+  ];
+  const res = await runWaAgentV4(photoTurn("Сколько будет кератин?"));
+  expect(res.debug.errors).toContain("photo_price_mismatch");
+  const note = lastUserText(modelRequests[2]);
+  expect(note).toContain("Назови общий диапазон по прайсу 2500–7000 сом — именно как прайс");
+  expect(note).not.toContain("без общей вилки прайса");
+  expect(res.reply).toContain("2500–7000 сом");
 });

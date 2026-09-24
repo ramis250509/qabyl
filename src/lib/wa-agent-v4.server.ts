@@ -2971,11 +2971,11 @@ export function asksVisibleAttribute(reply: string): boolean {
  * модель начинала с «Хорошо, поняла!» или «Приношу извинения за неточность» — клиентка этой
  * заметки не видела и получала извинение ни за что (тест 24.09, дважды, хотя в заметке прямо
  * сказано так не писать). Убираем только абзац или первую фразу, целиком состоящие из такой
- * отписки: «Хорошо, записываю вас на 15:00» не трогаем.
+ * отписки: «Хорошо, записываю вас на 15:00» не трогаем. «Извините, я ошиблась» — тоже отписка (25.09).
  */
 export function stripRetryAck(reply: string): string {
   const ACK =
-    /^(?:хорошо[,!.]?\s*)?(?:я\s+)?(?:поняла?|понятно)[.!]*|^(?:приношу\s+(?:свои\s+)?извинения|извините|прошу\s+прощения)(?:\s+за\s+[^.!?\n]{0,40})?[.!]*/i;
+    /^(?:хорошо[,!.]?\s*)?(?:я\s+)?(?:поняла?|понятно)[.!]*|^(?:приношу\s+(?:свои\s+)?извинения|извините|прошу\s+прощения)(?:,?\s*(?:я\s+)?(?:ошиблась|ошибся|ошиблись))?(?:\s+за\s+[^.!?\n]{0,40})?[.!]*/i;
   const paras = reply
     .split(/\n{2,}/)
     .map((p) => {
@@ -4185,53 +4185,6 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     }
   }
 
-  // ОТВЕТ РАСХОДИТСЯ С РАСЧЁТОМ ПО ФОТО. Инструмент посчитал, а модель назвала своё: вилку прайса
-  // вместо цен вариантов («причёска у нас от 1000 до 2000», хотя по длине с фото — 1600 / 1800 /
-  // 2000) или густоту, которую фото не показало («длинные и густые», а густота под вопросом).
-  // Тест Avrora 25.09. Цена по правилам салона — главное обещание функции, поэтому сверяем кодом.
-  if (photoResults.length) {
-    let check = strayPhotoPrices(reply, photoResults);
-    if (check.stray.length) {
-      // Суммы из прайса других услуг — не расхождение («кератин 6000–6500, а стрижка 700»).
-      const estimated = new Set(photoResults.map((r) => PHOTO_RESULT_META.get(r)?.serviceId));
-      const { data } = await db
-        .from("services")
-        .select("id, price, price_max")
-        .eq("salon_id", input.salon.salonId);
-      const others = new Set<number>(
-        ((data as any[]) ?? [])
-          .filter((s) => !estimated.has(s.id))
-          .flatMap((s) => [Number(s.price), Number(s.price_max)])
-          .filter((n) => Number.isFinite(n) && n > 0),
-      );
-      check = strayPhotoPrices(reply, photoResults, others);
-    }
-    const priceOff = check.stray.length > 0 || check.unnamed || check.catalogInstead;
-    const density = claimsUnsureDensity(reply, photoResults.at(-1));
-    if (priceOff || density) {
-      const last = photoResults.at(-1);
-      const prices =
-        last?.estimate === "choice"
-          ? (last.price_by_choice ?? []).map((o: any) => `${o.label} — ${o.price_label}`).join("; ")
-          : (last?.price_label ?? last?.catalog_range ?? "");
-      debug.errors.push(priceOff ? "photo_price_mismatch" : "photo_unsure_density_claimed");
-      contents.push({
-        role: "user",
-        parts: [
-          {
-            text: `СИСТЕМА: перепиши ответ. ${
-              priceOff
-                ? `Цена по фото уже посчитана: ${prices}. Назови именно её${last?.estimate === "choice" ? " — каждый вариант с его ценой" : ""}, без других сумм и без общей вилки прайса.`
-                : ""
-            }${density ? " Густоту волос по этому фото точно не видно — не пиши, какие волосы по густоте (ни «густые», ни «обычные»)." : ""} Остальное оставь как было. Клиент этой служебной заметки не видит: не извиняйся, не пиши «хорошо», «поняла», «уточню» — просто напиши правильный ответ так, будто отвечаешь впервые.`,
-          },
-        ],
-      });
-      const retry = await runToolLoop();
-      if (retry) reply = stripRetryAck(retry);
-    }
-  }
-
   // СВОДКА БЕЗ ИМЕНИ (sim B14-next-week, 2026-09-17). Шаблон сводки требует строку «🙍 Имя», а
   // create_appointment без client_name невозможен — но модель периодически выпускает сводку без
   // неё. Дальше идёт худший из возможных порядков: клиент читает сводку, отвечает «да,
@@ -4306,8 +4259,13 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   //
   // Сверяем не со словарём бьюти-терминов (его пришлось бы вести вечно), а с прайсом самого
   // салона: всё, что перечислено после «у нас есть», обязано в нём найтись.
+  //
+  // Кроме хода с оценкой по фото: там перечисляются варианты ОДНОЙ услуги из правил владельца
+  // («однотонное покрытие, пара акцентных, сложный дизайн»), а в прайсе их отдельными услугами нет.
+  // Тест 25.09: guard принимал их за выдуманные услуги, модель извинялась («Извините, я
+  // ошиблась») и вместо цен вариантов называла вилку прайса.
   const realServices = [...servicesRoster.matchAll(/«([^»]+)»/g)].map((m) => m[1].trim());
-  if (realServices.length > 0) {
+  if (realServices.length > 0 && !photoResults.length) {
     const words = (s: string) =>
       new Set(
         s
@@ -4352,6 +4310,56 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
       });
       const retry = await runToolLoop();
       if (retry) reply = retry;
+    }
+  }
+
+  // ОТВЕТ РАСХОДИТСЯ С РАСЧЁТОМ ПО ФОТО. Инструмент посчитал, а модель назвала своё: вилку прайса
+  // вместо цен вариантов («причёска у нас от 1000 до 2000», хотя по длине с фото — 1600 / 1800 /
+  // 2000) или густоту, которую фото не показало («длинные и густые», а густота под вопросом).
+  // Тест Avrora 25.09. Цена по правилам салона — главное обещание функции, поэтому сверяем кодом.
+  // Стоит последним из переписывающих guard'ов: любой из них мог заменить цены вариантов прайсом.
+  if (photoResults.length) {
+    let check = strayPhotoPrices(reply, photoResults);
+    if (check.stray.length) {
+      // Суммы из прайса других услуг — не расхождение («кератин 6000–6500, а стрижка 700»).
+      const estimated = new Set(photoResults.map((r) => PHOTO_RESULT_META.get(r)?.serviceId));
+      const { data } = await db
+        .from("services")
+        .select("id, price, price_max")
+        .eq("salon_id", input.salon.salonId);
+      const others = new Set<number>(
+        ((data as any[]) ?? [])
+          .filter((s) => !estimated.has(s.id))
+          .flatMap((s) => [Number(s.price), Number(s.price_max)])
+          .filter((n) => Number.isFinite(n) && n > 0),
+      );
+      check = strayPhotoPrices(reply, photoResults, others);
+    }
+    const priceOff = check.stray.length > 0 || check.unnamed || check.catalogInstead;
+    const density = claimsUnsureDensity(reply, photoResults.at(-1));
+    if (priceOff || density) {
+      const last = photoResults.at(-1);
+      const prices =
+        last?.estimate === "choice"
+          ? (last.price_by_choice ?? []).map((o: any) => `${o.label} — ${o.price_label}`).join("; ")
+          : (last?.price_label ?? last?.catalog_range ?? "");
+      debug.errors.push(priceOff ? "photo_price_mismatch" : "photo_unsure_density_claimed");
+      contents.push({
+        role: "user",
+        parts: [
+          {
+            text: `СИСТЕМА: перепиши ответ. ${
+              !priceOff
+                ? ""
+                : last?.estimate === "not_visible"
+                  ? `По этому фото цену не оценить. Назови общий диапазон по прайсу ${last.catalog_range} — именно как прайс, не как оценку по фото.`
+                  : `Цена по фото уже посчитана: ${prices}. Назови именно её${last?.estimate === "choice" ? " — каждый вариант с его ценой" : ""}, без других сумм и без общей вилки прайса.`
+            }${density ? " Густоту волос по этому фото точно не видно — не пиши, какие волосы по густоте (ни «густые», ни «обычные»)." : ""} Остальное оставь как было. Клиент этой служебной заметки не видит: не извиняйся, не пиши «хорошо», «поняла», «уточню» — просто напиши правильный ответ так, будто отвечаешь впервые.`,
+          },
+        ],
+      });
+      const retry = await runToolLoop();
+      if (retry) reply = stripRetryAck(retry);
     }
   }
 
