@@ -33,10 +33,8 @@ import {
 } from "@/lib/wa-agent.server";
 import {
   applyClientChoice,
-  calculatePhotoPrice,
   photoBookingPrice,
-  photoPriceByChoice,
-  photoPriceRange,
+  photoEstimate,
   photoRequestLine,
   photoShotsNeeded,
   photoSubjectOf,
@@ -371,11 +369,11 @@ ${servicesRoster}
           `ЦЕНА ПО ФОТО — БЕЗ АНКЕТ (ЖЁСТКОЕ ПРАВИЛО, важнее привычки задавать вопросы):`,
           `- У услуги из get_services есть поле photo_quote. photo_quote=true значит: цену определяет ФОТО, а не рассказ клиента. Спрашивать словами то, что видно на снимке, ЗАПРЕЩЕНО. Под запретом в том числе: «какая у вас длина волос», «какая густота», «осветляли/красили раньше», «волосы повреждены?», «что сейчас на ногтях», «какая длина ногтей», «свои или наращённые», «сложный ли дизайн», «какой эффект ресниц» — и любой другой вопрос о том, что ты увидишь сам.`,
           `- Вместо анкеты ОДНИМ коротким сообщением попроси ровно те снимки, которые перечислены в photo_shots_needed этой услуги: current — что у клиента сейчас, reference — фото желаемого результата. Формулировку бери из photo_ask (можно сказать своими словами, но так же коротко и на языке клиента). Пример: «Да, конечно 🙂⏎⏎Стоимость зависит от волос — пришлите, пожалуйста, фото, и я сразу сориентирую по цене.» Для двух снимков: «Пришлите, пожалуйста, фото ваших ногтей сейчас и фото того, что хотите сделать — сразу сориентирую по стоимости 🙂».`,
-          `- Просьба о фото — это ОДНО короткое сообщение, а не список требований. Не объясняй, как фотографировать, не проси «со спины, сбоку, при дневном свете» заранее: прислали — оценивай тем, что есть, и только если не вышло, скажи, что именно переснять.`,
+          `- Просьба о фото — это ОДНО короткое сообщение, а не список требований. Не объясняй, как фотографировать, не проси «со спины, сбоку, при дневном свете» заранее. Прислали — оценивай ЛЮБОЕ фото тем, что на нём видно: темно, под углом, обрезано — не повод отказывать, инструмент всё равно даст точную цену или ориентировочную вилку. Никогда не отвечай одной просьбой переснять без цены; предложить ещё фото можно только ПОСЛЕ оценки, одной фразой, по желанию клиента и не больше одного раза.`,
           `- ФОТО УЖЕ ПРИСЛАЛИ (в этом сообщении или раньше) → НИ ОДНОГО уточняющего вопроса. Молча вызови get_services, затем estimate_price_from_photo(service_id) и сразу назови цену. Инструмент сам достаёт и свежие снимки, и присланные ходом раньше.`,
           `- В прайсе такие услуги помечены «цена по фото». Фото пришло вместе с вопросом о цене — всё равно сначала estimate_price_from_photo: ответить вилкой из прайса или «точную цену назовёт мастер на месте» вместо расчёта — ошибка, клиент прислал фото ровно затем, чтобы узнать точную цену. Прислали не все нужные снимки (например, свои ногти без примера дизайна) — тоже сначала вызови инструмент, а не проси недостающее сам: он скажет, чего не хватает, и сразу даст цены вариантов.`,
-          `- success=true → назови price_label дословно, не округляй и не превращай в «примерно». needs → выполни ровно то, что написано в поле ask (попросить фото-референс либо переснять кадр), НЕ переключайся на опрос текстом. unconfigured → назови только общую вилку из каталога и скажи, что точную сумму подтвердит мастер.`,
-          `- ЖЕЛАЕМЫЙ РЕЗУЛЬТАТ МОЖНО НАЗВАТЬ СЛОВАМИ. Примера нет («хочу просто однотон», «сделайте 2D») — это нормально: инструмент вернёт price_by_choice, назови варианты с ценами одним сообщением. Клиент выбрал словами — вызови estimate_price_from_photo ещё раз с chosen=[choice выбранного варианта] и назови цену. Словами можно выбрать ТОЛЬКО желаемый результат; то, что у клиента сейчас (длина, густота, покрытие, старое наращивание), определяет только фото.`,
+          `- success=true → назови price_label дословно. estimate=exact — это точная цена: не округляй и не превращай в «примерно». estimate=range — это ориентировочная вилка по фото: назови её как предварительную оценку и сделай то, что написано в поле ask (не сужай вилку сам и не выдумывай, чем она объясняется). needs → выполни ровно то, что написано в поле ask, НЕ переключайся на опрос текстом. unconfigured → назови только общую вилку из каталога и скажи, что точную сумму подтвердит мастер.`,
+          `- ЖЕЛАЕМЫЙ РЕЗУЛЬТАТ МОЖНО НАЗВАТЬ СЛОВАМИ. Примера нет («хочу просто однотон», «сделайте 2D») — это нормально: инструмент вернёт price_by_choice, назови варианты с ценами (price_label) одним сообщением. Клиент выбрал словами — вызови estimate_price_from_photo ещё раз с chosen=[choice выбранного варианта] и назови цену. Словами можно выбрать ТОЛЬКО желаемый результат; то, что у клиента сейчас (длина, густота, покрытие, старое наращивание), определяет только фото.`,
           `- Услуга без photo_quote (photo_quote=false) — фото не поможет, работай обычными уточняющими вопросами о том, что на снимке не видно: зона, длительность, подвид процедуры.`,
         ]
       : [
@@ -755,7 +753,7 @@ const V4_TOOL_DECLARATIONS = [
   {
     name: "estimate_price_from_photo",
     description:
-      "Считает цену по фото, которое клиент УЖЕ прислал — в этом сообщении или ходом раньше, искать снимок самому не нужно. Берёт все последние снимки сразу, так что пара «что сейчас» + «желаемый результат» обрабатывается одним вызовом. Vision определяет только настроенные владельцем видимые признаки, цену вычисляет код. success=true — точная цена; needs — чего не хватило и что попросить (поле ask), опрос текстом взамен ЗАПРЕЩЁН; price_by_choice — цены по вариантам желаемого результата, когда примера нет; unconfigured — можно назвать только общий диапазон каталога.",
+      "Считает цену по фото, которое клиент УЖЕ прислал — в этом сообщении или ходом раньше, искать снимок самому не нужно. Берёт все последние снимки сразу, так что пара «что сейчас» + «желаемый результат» обрабатывается одним вызовом. Vision определяет только настроенные владельцем видимые признаки, цену вычисляет код. success=true — цена: estimate=exact точная, estimate=range ориентировочная вилка (фото видно не до конца); needs — чего не хватило и что попросить (поле ask), опрос текстом взамен ЗАПРЕЩЁН; price_by_choice — цены по вариантам желаемого результата, когда примера нет; unconfigured — можно назвать только общий диапазон каталога.",
     parameters: {
       type: "object",
       properties: {
@@ -2638,60 +2636,80 @@ export async function executeV4Tool(
         imageCount = images.length;
       }
       const classification = applyClientChoice(config, detected, chosen);
-      const priced = calculatePhotoPrice(config, classification, range);
-      if ("needs" in priced) {
-        // Не хватает только желаемого результата — называем цену каждого варианта. Клиент без
-        // примера («просто однотон») иначе застревал: ассистент по кругу просил референс, а
-        // спросить словами ему запрещено.
-        const byChoice = photoPriceByChoice(config, classification, range);
-        if (byChoice)
+      const estimate = photoEstimate(config, classification, range);
+      // Переснять предлагаем один раз. Клиентка уже присылала больше снимков, чем нужно услуге, —
+      // цену она услышала, а третья просьба «сфотографируйте получше» — это уже петля (живой тест
+      // 24.09: трижды «сфотографируйте волосы до пояса», цена так и не прозвучала).
+      const reshotAlready =
+        flags.photoShots.filter((s) => Date.now() - s.at < PHOTO_SHOT_TTL_MS).length >
+        photoShotsNeeded(config).length;
+      const retake = (unclear: string[]) =>
+        reshotAlready || !unclear.length
+          ? "Переснять больше не предлагай."
+          : `Если клиенту нужна точная цена, одной короткой фразой и по желанию предложи прислать ещё фото, где лучше видно: ${unclear.join(", ")}. Не требуй фото.`;
+      // Что фото не исключило — для журнала и отладки; клиенту это не пересказывается.
+      const possible = Object.fromEntries(
+        Object.entries(classification.possible ?? {}).filter(([, ids]) => ids.length > 1),
+      );
+      switch (estimate.kind) {
+        case "exact":
+          flags.photoQuote = { serviceId, price: estimate.price, at: Date.now() };
+          return {
+            success: true,
+            estimate: "exact",
+            service_name: (svcRow as any).name,
+            price_low: estimate.price,
+            price_high: estimate.price,
+            price_label: `${estimate.price} сом`,
+            selected: estimate.selected,
+            note: "Цена рассчитана кодом по правилам владельца. Назови её дословно, не округляй.",
+          };
+        case "range":
+          return {
+            success: true,
+            estimate: "range",
+            service_name: (svcRow as any).name,
+            price_low: estimate.min,
+            price_high: estimate.max,
+            price_label: `${estimate.min}–${estimate.max} сом`,
+            not_sure: estimate.unsure,
+            selected: estimate.selected,
+            possible,
+            ask: `Назови ориентировочную стоимость price_label — это предварительная оценка по фото, так и скажи. ${retake(estimate.unsure)} Вопросов о том, что видно на фото, не задавай; веди к записи.`,
+            note: "Вилку посчитал код по правилам владельца — называй её дословно, не сужай и не выдумывай причин.",
+          };
+        case "choice":
           return {
             success: false,
-            needs: priced.needs,
-            price_by_choice: byChoice.options,
-            ask: `Одним коротким сообщением назови варианты «${byChoice.criterion}» с ценами из price_by_choice (label — price сом) и предложи прислать пример, если он есть. Клиент выберет словами — вызови estimate_price_from_photo ещё раз с chosen=[choice этого варианта]. О том, что видно на фото, не спрашивай.`,
+            estimate: "choice",
+            price_by_choice: estimate.options.map((o) => ({
+              choice: o.choice,
+              label: o.label,
+              price_label: o.min === o.max ? `${o.min} сом` : `${o.min}–${o.max} сом`,
+            })),
+            not_sure: estimate.unsure,
+            selected: classification.values,
+            possible,
+            ask: `Одним коротким сообщением назови варианты «${estimate.criterion}» с ценами из price_by_choice (label — price_label) и предложи прислать пример, если он есть. Клиент выберет словами — вызови estimate_price_from_photo ещё раз с chosen=[choice этого варианта]. О том, что видно на фото, не спрашивай.`,
             note: "Цены вариантов посчитаны кодом по правилам владельца — называй их дословно.",
           };
-        // ЧЕГО НЕ ХВАТИЛО — СНИМКА ИЛИ РАКУРСА. Разница принципиальная: в первом случае нужно
-        // попросить фото желаемого результата (его клиент просто не присылал), во втором —
-        // переснять то же самое. Без этого ассистент писал «пришлите другое фото волос» там,
-        // где на самом деле не видел дизайн с референса, и клиент слал тот же кадр по кругу.
-        const missingReference =
-          priced.needShots.includes("reference") &&
-          photoShotsNeeded(config).includes("reference") &&
-          imageCount < photoShotsNeeded(config).length;
-        // Не разобрать один признак того, что у клиента сейчас (обычно густоту), — даём вилку по
-        // нему, а переснять просим уже ради точной цифры. Голое «пришлите другое фото» клиентка
-        // читает как отказ назвать цену.
-        const band = missingReference ? null : photoPriceRange(config, classification, range);
-        return {
-          success: false,
-          needs: priced.needs,
-          need_shots: priced.needShots,
-          ...(band ? { price_range: `${band.min}–${band.max} сом` } : {}),
-          ask: missingReference
-            ? "Попроси ОДНИМ коротким предложением фото желаемого результата — референс, скрин или пример. Вопросов словами не задавай."
-            : band
-              ? `Одним коротким сообщением назови вилку price_range и причину: по фото не видно «${band.criterion}». И попроси переснять при дневном свете, чтобы назвать точную цену. Вопросов словами не задавай.`
-              : "Попроси ОДНИМ коротким предложением переснять фото — скажи, что именно не видно (ракурс, свет). Вопросов о видимых признаках словами не задавай.",
-          note: "Не угадывай цену и не переходи на опрос текстом.",
-        };
+        case "needs":
+          return {
+            success: false,
+            needs: estimate.needs,
+            need_shots: estimate.needShots,
+            ask:
+              estimate.reason === "reference"
+                ? "Попроси ОДНИМ коротким предложением фото желаемого результата — референс, скрин или пример. Вопросов словами не задавай."
+                : "Фото не относится к этой услуге. ОДНИМ коротким предложением попроси прислать фото того, что нужно для неё. Вопросов словами не задавай.",
+            note: "Не угадывай цену и не переходи на опрос текстом.",
+          };
+        case "error":
+          return {
+            error: estimate.error,
+            note: "Правила цены салона противоречат диапазону услуги — передай администратору, не называй цену.",
+          };
       }
-      if ("error" in priced)
-        return {
-          error: priced.error,
-          note: "Правила цены салона противоречат диапазону услуги — передай администратору, не называй цену.",
-        };
-      flags.photoQuote = { serviceId, price: priced.price, at: Date.now() };
-      return {
-        success: true,
-        service_name: (svcRow as any).name,
-        price_low: priced.price,
-        price_high: priced.price,
-        price_label: `${priced.price} сом`,
-        selected: priced.selected,
-        note: "Цена рассчитана кодом по правилам владельца. Назови её дословно, не округляй.",
-      };
     }
 
     default:
@@ -2843,6 +2861,32 @@ export function asksVisibleAttribute(reply: string): boolean {
 }
 
 /**
+ * Одна строка для журнала: что оценка по фото распознала и какую цену посчитала. По ней видно,
+ * ошиблось распознавание («ниже лопаток» вместо «до плеч») или правила салона, — без этого
+ * разбор любой жалобы на цену начинался с догадок. Без кавычек и пробелов, чтобы строку было
+ * легко вытащить из ответа симулятора.
+ */
+export function photoTrace(result: any): string {
+  const pairs = (obj: unknown) =>
+    obj && typeof obj === "object"
+      ? Object.entries(obj as Record<string, unknown>)
+          .map(([k, v]) => `${k}=${Array.isArray(v) ? v.join("/") : String(v)}`)
+          .join(",")
+      : "";
+  const label = (s: unknown) => String(s ?? "").replace(/\s+/g, "");
+  const may =
+    result?.possible && Object.keys(result.possible).length ? `:may=${pairs(result.possible)}` : "";
+  if (result?.estimate === "exact" || result?.estimate === "range")
+    return `photo:${result.estimate}:${label(result.price_label)}:${pairs(result.selected)}${may}`;
+  if (result?.estimate === "choice")
+    return `photo:choice:${(result.price_by_choice ?? [])
+      .map((o: any) => `${label(o.label)}=${label(o.price_label)}`)
+      .join(",")}:${pairs(result.selected)}${may}`;
+  if (result?.needs) return `photo:needs:${label((result.needs ?? []).join("/"))}`;
+  return `photo:error:${label(result?.error ?? result?.note)}`;
+}
+
+/**
  * Ответ обходит цену по фото: называет вилку из прайса, отсылает к мастеру «на месте» или сам
  * просит ещё снимок. Сам по себе любой из этих ответов нормален — плохо, когда фото уже пришло,
  * а инструмент оценки так и не вызван (см. guard «фото есть, а цены по нему нет»).
@@ -2854,7 +2898,7 @@ export function dodgesPhotoPrice(reply: string): boolean {
     /\d[\d\s]*[–-]\s*\d[\d\s]*сом/, // «500–1000 сом»
     /на\s+месте/, // «точную цену мастер назовёт на месте»
     /пришлите[^.!?]{0,60}(фото|снимок|скрин|пример)/, // «пришлите фото желаемого дизайна»
-    /(сүрөт|фото)[^.!?]{0,40}жибер/, // «фото жиберип коёсузбу»
+    /(сүрөт|фото|тартып)[^.!?]{0,60}(жибер|жөнөт)/, // «фото жиберип коёсузбу», «тартып жөнөтө аласызбы»
   ].some((re) => re.test(text));
 }
 
@@ -3432,7 +3476,10 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
               const r = result as any;
               // Record what the calendar REALLY offered, for the invented-times guard after the
               // loop. Only slot-bearing tools count; get_services/get_masters carry no times.
-              if (name === "estimate_price_from_photo") photoToolRanThisTurn = true;
+              if (name === "estimate_price_from_photo") {
+                photoToolRanThisTurn = true;
+                debug.actions.push(photoTrace(r));
+              }
               if (name === "get_available_slots" || name === "check_time") {
                 slotToolRanThisTurn = true;
                 // Feeds the sales governor (how many rounds of "вот свободные окошки" the
@@ -3865,7 +3912,7 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
         role: "user",
         parts: [
           {
-            text: "СИСТЕМА: клиент прислал фото, а ты не посчитал по нему цену — назвал вилку из прайса или сам попросил ещё снимок. Для услуги с пометкой «цена по фото» так нельзя. Вызови estimate_price_from_photo(service_id) и ответь по его результату: success — назови цену; price_by_choice — назови варианты с ценами; price_range — вилку и причину; needs — ровно то, что в поле ask. Если непонятно, о какой услуге речь, спроси только это.",
+            text: "СИСТЕМА: клиент прислал фото, а ты не посчитал по нему цену — назвал вилку из прайса или сам попросил ещё снимок. Для услуги с пометкой «цена по фото» так нельзя. Вызови estimate_price_from_photo(service_id) и ответь по его результату: success — назови цену (estimate=range — как ориентировочную вилку); price_by_choice — назови варианты с ценами; needs — ровно то, что в поле ask. Если непонятно, о какой услуге речь, спроси только это.",
           },
         ],
       });

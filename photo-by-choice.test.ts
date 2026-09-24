@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { executeV4Tool } from "./src/lib/wa-agent-v4.server";
+import { executeV4Tool, photoTrace } from "./src/lib/wa-agent-v4.server";
 import type { PhotoPricingConfig } from "./src/lib/photo-pricing";
 
 // Инструмент оценки по фото целиком: база и распознавание подменены, цену считает настоящий код.
@@ -72,8 +72,15 @@ function makeDb(config: PhotoPricingConfig, range: { price: number; price_max: n
   } as any;
 }
 
-/** Распознавание фото отвечает заданными признаками; возвращает счётчик вызовов. */
-function visionSees(values: Record<string, string>, uncertain: string[] = []) {
+/**
+ * Распознавание фото отвечает заданными признаками; возвращает счётчик вызовов. possible — какие
+ * варианты фото не исключает; нет записи — признак определён уверенно.
+ */
+function visionSees(
+  values: Record<string, string>,
+  uncertain: string[] = [],
+  possible: Record<string, string[]> = {},
+) {
   const calls = { count: 0 };
   globalThis.fetch = (async () => {
     calls.count++;
@@ -82,6 +89,7 @@ function visionSees(values: Record<string, string>, uncertain: string[] = []) {
       values: Object.entries(values).map(([criterion_id, option_id]) => ({
         criterion_id,
         option_id,
+        possible: possible[criterion_id] ?? [option_id],
       })),
       uncertain,
     });
@@ -131,8 +139,8 @@ describe("оценка по фото: пример желаемого резул
     );
     expect(result.success).toBe(false);
     expect(result.price_by_choice).toEqual([
-      { choice: "design:plain", label: "Однотон", price: 900 },
-      { choice: "design:complex", label: "Сложный дизайн", price: 1200 },
+      { choice: "design:plain", label: "Однотон", price_label: "900 сом" },
+      { choice: "design:complex", label: "Сложный дизайн", price_label: "1200 сом" },
     ]);
     expect(result.ask).toContain("chosen");
   });
@@ -191,8 +199,8 @@ describe("ресницы по желаемому объёму", () => {
       newFlags(),
     );
     expect(result.price_by_choice).toEqual([
-      { choice: "lash_effect:classic", label: "Классика (1D)", price: 1500 },
-      { choice: "lash_effect:2d", label: "2D", price: 1800 },
+      { choice: "lash_effect:classic", label: "Классика (1D)", price_label: "1500 сом" },
+      { choice: "lash_effect:2d", label: "2D", price_label: "1800 сом" },
     ]);
   });
 });
@@ -227,7 +235,7 @@ describe("густоту не разобрать — вилка, а не гол�
     ],
   };
 
-  test("длина видна, густота нет — клиентка слышит «6000–7000» и просьбу переснять", async () => {
+  test("длина видна, густота нет — ориентировочно «6000–7000» и фото по желанию", async () => {
     visionSees({ length: "very_long" }, ["density"]);
     const result = await executeV4Tool(
       "estimate_price_from_photo",
@@ -236,13 +244,33 @@ describe("густоту не разобрать — вилка, а не гол�
       makeDb(keratin, { price: 2500, price_max: 7000 }),
       newFlags(),
     );
-    expect(result.success).toBe(false);
-    expect(result.price_range).toBe("6000–7000 сом");
-    expect(result.ask).toContain("Густота");
-    expect(result.ask).toContain("переснять");
+    expect(result).toMatchObject({
+      success: true,
+      estimate: "range",
+      price_label: "6000–7000 сом",
+      not_sure: ["Густота"],
+    });
+    expect(result.ask).toContain("предварительная оценка");
+    expect(result.ask).toContain("по желанию");
+    expect(photoTrace(result)).toBe("photo:range:6000–7000сом:length=very_long");
   });
 
-  test("не видно ничего — вилки нет, только просьба переснять", async () => {
+  test("кадр обрезан — вилка по длинам, которые фото не исключает", async () => {
+    visionSees({ length: "short", density: "normal" }, [], { length: ["short", "very_long"] });
+    const result = await executeV4Tool(
+      "estimate_price_from_photo",
+      { service_id: SERVICE_ID },
+      inputWith([{ ...photo, media_path: "salon/cropped.jpg" }]),
+      makeDb(keratin, { price: 2500, price_max: 7000 }),
+      newFlags(),
+    );
+    expect(result).toMatchObject({ estimate: "range", price_label: "2500–6000 сом" });
+    expect(photoTrace(result)).toBe(
+      "photo:range:2500–6000сом:length=short,density=normal:may=length=short/very_long",
+    );
+  });
+
+  test("не видно ничего, но фото про волосы — всё равно вилка, не отказ", async () => {
     visionSees({}, ["length", "density"]);
     const result = await executeV4Tool(
       "estimate_price_from_photo",
@@ -251,7 +279,24 @@ describe("густоту не разобрать — вилка, а не гол�
       makeDb(keratin, { price: 2500, price_max: 7000 }),
       newFlags(),
     );
-    expect(result.price_range).toBeUndefined();
-    expect(result.ask).toContain("переснять");
+    expect(result).toMatchObject({ success: true, price_label: "2500–7000 сом" });
+  });
+
+  test("клиентка уже переснимала — третий раз фото не просим", async () => {
+    visionSees({ length: "very_long" }, ["density"]);
+    const result = await executeV4Tool(
+      "estimate_price_from_photo",
+      { service_id: SERVICE_ID },
+      inputWith([{ ...photo, media_path: "salon/second.jpg" }]),
+      makeDb(keratin, { price: 2500, price_max: 7000 }),
+      {
+        ...newFlags(),
+        photoShots: [
+          { path: "salon/first.jpg", at: Date.now() },
+          { path: "salon/second.jpg", at: Date.now() },
+        ],
+      },
+    );
+    expect(result.ask).toContain("Переснять больше не предлагай");
   });
 });

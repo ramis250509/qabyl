@@ -57,7 +57,18 @@ test("vision contract: model returns attributes, not a price", async () => {
     });
     expect(request?.generationConfig.responseSchema.properties.values.type).toBe("array");
     expect(JSON.stringify(request?.systemInstruction)).toContain("Не определяй и не называй цену");
-    expect(result).toEqual({ relevant: true, values: { length: "long" }, uncertain: [] });
+    // Плохое фото — не повод отказываться: модель обязана дать лучший вариант и всё, что фото не
+    // исключает. Старое «не угадывай» отправляло каждый такой признак в uncertain.
+    expect(JSON.stringify(request?.systemInstruction)).toContain(
+      "Всё равно оцени по тому, что видно",
+    );
+    expect(JSON.stringify(request?.systemInstruction)).not.toContain("Не угадывай");
+    expect(result).toEqual({
+      relevant: true,
+      values: { length: "long" },
+      possible: {},
+      uncertain: [],
+    });
     if ("error" in result) throw new Error(result.error);
     expect(calculatePhotoPrice(config, result, { price: 3000, price_max: 6000 })).toHaveProperty(
       "price",

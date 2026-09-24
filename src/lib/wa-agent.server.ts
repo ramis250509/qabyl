@@ -2040,14 +2040,24 @@ export async function classifyPhotoForPrice(opts: {
   const result = await callGemini({
     model: MODEL_VISION,
     apiKey: opts.apiKey,
-    systemInstruction: `Оцени фото для услуги «${opts.serviceName}». Верни только видимые признаки из списка: ${JSON.stringify(criteria)}. У каждого признака поле shot говорит, на каком из присланных фото его искать: «текущее состояние клиента» или «желаемый результат (референс)».${referenceOnly ? " Клиента просили прислать только пример желаемого результата — считай референсом каждое присланное фото." : ""} Если нужного снимка среди присланных нет — добавь признак в uncertain, НЕ переноси его на другое фото. Не определяй и не называй цену. В values перечисли пары criterion_id/option_id только для различимых признаков; неразличимые добавь в uncertain. Если ни одно фото не относится к услуге — relevant=false. Не угадывай по плохому свету, обрезанным волосам или неподходящему ракурсу.`,
+    // Клиенты шлют обычные фото — темно, под углом, кадр обрезан. Раньше здесь стояло «не
+    // угадывай», и любой такой признак уходил в uncertain, а клиентка по кругу слышала
+    // «сфотографируйте получше». Теперь модель даёт лучший вариант и всё, что фото не исключает;
+    // цену из этого честной вилкой считает код (photoEstimate), а не модель.
+    systemInstruction: `Оцени фото для услуги «${opts.serviceName}». Признаки и их варианты: ${JSON.stringify(criteria)}. У каждого признака поле shot говорит, на каком из присланных фото его искать: «текущее состояние клиента» или «желаемый результат (референс)».${referenceOnly ? " Клиента просили прислать только пример желаемого результата — считай референсом каждое присланное фото." : ""}
+Клиенты присылают обычные фото: темно, под углом, кадр обрезан, объект виден частично, качество низкое. Всё равно оцени по тому, что видно:
+- Для КАЖДОГО признака, который виден хотя бы частично, дай option_id — самый вероятный вариант — и possible — все варианты, которые это фото НЕ исключает (option_id тоже в нём). Уверен — в possible один вариант.
+- Не выдумывай невидимое. Волосы уходят за край кадра — possible включает все длины длиннее видимой части. Темно или размыто и густоту не понять — possible включает все густоты, которые возможны.
+- Признак, о котором фото не говорит совсем (нужного снимка нет — например, нет примера желаемого результата; признак целиком вне кадра), не включай в values, а добавь его id в uncertain. Не переноси признак с одного фото на другое.
+- relevant=false — только если ни одно фото не относится к услуге (для волос прислали лицо, ногти, чек).
+- Не определяй и не называй цену.`,
     parts: [
       ...images.map((img) => ({ inline_data: { mime_type: img.mime, data: img.base64 } })),
       {
         text:
           images.length > 1
-            ? `Фото ${images.length}, порядок — от старого к новому. Определи видимые признаки. Не угадывай.`
-            : "Определи видимые признаки по фото. Не угадывай.",
+            ? `Фото ${images.length}, порядок — от старого к новому. Оцени признаки по тому, что видно.`
+            : "Оцени признаки по тому, что видно на фото.",
       },
     ],
     responseMimeType: "application/json",
@@ -2062,8 +2072,9 @@ export async function classifyPhotoForPrice(opts: {
             properties: {
               criterion_id: { type: "string" },
               option_id: { type: "string" },
+              possible: { type: "array", items: { type: "string" } },
             },
-            required: ["criterion_id", "option_id"],
+            required: ["criterion_id", "option_id", "possible"],
           },
         },
         uncertain: { type: "array", items: { type: "string" } },
@@ -2085,13 +2096,17 @@ export async function classifyPhotoForPrice(opts: {
     )
       return { error: "invalid vision classification" };
     const values: Record<string, string> = {};
+    const possible: Record<string, string[]> = {};
     for (const pair of value.values) {
-      if (typeof pair?.criterion_id === "string" && typeof pair?.option_id === "string")
-        values[pair.criterion_id] = pair.option_id;
+      if (typeof pair?.criterion_id !== "string" || typeof pair?.option_id !== "string") continue;
+      values[pair.criterion_id] = pair.option_id;
+      if (Array.isArray(pair.possible))
+        possible[pair.criterion_id] = pair.possible.filter((x: unknown) => typeof x === "string");
     }
     return {
       relevant: value.relevant,
       values,
+      possible,
       uncertain: value.uncertain.filter((x: unknown) => typeof x === "string"),
     };
   } catch {
