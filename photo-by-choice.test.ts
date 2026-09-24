@@ -328,6 +328,9 @@ describe("густоту не разобрать — вилка, а не гол�
     });
     expect(result.ask).toContain("предварительная оценка");
     expect(result.ask).toContain("по желанию");
+    // Что не определилось — словами салона, чтобы модель не сказала «густые» наугад (тест 25.09).
+    expect(result.unsure_options).toEqual({ Густота: ["Обычная", "Густая", "Очень густая"] });
+    expect(result.note).toContain("«Обычная», «Густая», «Очень густая» — ни один из этих вариантов не утверждай");
     expect(photoTrace(result)).toBe("photo:range:6000–7000сом:length=very_long");
   });
 

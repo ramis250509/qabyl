@@ -1,0 +1,269 @@
+// Ответ ассистента обязан совпадать с расчётом по фото — сверка кодом после ответа модели.
+//
+// Тест Avrora 25.09: инструмент посчитал варианты причёски 1600 / 1800 / 2000 (длина с фото), а
+// клиентке ушло «у нас от 1000 до 2000» — вилка прайса; в другом ходе — «длинные и густые
+// волосы», хотя густота по фото под вопросом. Цена строго по правилам салона — главное обещание
+// функции, поэтому это проверяет код, а не просьба в промпте.
+//
+// Run: bun test --isolate photo-price-fidelity
+import { beforeEach, describe, expect, mock, test } from "bun:test";
+
+const dbProxy = new Proxy({} as any, {
+  get(_t, prop) {
+    return (globalThis as any).__WA_DB__[prop];
+  },
+});
+mock.module("@/integrations/supabase/client.server", () => ({ supabaseAdmin: dbProxy }));
+
+process.env.GEMINI_API_KEY = "test-key";
+
+const { claimsUnsureDensity, pricesInReply, runWaAgentV4, strayPhotoPrices } =
+  await import("@/lib/wa-agent-v4.server");
+
+describe("какие суммы ответ называет ценой", () => {
+  test("русские и кыргызские формы", () => {
+    expect(pricesInReply("Однотон — 900 сом, сложный дизайн — 1 100 сом.")).toEqual([900, 1100]);
+    expect(pricesInReply("Будет 6000–6500 сом. Запись на 15:00?")).toEqual([6000, 6500]);
+    expect(pricesInReply("Причёска у нас стоит от 1000 до 2000 сом.")).toEqual([1000, 2000]);
+    expect(pricesInReply("кератин 4500 сомдон 7000 сомго чейин болот")).toEqual([4500, 7000]);
+    expect(pricesInReply("Кератин 2500дөн 7000 сомго чейин.")).toEqual([2500, 7000]);
+  });
+});
+
+describe("ответ против расчёта", () => {
+  const hairstyle = {
+    estimate: "choice",
+    price_by_choice: [
+      { choice: "hairstyle:simple", label: "Простая укладка или волны", price_label: "1600 сом" },
+      { choice: "hairstyle:curls", label: "Локоны, полусобранная", price_label: "1800 сом" },
+      { choice: "hairstyle:updo", label: "Собранная, пучок или плетение", price_label: "2000 сом" },
+    ],
+    catalog_range: "1000–2000 сом",
+  };
+
+  test("вилка прайса вместо цен вариантов — расхождение (P1, 25.09)", () => {
+    const check = strayPhotoPrices(
+      "Праздничная причёска у нас стоит от 1000 до 2000 сом. Можете прислать фото желаемого результата?",
+      [hairstyle],
+    );
+    expect(check.catalogInstead).toBe(true);
+    expect(check.stray).toEqual([1000]);
+  });
+
+  test("варианты с их ценами — не расхождение", () => {
+    const check = strayPhotoPrices(
+      "Простая укладка — 1600 сом, локоны — 1800 сом, собранная — 2000 сом. Что выберете?",
+      [hairstyle],
+    );
+    expect(check).toEqual({ stray: [], unnamed: false, catalogInstead: false });
+  });
+
+  test("цена другой услуги в том же ответе — не расхождение", () => {
+    const keratin = {
+      estimate: "range",
+      price_label: "6000–6500 сом",
+      catalog_range: "2500–7000 сом",
+    };
+    const reply = "Кератин по фото — 6000–6500 сом, а женская стрижка — 700 сом.";
+    expect(strayPhotoPrices(reply, [keratin]).stray).toEqual([700]);
+    expect(strayPhotoPrices(reply, [keratin], new Set([500, 700])).stray).toEqual([]);
+  });
+
+  test("посчитанная цена не прозвучала — расхождение", () => {
+    const exact = { estimate: "exact", price_label: "500 сом", catalog_range: "500–1000 сом" };
+    expect(strayPhotoPrices("На какой день вас записать?", [exact]).unnamed).toBe(true);
+    expect(strayPhotoPrices("Стрижка будет 500 сом.", [exact]).unnamed).toBe(false);
+  });
+});
+
+describe("густота, которую фото не показало", () => {
+  const unsure = { unsure_options: { Густота: ["Обычная", "Густая", "Очень густая"] } };
+  const thickOnly = { unsure_options: { Густота: ["Густая", "Очень густая"] } };
+
+  test("«густые» при возможной обычной — утверждение (H5, 25.09)", () => {
+    const reply = "По фото видно, что у вас длинные и густые волосы ниже лопаток.";
+    expect(claimsUnsureDensity(reply, unsure)).toBe(true);
+    // Густая или очень густая — «густые» верно в любом случае.
+    expect(claimsUnsureDensity(reply, thickOnly)).toBe(false);
+    expect(claimsUnsureDensity("Чачыңыз узун жана тыгыз экен.", unsure)).toBe(true);
+    expect(claimsUnsureDensity("У вас волосы обычной густоты.", thickOnly)).toBe(true);
+  });
+
+  test("сказать, что густоту не видно, — можно", () => {
+    for (const reply of [
+      "Это предварительная оценка, так как по фото сложно определить густоту волос.",
+      "Точная цена зависит от густоты.",
+      "Чачыңыздын тыгыздыгы жакшыраак көрүнгөн сүрөт жиберсеңиз болот.",
+    ])
+      expect(claimsUnsureDensity(reply, unsure)).toBe(false);
+  });
+});
+
+// ---- Целый ход: модель назвала прайс вместо расчёта → второй круг с посчитанной ценой.
+
+const SERVICE_ID = "11111111-1111-4111-8111-111111111111";
+const keratin = {
+  id: SERVICE_ID,
+  name: "Кератиновое выпрямление",
+  category: null,
+  price: 2500,
+  price_max: 7000,
+  price_type: "range",
+  duration_min: 120,
+  is_active: true,
+  photo_pricing_config: {
+    enabled: true,
+    subject: "волос",
+    criteria: [
+      {
+        id: "length",
+        label: "Длина волос",
+        mode: "base",
+        shot: "current",
+        options: [
+          { id: "short", label: "До плеч", amount: 2500 },
+          { id: "very_long", label: "Ниже лопаток", amount: 6000 },
+        ],
+      },
+      {
+        id: "density",
+        label: "Густота",
+        mode: "surcharge",
+        shot: "current",
+        options: [
+          { id: "normal", label: "Обычная", amount: 0 },
+          { id: "thick", label: "Густая", amount: 500 },
+        ],
+      },
+    ],
+  },
+};
+
+function query(rows: any[]): any {
+  const q: any = new Proxy(
+    {},
+    {
+      get(_t, prop) {
+        if (prop === "then")
+          return (resolve: any) => resolve({ data: rows, error: null, count: rows.length });
+        if (prop === "maybeSingle" || prop === "single")
+          return async () => ({ data: rows[0] ?? null, error: null });
+        return () => q;
+      },
+    },
+  );
+  return q;
+}
+
+let modelReplies: any[][] = [];
+let modelRequests: any[] = [];
+globalThis.fetch = (async (url: any, init?: RequestInit) => {
+  const u = String(url);
+  if (u.startsWith("data:")) {
+    return new Response(Buffer.from(u.split(",")[1], "base64"), {
+      status: 200,
+      headers: { "content-type": "image/jpeg" },
+    });
+  }
+  if (u.includes("/cachedContents")) return new Response('{"error":"skip"}', { status: 400 });
+  if (u.includes("generativelanguage.googleapis.com")) {
+    const body = JSON.parse(String(init?.body ?? "{}"));
+    // Распознавание фото: длина видна, густота — обычная или густая.
+    if (body.generationConfig?.responseSchema?.properties?.relevant) {
+      const text = JSON.stringify({
+        relevant: true,
+        values: [
+          { criterion_id: "length", option_id: "very_long", possible: ["very_long"] },
+          { criterion_id: "density", option_id: "normal", possible: ["normal", "thick"] },
+        ],
+        uncertain: [],
+      });
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text }] } }] }), {
+        status: 200,
+      });
+    }
+    modelRequests.push(body);
+    const parts = modelReplies.shift() ?? [{ text: "…" }];
+    return new Response(
+      JSON.stringify({ candidates: [{ content: { parts }, finishReason: "STOP" }] }),
+      { status: 200 },
+    );
+  }
+  return new Response("no", { status: 400 });
+}) as any;
+
+beforeEach(() => {
+  modelReplies = [];
+  modelRequests = [];
+  (globalThis as any).__WA_DB__ = {
+    from: (table: string) => query(table === "services" ? [keratin] : []),
+    rpc: async () => ({ data: null, error: null }),
+    storage: { from: () => ({ createSignedUrl: async () => ({ data: null }) }) },
+  };
+});
+
+const photoTurn = (text: string) =>
+  ({
+    salon: { salonId: "salon1", salonName: "Тест", timezone: "Asia/Bishkek", slug: "test" },
+    config: { languages: ["ru"], manage_cutoff_hours: 0 },
+    client: { phone: "996700000001", name: "Тест" },
+    history: [],
+    lastMessages: [
+      {
+        id: "m1",
+        direction: "in" as const,
+        kind: "image" as const,
+        text_body: text,
+        media_signed_url: "data:image/jpeg;base64,AA==",
+        media_path: "salon1/a.jpg",
+        created_at: new Date().toISOString(),
+      },
+    ],
+    branches: [],
+    selectedBranchId: null,
+    state: "collecting" as const,
+    stateData: {},
+    salonInfo: { working_hours: { mon: "10:00–20:00" }, address: "ул. Тестовая 1" },
+  }) as any;
+
+const lastUserText = (request: any) =>
+  (request.contents ?? [])
+    .filter((c: any) => c.role === "user")
+    .at(-1)
+    ?.parts.map((p: any) => p.text ?? "")
+    .join(" ") ?? "";
+
+test("модель назвала прайс вместо расчёта — второй круг, и клиент получает посчитанную цену", async () => {
+  modelReplies = [
+    [{ functionCall: { name: "estimate_price_from_photo", args: { service_id: SERVICE_ID } } }],
+    [{ text: "Кератин у нас от 2500 до 7000 сом. Хотите записаться?" }],
+    [{ text: "По фото кератин будет 6000–6500 сом. Хотите записаться?" }],
+  ];
+  const res = await runWaAgentV4(photoTurn("Сколько будет кератин?"));
+  expect(res.debug.errors).toContain("photo_price_mismatch");
+  expect(lastUserText(modelRequests[2])).toContain("Цена по фото уже посчитана: 6000–6500 сом");
+  expect(res.reply).toContain("6000–6500 сом");
+});
+
+test("модель назвала посчитанную вилку — второго круга нет", async () => {
+  modelReplies = [
+    [{ functionCall: { name: "estimate_price_from_photo", args: { service_id: SERVICE_ID } } }],
+    [{ text: "По фото кератин будет 6000–6500 сом. Хотите записаться?" }],
+  ];
+  const res = await runWaAgentV4(photoTurn("Сколько будет кератин?"));
+  expect(res.debug.errors).not.toContain("photo_price_mismatch");
+  expect(res.debug.errors).not.toContain("photo_unsure_density_claimed");
+  expect(modelRequests).toHaveLength(2);
+});
+
+test("густоту по фото не видно, а модель её назвала — второй круг без неё", async () => {
+  modelReplies = [
+    [{ functionCall: { name: "estimate_price_from_photo", args: { service_id: SERVICE_ID } } }],
+    [{ text: "У вас длинные и густые волосы — кератин будет 6000–6500 сом." }],
+    [{ text: "У вас длинные волосы ниже лопаток — кератин будет 6000–6500 сом." }],
+  ];
+  const res = await runWaAgentV4(photoTurn("Сколько будет кератин?"));
+  expect(res.debug.errors).toContain("photo_unsure_density_claimed");
+  expect(lastUserText(modelRequests[2])).toContain("Густоту волос по этому фото точно не видно");
+  expect(res.reply).not.toContain("густые");
+});
