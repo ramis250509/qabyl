@@ -26,8 +26,11 @@ export const Route = createFileRoute("/api/public/ig-oauth/callback")({
         const state = await verifyIgState(url.searchParams.get("state") ?? "", igAppSecret());
         if (!state) return redirect(`${base}/admin?ig=expired`);
         const { salonId, userId } = state;
+        // tab=instagram, а не tab=channels: второй открывает «Каналы» на WhatsApp, и владелец,
+        // вернувшийся с instagram.com, не видел ни результата, ни подключённого аккаунта, пока
+        // сам не нажимал «Instagram». Панель Instagram и показывает итог по коду из ?ig=.
         const back = (result: string) =>
-          redirect(`${base}/admin/salons/${salonId}?tab=channels&ig=${result}`);
+          redirect(`${base}/admin/salons/${salonId}?tab=instagram&ig=${result}`);
 
         // Владелец нажал «Отмена» на экране Instagram.
         if (url.searchParams.get("error")) return back("cancelled");

@@ -29,6 +29,7 @@ import { BillingBanner, BillingPaywall } from "@/components/admin/BillingBanner"
 import { ProductTour, ownerTourSteps, useTourAutostart } from "@/components/admin/ProductTour";
 import { InstallPrompt } from "@/components/admin/InstallPrompt";
 import { watchSystemTheme } from "@/lib/theme";
+import { AdminLangSwitcher, useAdminLang } from "@/lib/admin-lang";
 import type { BillingState } from "@/lib/billing-logic";
 
 export const Route = createFileRoute("/admin")({
@@ -53,6 +54,7 @@ function AdminLayout() {
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [billing, setBilling] = useState<BillingState | null>(null);
+  const { tr } = useAdminLang();
 
   // Редирект на экран входа — необратимое действие: человек теряет место, на котором стоял, и
   // обратно его приводит только повторный ввод пароля. Поэтому он делается ТОЛЬКО когда сессии
@@ -170,40 +172,65 @@ function AdminLayout() {
 
   const navItems = managerOnly
     ? [
-        { to: "/admin/calendar", label: "Календарь", icon: Calendar, tour: "nav-calendar" },
-        { to: "/admin/notifications", label: "Уведомления", icon: Bell, badge: unreadCount },
+        {
+          to: "/admin/calendar",
+          label: tr("Календарь", "Calendar"),
+          icon: Calendar,
+          tour: "nav-calendar",
+        },
+        {
+          to: "/admin/notifications",
+          label: tr("Уведомления", "Notifications"),
+          icon: Bell,
+          badge: unreadCount,
+        },
         ...(salonId
           ? [
               {
                 to: `/admin/salons/${salonId}`,
                 search: { tab: "chats" },
-                label: "Переписки",
+                label: tr("Переписки", "Chats"),
                 icon: MessageSquare,
               },
             ]
           : []),
-        { to: "/admin/install", label: "Приложение", icon: Smartphone },
-        { to: "/admin/account", label: "Аккаунт", icon: UserCog },
+        { to: "/admin/install", label: tr("Приложение", "App"), icon: Smartphone },
+        { to: "/admin/account", label: tr("Аккаунт", "Account"), icon: UserCog },
       ]
     : isMaster && !isSuperAdmin && !isSalonAdmin
       ? [
-          { to: "/admin/calendar", label: "Календарь", icon: Calendar, tour: "nav-calendar" },
-          { to: "/admin/notifications", label: "Уведомления", icon: Bell, badge: unreadCount },
-          { to: "/admin/install", label: "Приложение", icon: Smartphone },
-          { to: "/admin/account", label: "Аккаунт", icon: UserCog },
+          {
+            to: "/admin/calendar",
+            label: tr("Календарь", "Calendar"),
+            icon: Calendar,
+            tour: "nav-calendar",
+          },
+          {
+            to: "/admin/notifications",
+            label: tr("Уведомления", "Notifications"),
+            icon: Bell,
+            badge: unreadCount,
+          },
+          { to: "/admin/install", label: tr("Приложение", "App"), icon: Smartphone },
+          { to: "/admin/account", label: tr("Аккаунт", "Account"), icon: UserCog },
         ]
       : isSuperAdmin
         ? [
-            { to: "/admin", label: "Дашборд", icon: LayoutDashboard, exact: true },
+            { to: "/admin", label: tr("Дашборд", "Dashboard"), icon: LayoutDashboard, exact: true },
             { to: "/admin/ops", label: "Ops Dashboard", icon: Activity },
-            { to: "/admin/errors", label: "Ошибки", icon: AlertOctagon },
-            { to: "/admin/salons", label: "Салоны", icon: Building2 },
-            { to: "/admin/billing", label: "Биллинг", icon: CreditCard },
-            { to: "/admin/calendar", label: "Календарь", icon: Calendar },
-            { to: "/admin/notifications", label: "Уведомления", icon: Bell, badge: unreadCount },
-            { to: "/admin/stats", label: "Статистика", icon: BarChart3 },
-            { to: "/admin/install", label: "Приложение", icon: Smartphone },
-            { to: "/admin/account", label: "Аккаунт", icon: UserCog },
+            { to: "/admin/errors", label: tr("Ошибки", "Errors"), icon: AlertOctagon },
+            { to: "/admin/salons", label: tr("Салоны", "Salons"), icon: Building2 },
+            { to: "/admin/billing", label: tr("Биллинг", "Billing"), icon: CreditCard },
+            { to: "/admin/calendar", label: tr("Календарь", "Calendar"), icon: Calendar },
+            {
+              to: "/admin/notifications",
+              label: tr("Уведомления", "Notifications"),
+              icon: Bell,
+              badge: unreadCount,
+            },
+            { to: "/admin/stats", label: tr("Статистика", "Statistics"), icon: BarChart3 },
+            { to: "/admin/install", label: tr("Приложение", "App"), icon: Smartphone },
+            { to: "/admin/account", label: tr("Аккаунт", "Account"), icon: UserCog },
           ]
         : [
             {
@@ -211,27 +238,41 @@ function AdminLayout() {
               // «Сегодня», а не «Дашборд». Раздел называется тем, что в нём лежит: записи на
               // сегодня и состояние салона на сейчас. «Дашборд» — слово из другого продукта, и
               // владелице салона оно не говорит ничего.
-              label: "Сегодня",
+              label: tr("Сегодня", "Today"),
               icon: LayoutDashboard,
               exact: true,
               tour: "nav-dashboard",
             },
-            { to: "/admin/calendar", label: "Календарь", icon: Calendar, tour: "nav-calendar" },
-            { to: "/admin/notifications", label: "Уведомления", icon: Bell, badge: unreadCount },
-            { to: "/admin/stats", label: "Статистика", icon: BarChart3 },
+            {
+              to: "/admin/calendar",
+              label: tr("Календарь", "Calendar"),
+              icon: Calendar,
+              tour: "nav-calendar",
+            },
+            {
+              to: "/admin/notifications",
+              label: tr("Уведомления", "Notifications"),
+              icon: Bell,
+              badge: unreadCount,
+            },
+            { to: "/admin/stats", label: tr("Статистика", "Statistics"), icon: BarChart3 },
             ...(salonId
               ? [
                   {
                     to: `/admin/salons/${salonId}`,
-                    label: "Мой салон",
+                    label: tr("Мой салон", "My salon"),
                     icon: Settings,
                     tour: "nav-settings",
                   },
                 ]
               : []),
-            { to: "/admin/billing", label: "Тариф и оплата", icon: CreditCard },
-            { to: "/admin/install", label: "Приложение", icon: Smartphone },
-            { to: "/admin/account", label: "Аккаунт", icon: UserCog },
+            {
+              to: "/admin/billing",
+              label: tr("Тариф и оплата", "Plan & billing"),
+              icon: CreditCard,
+            },
+            { to: "/admin/install", label: tr("Приложение", "App"), icon: Smartphone },
+            { to: "/admin/account", label: tr("Аккаунт", "Account"), icon: UserCog },
           ];
 
   /**
@@ -249,7 +290,7 @@ function AdminLayout() {
    * Набор различается по роли, потому что различается работа: владелица смотрит день и
    * переписки, мастер — только свой календарь, супер-админ — все салоны.
    */
-  const moreTab = { key: "more", label: "Ещё", icon: Menu } as const;
+  const moreTab = { key: "more", label: tr("Ещё", "More"), icon: Menu } as const;
   const mobileTabs: {
     key: string;
     label: string;
@@ -264,7 +305,7 @@ function AdminLayout() {
         {
           key: "cal",
           to: "/admin/calendar",
-          label: "Календарь",
+          label: tr("Календарь", "Calendar"),
           icon: Calendar,
           tour: "nav-calendar",
         },
@@ -274,7 +315,7 @@ function AdminLayout() {
                 key: "chats",
                 to: `/admin/salons/${salonId}`,
                 search: { tab: "chats" },
-                label: "Переписки",
+                label: tr("Переписки", "Chats"),
                 icon: MessageSquare,
               },
             ]
@@ -282,7 +323,7 @@ function AdminLayout() {
         {
           key: "notif",
           to: "/admin/notifications",
-          label: "Уведомления",
+          label: tr("Уведомления", "Notifications"),
           icon: Bell,
           badge: unreadCount,
         },
@@ -293,14 +334,14 @@ function AdminLayout() {
           {
             key: "cal",
             to: "/admin/calendar",
-            label: "Календарь",
+            label: tr("Календарь", "Calendar"),
             icon: Calendar,
             tour: "nav-calendar",
           },
           {
             key: "notif",
             to: "/admin/notifications",
-            label: "Уведомления",
+            label: tr("Уведомления", "Notifications"),
             icon: Bell,
             badge: unreadCount,
           },
@@ -308,8 +349,14 @@ function AdminLayout() {
         ]
       : isSuperAdmin
         ? [
-            { key: "home", to: "/admin", label: "Дашборд", icon: LayoutDashboard, exact: true },
-            { key: "salons", to: "/admin/salons", label: "Салоны", icon: Building2 },
+            {
+              key: "home",
+              to: "/admin",
+              label: tr("Дашборд", "Dashboard"),
+              icon: LayoutDashboard,
+              exact: true,
+            },
+            { key: "salons", to: "/admin/salons", label: tr("Салоны", "Salons"), icon: Building2 },
             { key: "ops", to: "/admin/ops", label: "Ops", icon: Activity },
             moreTab,
           ]
@@ -317,7 +364,7 @@ function AdminLayout() {
             {
               key: "home",
               to: "/admin",
-              label: "Сегодня",
+              label: tr("Сегодня", "Today"),
               icon: LayoutDashboard,
               exact: true,
               tour: "nav-dashboard",
@@ -325,7 +372,7 @@ function AdminLayout() {
             {
               key: "cal",
               to: "/admin/calendar",
-              label: "Календарь",
+              label: tr("Календарь", "Calendar"),
               icon: Calendar,
               tour: "nav-calendar",
             },
@@ -335,7 +382,7 @@ function AdminLayout() {
                     key: "chats",
                     to: `/admin/salons/${salonId}`,
                     search: { tab: "chats" },
-                    label: "Переписки",
+                    label: tr("Переписки", "Chats"),
                     icon: MessageSquare,
                   },
                 ]
@@ -348,12 +395,12 @@ function AdminLayout() {
   const moreBadge = mobileTabs.some((t) => t.key === "notif") ? 0 : unreadCount;
 
   const roleLabel = isSuperAdmin
-    ? "Админ-панель"
+    ? tr("Админ-панель", "Admin panel")
     : isSalonAdmin
-      ? "Кабинет салона"
+      ? tr("Кабинет салона", "Salon dashboard")
       : managerOnly
-        ? "Кабинет администратора"
-        : "Кабинет мастера";
+        ? tr("Кабинет администратора", "Front desk")
+        : tr("Кабинет мастера", "Master's dashboard");
 
   // Неоплаченный салон видит только экран оплаты. Страницы тарифа и аккаунта открыты: без первой
   // не оплатить, без второй не сменить пароль и не выйти.
@@ -406,8 +453,10 @@ function AdminLayout() {
           }}
         >
           <LogOut className="h-4 w-4 mr-2" />
-          Выйти
+          {tr("Выйти", "Sign out")}
         </Button>
+        {/* Язык кабинета. Английский нужен прежде всего проверяющим Meta — см. admin-lang.tsx. */}
+        <AdminLangSwitcher className="mt-2 ml-3" />
       </div>
     </>
   );
@@ -430,7 +479,7 @@ function AdminLayout() {
           <span className="truncate text-[15px] font-semibold leading-none">
             {navItems.find((i) =>
               (i as any).exact ? location.pathname === i.to : location.pathname.startsWith(i.to),
-            )?.label ?? "Кабинет"}
+            )?.label ?? tr("Кабинет", "Dashboard")}
           </span>
         </header>
         {!isSuperAdmin && <BillingBanner state={billing} isOwner={isSalonAdmin} />}
@@ -451,7 +500,7 @@ function AdminLayout() {
         <nav
           className="flex shrink-0 border-t bg-card md:hidden"
           style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
-          aria-label="Разделы"
+          aria-label={tr("Разделы", "Sections")}
         >
           {mobileTabs.map((tab) => {
             if (tab.key === "more") {

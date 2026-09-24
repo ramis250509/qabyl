@@ -613,6 +613,8 @@ async function handleCommentTrigger(opts: {
         commentTrigger: trigger.keyword,
         commentId: comment.commentId,
         mediaId: comment.mediaId,
+        // «Переписки» подписывают это сообщение текстом комментария, на который оно ответ.
+        commentText: comment.text.slice(0, 300),
       },
     });
     // This row went missing once in production and nobody could tell, because the failure was

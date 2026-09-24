@@ -6,9 +6,12 @@ import { Link } from "@tanstack/react-router";
 import { AlertTriangle, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { plural, type BillingState } from "@/lib/billing-logic";
+import { adminLocale, makeTr, useAdminLang, type AdminLang } from "@/lib/admin-lang";
 
-function fmtDate(d?: string | null): string {
-  return d ? new Date(d).toLocaleDateString("ru-RU", { day: "numeric", month: "long" }) : "";
+function fmtDate(d: string | null | undefined, lang: AdminLang): string {
+  return d
+    ? new Date(d).toLocaleDateString(adminLocale(lang), { day: "numeric", month: "long" })
+    : "";
 }
 
 /**
@@ -21,42 +24,71 @@ function fmtDate(d?: string | null): string {
 export function billingBannerText(
   s: BillingState | null,
   isOwner = true,
+  lang: AdminLang = "ru",
 ): { tone: "warn" | "error"; text: string } | null {
+  const tr = makeTr(lang);
   if (!s?.has_subscription || s.exempt || s.blocked) return null;
   if (s.status === "past_due") {
+    const until = fmtDate(s.grace_until, lang);
     return {
       tone: "error",
       text: isOwner
-        ? `Оплата не поступила. Оплатите до ${fmtDate(s.grace_until)} — иначе онлайн-запись и ассистент остановятся.`
-        : `Салон не оплатил Qabyl. Если не оплатить до ${fmtDate(s.grace_until)}, онлайн-запись и ассистент остановятся — скажите владельцу.`,
+        ? tr(
+            `Оплата не поступила. Оплатите до ${until} — иначе онлайн-запись и ассистент остановятся.`,
+            `Payment has not arrived. Pay by ${until}, otherwise online booking and the assistant will stop.`,
+          )
+        : tr(
+            `Салон не оплатил Qabyl. Если не оплатить до ${until}, онлайн-запись и ассистент остановятся — скажите владельцу.`,
+            `The salon has not paid for Qabyl. If it is not paid by ${until}, online booking and the assistant will stop — tell the owner.`,
+          ),
     };
   }
   if (s.assistant_paused) {
     return {
       tone: "error",
       text: isOwner
-        ? "Сообщения тарифа закончились — ассистент не отвечает клиентам. Докупите пакет или смените тариф."
-        : "Сообщения тарифа закончились — ассистент не отвечает клиентам. Отвечайте вручную и скажите владельцу.",
+        ? tr(
+            "Сообщения тарифа закончились — ассистент не отвечает клиентам. Докупите пакет или смените тариф.",
+            "Your plan's messages have run out — the assistant is not replying to clients. Buy a top-up or change the plan.",
+          )
+        : tr(
+            "Сообщения тарифа закончились — ассистент не отвечает клиентам. Отвечайте вручную и скажите владельцу.",
+            "The plan's messages have run out — the assistant is not replying to clients. Reply manually and tell the owner.",
+          ),
     };
   }
   if (s.status === "trialing" && s.trial_ends_at) {
     const days = Math.ceil((new Date(s.trial_ends_at).getTime() - Date.now()) / 86_400_000);
+    const daysRu = `${days} ${plural(days, "день", "дня", "дней")}`;
+    const daysEn = `${days} ${days === 1 ? "day" : "days"}`;
     if (days <= (s.trial_warn_days ?? 3)) {
       if (!isOwner) {
         return {
           tone: "warn",
           text:
             days <= 0
-              ? "Бесплатный период салона закончился. Пока владелец не оплатит, запись может остановиться."
-              : `Бесплатный период салона заканчивается через ${days} ${plural(days, "день", "дня", "дней")}.`,
+              ? tr(
+                  "Бесплатный период салона закончился. Пока владелец не оплатит, запись может остановиться.",
+                  "The salon's free trial has ended. Until the owner pays, booking may stop.",
+                )
+              : tr(
+                  `Бесплатный период салона заканчивается через ${daysRu}.`,
+                  `The salon's free trial ends in ${daysEn}.`,
+                ),
         };
       }
       return {
         tone: "warn",
         text:
           days <= 0
-            ? "Бесплатный период закончился. Оплатите тариф, чтобы всё продолжило работать."
-            : `Бесплатно осталось ${days} ${plural(days, "день", "дня", "дней")}. Оплатите тариф, чтобы не было перерыва.`,
+            ? tr(
+                "Бесплатный период закончился. Оплатите тариф, чтобы всё продолжило работать.",
+                "Your free trial has ended. Pay for a plan to keep everything running.",
+              )
+            : tr(
+                `Бесплатно осталось ${daysRu}. Оплатите тариф, чтобы не было перерыва.`,
+                `${daysEn} of free trial left. Pay for a plan to avoid a break.`,
+              ),
       };
     }
   }
@@ -65,7 +97,10 @@ export function billingBannerText(
   if (isOwner && (s.usage_pct ?? 0) >= (s.usage_warn_pct ?? 80)) {
     return {
       tone: "warn",
-      text: `Израсходовано ${s.usage_pct}% сообщений ассистента в этом месяце.`,
+      text: tr(
+        `Израсходовано ${s.usage_pct}% сообщений ассистента в этом месяце.`,
+        `${s.usage_pct}% of this month's assistant messages used.`,
+      ),
     };
   }
   return null;
@@ -78,7 +113,8 @@ export function BillingBanner({
   state: BillingState | null;
   isOwner?: boolean;
 }) {
-  const b = billingBannerText(state, isOwner);
+  const { lang, tr } = useAdminLang();
+  const b = billingBannerText(state, isOwner, lang);
   if (!b) return null;
   return (
     <div
@@ -93,7 +129,7 @@ export function BillingBanner({
       <span className="flex-1 min-w-0">{b.text}</span>
       {isOwner && (
         <Link to="/admin/billing" className="font-medium underline underline-offset-2">
-          Оплатить
+          {tr("Оплатить", "Pay")}
         </Link>
       )}
     </div>

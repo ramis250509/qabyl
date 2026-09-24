@@ -75,6 +75,7 @@ import { humanError } from "@/lib/human-error";
 import { createSalonAdmin, listSalonAdmins, revokeSalonAdmin } from "@/lib/salon-admins.functions";
 import { getSalonSecrets, upsertSalonSecrets } from "@/lib/salon-secrets.functions";
 import { SalonShareCard } from "@/components/admin/SalonShareCard";
+import { useAdminLang } from "@/lib/admin-lang";
 import { formatPrice } from "@/lib/price";
 import {
   BranchHoursEditor,
@@ -248,46 +249,52 @@ function normalizeTab(tab: string | undefined): string | undefined {
  * Адреса вкладок (?tab=services) не изменились ни на один символ: группа вычисляется из
  * активной вкладки, а не хранится отдельно. Все ссылки из чеклиста, писем и закладок работают.
  */
+// `en` — подпись для английского кабинета (см. src/lib/admin-lang.tsx).
 const TAB_GROUPS: {
   key: string;
   label: string;
+  en: string;
   superOnly?: boolean;
-  tabs: { value: string; label: string; tour?: string }[];
+  tabs: { value: string; label: string; en: string; tour?: string }[];
 }[] = [
   {
     key: "salon",
     label: "Салон",
+    en: "Salon",
     tabs: [
-      { value: "salon", label: "Основное" },
-      { value: "services", label: "Услуги" },
-      { value: "masters", label: "Мастера" },
-      { value: "team", label: "Команда", tour: "tab-team" },
+      { value: "salon", label: "Основное", en: "General" },
+      { value: "services", label: "Услуги", en: "Services" },
+      { value: "masters", label: "Мастера", en: "Masters" },
+      { value: "team", label: "Команда", en: "Team", tour: "tab-team" },
     ],
   },
   {
     key: "talk",
     label: "Общение",
+    en: "Messaging",
     tabs: [
-      { value: "channels", label: "Каналы", tour: "tab-channels" },
-      { value: "ai", label: "Ассистент", tour: "tab-ai" },
-      { value: "chats", label: "Переписки" },
+      { value: "channels", label: "Каналы", en: "Channels", tour: "tab-channels" },
+      { value: "ai", label: "Ассистент", en: "Assistant", tour: "tab-ai" },
+      { value: "chats", label: "Переписки", en: "Chats" },
     ],
   },
   {
     key: "client",
     label: "Клиенту",
+    en: "For clients",
     tabs: [
-      { value: "site", label: "Сайт" },
-      { value: "prepayment", label: "Предоплата" },
+      { value: "site", label: "Сайт", en: "Website" },
+      { value: "prepayment", label: "Предоплата", en: "Prepayment" },
     ],
   },
   {
     key: "platform",
     label: "Платформа",
+    en: "Platform",
     superOnly: true,
     tabs: [
-      { value: "access", label: "Доступ" },
-      { value: "import", label: "Импорт" },
+      { value: "access", label: "Доступ", en: "Access" },
+      { value: "import", label: "Импорт", en: "Import" },
     ],
   },
 ];
@@ -302,6 +309,7 @@ function SalonEdit() {
   const tabFromUrl = normalizeTab(rawTab);
   const navigate = useNavigate();
   const { isSuperAdmin } = useAuth();
+  const { tr } = useAdminLang();
   const [salon, setSalon] = useState<any>(null);
   const [activeTab, setActiveTab] = useState(tabFromUrl ?? "salon");
   const tabsRef = useRef<HTMLDivElement>(null);
@@ -344,12 +352,13 @@ function SalonEdit() {
     <div className="p-4 sm:p-8 space-y-6">
       {isSuperAdmin && (
         <Button variant="ghost" size="sm" onClick={() => navigate({ to: "/admin/salons" })}>
-          <ArrowLeft className="h-4 w-4 mr-1" />К списку
+          <ArrowLeft className="h-4 w-4 mr-1" />
+          {tr("К списку", "All salons")}
         </Button>
       )}
       <div>
         <h1 className="text-2xl sm:text-3xl font-bold">{salon.name}</h1>
-        <p className="text-muted-foreground">Настройки салона</p>
+        <p className="text-muted-foreground">{tr("Настройки салона", "Salon settings")}</p>
       </div>
 
       <SalonShareCard slug={salon.slug} name={salon.name} />
@@ -366,7 +375,7 @@ function SalonEdit() {
           <div className="space-y-2.5">
             <div
               role="tablist"
-              aria-label="Группы настроек"
+              aria-label={tr("Группы настроек", "Settings groups")}
               className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4 sm:mx-0 sm:px-0"
             >
               {TAB_GROUPS.filter((g) => !g.superOnly || isSuperAdmin).map((g) => {
@@ -384,7 +393,7 @@ function SalonEdit() {
                         : "bg-muted text-muted-foreground hover:text-foreground"
                     }`}
                   >
-                    {g.label}
+                    {tr(g.label, g.en)}
                   </button>
                 );
               })}
@@ -400,7 +409,7 @@ function SalonEdit() {
                 {(TAB_GROUPS.find((g) => g.key === groupOf(activeTab)) ?? TAB_GROUPS[0]).tabs.map(
                   (t) => (
                     <TabsTrigger key={t.value} value={t.value} data-tour={t.tour}>
-                      {t.label}
+                      {tr(t.label, t.en)}
                     </TabsTrigger>
                   ),
                 )}

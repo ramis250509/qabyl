@@ -135,6 +135,8 @@ Instagram Direct, using Meta's official Instagram Messaging API (Instagram Login
 
 `src/lib/i18n.tsx` — flat DICT with `ru | ky | en` keys. Use `useT()` hook to get `{ t, lang, setLang }`. Language is stored in `localStorage`. Pass `forceLang` to `<I18nProvider>` to override (used in public salon pages). Adding a new string: add it to `DICT` in this file.
 
+The admin panel has its own language (`src/lib/admin-lang.tsx`, RU/EN switch at the bottom of the sidebar, default Russian): `const { tr } = useAdminLang()` and inline pairs `tr("Сохранить", "Save")`. It exists for Meta App Review videos, so only the screens those videos show are translated (sidebar, salon page tabs, Channels, Instagram, Chats, billing banner). When you edit one of those screens, keep new strings in `tr()`.
+
 ### Vite config
 
 `vite.config.ts` imports `defineConfig` from `@lovable.dev/vite-tanstack-config`, which **already bundles**: TanStack Start, React plugin, Tailwind, tsconfig paths, Nitro, componentTagger, `@` path alias, and env injection. **Do not add these plugins manually** — doing so breaks the build with duplicate plugin errors.

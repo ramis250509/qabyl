@@ -36,6 +36,7 @@ import { useSalonShape } from "@/hooks/use-salon-shape";
 import { ChannelScopePicker } from "@/components/admin/ChannelScopePicker";
 import { useAuth } from "@/lib/auth-client";
 import { waStatusForViewer } from "@/lib/wa-status-view";
+import { useAdminLang, type Tr } from "@/lib/admin-lang";
 
 type Progress = Awaited<ReturnType<typeof getOnboardingProgress>>;
 
@@ -43,13 +44,14 @@ type Progress = Awaited<ReturnType<typeof getOnboardingProgress>>;
 function channelState(
   connected: boolean,
   level: "ok" | "warn" | "error" | "idle",
+  tr: Tr,
 ): { tone: Tone; text: string } {
-  if (!connected) return { tone: "idle", text: "не подключён" };
-  if (level === "error") return { tone: "error", text: "не работает" };
-  if (level === "warn") return { tone: "warn", text: "нужно внимание" };
+  if (!connected) return { tone: "idle", text: tr("не подключён", "not connected") };
+  if (level === "error") return { tone: "error", text: tr("не работает", "not working") };
+  if (level === "warn") return { tone: "warn", text: tr("нужно внимание", "needs attention") };
   // Подключён, но тон idle — платформенная поломка, пересказанная владельцу (wa-status-view.ts).
-  if (level === "idle") return { tone: "idle", text: "настраиваем" };
-  return { tone: "ok", text: "подключён" };
+  if (level === "idle") return { tone: "idle", text: tr("настраиваем", "setting up") };
+  return { tone: "ok", text: tr("подключён", "connected") };
 }
 
 export function ChannelsTab({
@@ -59,11 +61,12 @@ export function ChannelsTab({
 }: {
   salon: any;
   onSalonSaved: (s: any) => void;
-  /** С какого канала открыть. Приходит из ссылки ?tab=channels&channel=instagram. */
+  /** С какого канала открыть. Instagram — по ссылке ?tab=instagram (так же возвращает вход в Instagram). */
   initialChannel?: "whatsapp" | "instagram";
 }) {
   const salonId = salon.id as string;
   const { isSuperAdmin } = useAuth();
+  const { tr } = useAdminLang();
   const loadProgress = useServerFn(getOnboardingProgress);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [progressLoading, setProgressLoading] = useState(true);
@@ -147,27 +150,35 @@ export function ChannelsTab({
       setAssistantOn(prev);
       return toast.error((error ?? rowError)!.message);
     }
-    toast.success(v ? "Ассистент отвечает клиентам" : "Ассистент выключен — отвечаете вы");
+    toast.success(
+      v
+        ? tr("Ассистент отвечает клиентам", "The assistant is replying to clients")
+        : tr("Ассистент выключен — отвечаете вы", "The assistant is off — you reply yourself"),
+    );
     if (data) onSalonSaved(data);
   }
 
   // Состояние канала глазами смотрящего: платформенная поломка для владелицы салона выглядит
   // незаконченной настройкой, а не красным «не работает». См. src/lib/wa-status-view.ts.
   const waView = progress ? waStatusForViewer(progress.whatsapp, isSuperAdmin) : null;
-  const wa = channelState(Boolean(waView?.connected), (waView?.level ?? "idle") as any);
+  const wa = channelState(Boolean(waView?.connected), (waView?.level ?? "idle") as any, tr);
   const igConnected = Boolean(progress?.instagram?.connected);
   const ig = channelState(
     igConnected,
     igConnected && !progress?.instagram?.enabled ? "warn" : "ok",
+    tr,
   );
   const anyConnected = Boolean(progress?.whatsapp.connected) || igConnected;
 
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-lg font-semibold tracking-tight">Каналы</h2>
+        <h2 className="text-lg font-semibold tracking-tight">{tr("Каналы", "Channels")}</h2>
         <p className="mt-0.5 text-sm text-muted-foreground">
-          Через что клиенты пишут вам, и кто им отвечает. Настройка каждого канала — внутри.
+          {tr(
+            "Через что клиенты пишут вам, и кто им отвечает. Настройка каждого канала — внутри.",
+            "Where clients message you and who replies. Each channel is set up inside its own tab.",
+          )}
         </p>
       </div>
 
@@ -181,26 +192,38 @@ export function ChannelsTab({
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <h3 className="font-semibold">Ассистент</h3>
+              <h3 className="font-semibold">{tr("Ассистент", "AI assistant")}</h3>
               <div className="flex items-center gap-2.5">
                 <Switch
                   checked={assistantOn}
                   onCheckedChange={toggleAssistant}
                   disabled={assistantBusy}
-                  aria-label="Включить ассистента"
+                  aria-label={tr("Включить ассистента", "Turn the assistant on")}
                 />
                 <Label className="whitespace-nowrap text-sm">
-                  {assistantOn ? "Отвечает" : "Выключен"}
+                  {assistantOn ? tr("Отвечает", "On") : tr("Выключен", "Off")}
                 </Label>
               </div>
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
               {assistantOn
                 ? anyConnected
-                  ? "Главный выключатель. Где именно он отвечает — настраивается отдельно в каждом канале ниже."
-                  : "Включён, но пока некуда отвечать — подключите канал ниже."
-                : "Выключен целиком: молчит во всех каналах, что бы ни стояло в их настройках. Сообщения клиентов копятся в «Переписках» — отвечать придётся вручную."}{" "}
-              Как именно он разговаривает — во вкладке «Ассистент».
+                  ? tr(
+                      "Главный выключатель. Где именно он отвечает — настраивается отдельно в каждом канале ниже.",
+                      "Master switch. Where exactly it replies is set separately in each channel below.",
+                    )
+                  : tr(
+                      "Включён, но пока некуда отвечать — подключите канал ниже.",
+                      "On, but there is nowhere to reply yet — connect a channel below.",
+                    )
+                : tr(
+                    "Выключен целиком: молчит во всех каналах, что бы ни стояло в их настройках. Сообщения клиентов копятся в «Переписках» — отвечать придётся вручную.",
+                    "Fully off: silent in every channel, whatever their own settings say. Client messages collect in Chats, and you reply to them by hand.",
+                  )}{" "}
+              {tr(
+                "Как именно он разговаривает — во вкладке «Ассистент».",
+                "How it talks is configured in the Assistant tab.",
+              )}
             </p>
           </div>
         </div>

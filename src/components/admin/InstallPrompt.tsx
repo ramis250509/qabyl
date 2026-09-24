@@ -17,6 +17,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Download, Share, X } from "lucide-react";
 import { isIos, isStandalonePWA } from "@/lib/push";
+import { useAdminLang } from "@/lib/admin-lang";
 
 const DISMISSED_KEY = "qb_install_dismissed";
 const VISITS_KEY = "qb_admin_visits";
@@ -116,6 +117,7 @@ export function useInstallState() {
 }
 
 export function InstallPrompt() {
+  const { tr } = useAdminLang();
   const [deferred, setDeferred] = useState<InstallEvent | null>(null);
   const [show, setShow] = useState(false);
   const [iosHint, setIosHint] = useState(false);
@@ -184,7 +186,7 @@ export function InstallPrompt() {
     <div
       className="qb-rise fixed inset-x-3 bottom-3 z-50 mx-auto max-w-md rounded-xl border bg-card p-4 shadow-lg sm:left-auto sm:right-4 sm:mx-0"
       role="region"
-      aria-label="Установить Qabyl"
+      aria-label={tr("Установить Qabyl", "Install Qabyl")}
     >
       <div className="flex items-start gap-3">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
@@ -196,30 +198,41 @@ export function InstallPrompt() {
         </div>
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold">
-            {iosHint || handheld ? "Qabyl на телефоне" : "Qabyl на ноутбуке"}
+            {iosHint || handheld
+              ? tr("Qabyl на телефоне", "Qabyl on your phone")
+              : tr("Qabyl на ноутбуке", "Qabyl on your computer")}
           </p>
           <p className="mt-0.5 text-sm text-muted-foreground">
             {iosHint
-              ? "Нажмите «Поделиться» внизу Safari и выберите «На экран „Домой“». Так Qabyl откроется как обычное приложение — и только так iPhone сможет присылать уведомления о новых записях."
+              ? tr(
+                  "Нажмите «Поделиться» внизу Safari и выберите «На экран „Домой“». Так Qabyl откроется как обычное приложение — и только так iPhone сможет присылать уведомления о новых записях.",
+                  "Tap Share at the bottom of Safari and choose Add to Home Screen. Qabyl then opens like a regular app — and only then can iPhone send you notifications about new bookings.",
+                )
               : handheld
-                ? "Установите — будете открывать как обычное приложение с экрана телефона и получать уведомления о новых записях."
-                : "Установите — Qabyl появится отдельным значком и будет открываться в своём окне, без вкладок и адресной строки. Уведомления о новых записях приходят так же."}
+                ? tr(
+                    "Установите — будете открывать как обычное приложение с экрана телефона и получать уведомления о новых записях.",
+                    "Install it to open Qabyl like a regular app from your home screen and get notifications about new bookings.",
+                  )
+                : tr(
+                    "Установите — Qabyl появится отдельным значком и будет открываться в своём окне, без вкладок и адресной строки. Уведомления о новых записях приходят так же.",
+                    "Install it and Qabyl gets its own icon and window, without tabs or an address bar. Booking notifications work the same way.",
+                  )}
           </p>
           <div className="mt-3 flex items-center gap-2">
             {!iosHint && (
               <Button size="sm" onClick={install}>
-                Установить
+                {tr("Установить", "Install")}
               </Button>
             )}
             <Button size="sm" variant="ghost" onClick={close}>
-              {iosHint ? "Понятно" : "Не сейчас"}
+              {iosHint ? tr("Понятно", "Got it") : tr("Не сейчас", "Not now")}
             </Button>
           </div>
         </div>
         <button
           type="button"
           onClick={close}
-          aria-label="Закрыть"
+          aria-label={tr("Закрыть", "Close")}
           className="qb-press -mr-1 -mt-1 shrink-0 rounded-md p-1 text-muted-foreground hover:text-foreground"
         >
           <X className="h-4 w-4" />

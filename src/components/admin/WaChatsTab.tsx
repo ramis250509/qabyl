@@ -16,6 +16,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { sendManualChatMessage } from "@/lib/wa-chats.functions";
+import { testInstagramConnection } from "@/lib/instagram.functions";
+import { useAdminLang, type Tr } from "@/lib/admin-lang";
 import { StatusBadge, EmptyState, SkeletonBlock, type Tone } from "@/components/ui/status";
 import {
   MessageCircle,
@@ -55,7 +57,9 @@ type Message = {
   created_at: string;
   // `manual` отмечает ответ, который администратор напечатал здесь, — в отличие от служебных
   // заметок самого ассистента: и то и другое хранится как kind "system".
-  meta: { manual?: boolean } | null;
+  // `commentTrigger` / `commentText` — личное сообщение, отправленное в ответ на комментарий
+  // с кодовым словом (вебхук Instagram, handleCommentTrigger).
+  meta: { manual?: boolean; commentTrigger?: string; commentText?: string } | null;
 };
 
 const isManualReply = (m: Message) => m.kind === "system" && m.meta?.manual === true;
@@ -69,25 +73,25 @@ function displayContact(c: Conversation): string {
   return c.client_phone;
 }
 
-function displayName(c: Conversation): string {
+function displayName(c: Conversation, tr: Tr): string {
   if (c.client_name) return c.client_name;
-  if (channelOf(c) === "instagram") return "Клиент из Instagram";
+  if (channelOf(c) === "instagram") return tr("Клиент из Instagram", "Instagram client");
   return c.client_phone;
 }
 
 /** Сегодня — только время, вчера — слово, раньше — дата. Как в любом мессенджере. */
-function shortTime(iso: string): string {
+function shortTime(iso: string, tr: Tr): string {
   const d = new Date(iso);
   if (isToday(d)) return format(d, "HH:mm");
-  if (isYesterday(d)) return "вчера";
+  if (isYesterday(d)) return tr("вчера", "yesterday");
   return format(d, "dd.MM");
 }
 
-function statusTone(c: Conversation): { tone: Tone; text: string } {
-  if (needsHuman(c)) return { tone: "error", text: "ждёт вас" };
-  if (c.status === "booked") return { tone: "ok", text: "записан" };
-  if (c.status === "closed") return { tone: "idle", text: "закрыт" };
-  return { tone: "warn", text: "в разговоре" };
+function statusTone(c: Conversation, tr: Tr): { tone: Tone; text: string } {
+  if (needsHuman(c)) return { tone: "error", text: tr("ждёт вас", "needs you") };
+  if (c.status === "booked") return { tone: "ok", text: tr("записан", "booked") };
+  if (c.status === "closed") return { tone: "idle", text: tr("закрыт", "closed") };
+  return { tone: "warn", text: tr("в разговоре", "in progress") };
 }
 
 // ── Отметки о прочтении ─────────────────────────────────────────────────────
@@ -113,6 +117,7 @@ function writeSeen(next: Record<string, string>) {
 }
 
 export function WaChatsTab({ salonId }: { salonId: string }) {
+  const { tr } = useAdminLang();
   const [convs, setConvs] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -157,7 +162,9 @@ export function WaChatsTab({ salonId }: { salonId: string }) {
       // Сервер намеренно не сохраняет сообщение, которое провайдер отверг, — это единственное
       // место, где администратор узнаёт, что оно не ушло. Формулировка провайдера важна:
       // «вне 24-часового окна» и «истёк токен» чинятся совершенно по-разному.
-      setSendError(e?.message ?? "Не удалось отправить сообщение");
+      setSendError(
+        e?.message ?? tr("Не удалось отправить сообщение", "Could not send the message"),
+      );
     } finally {
       setSending(false);
     }
@@ -320,9 +327,30 @@ export function WaChatsTab({ salonId }: { salonId: string }) {
   }, [activeId, loading, filtered]);
 
   const activeConv = convs.find((c) => c.id === activeId) ?? null;
+  const activeIsInstagram = activeConv ? channelOf(activeConv) === "instagram" : false;
+
+  // Под каким аккаунтом уйдёт ответ в Instagram. У владельца часто два аккаунта — личный и
+  // салона, — и подпись у поля ввода снимает вопрос «от кого клиент это получит» до отправки.
+  // Она же показывает проверяющему Meta выбранный аккаунт в момент отправки из интерфейса.
+  // undefined — ещё не спрашивали, null — узнать не удалось (подпись просто не рисуется).
+  const [igAccount, setIgAccount] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!activeIsInstagram || igAccount !== undefined) return;
+    let cancelled = false;
+    testInstagramConnection({ data: { salonId } })
+      .then((r) => {
+        if (!cancelled) setIgAccount(r.ok ? (r.username ?? null) : null);
+      })
+      .catch(() => {
+        if (!cancelled) setIgAccount(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeIsInstagram, igAccount, salonId]);
 
   const TABS: { key: Filter; label: string; icon?: typeof MessageCircle }[] = [
-    { key: "all", label: "Все" },
+    { key: "all", label: tr("Все", "All") },
     { key: "whatsapp", label: "WhatsApp", icon: MessageCircle },
     { key: "instagram", label: "Instagram", icon: Instagram },
   ];
@@ -336,7 +364,7 @@ export function WaChatsTab({ salonId }: { salonId: string }) {
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Имя, номер или текст сообщения"
+                placeholder={tr("Имя, номер или текст сообщения", "Name, number or message text")}
                 className="pl-8"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -344,7 +372,11 @@ export function WaChatsTab({ salonId }: { salonId: string }) {
             </div>
             {/* Переключатель каналов. Кнопки, а не выпадающий список: выбор из трёх должен быть
                 виден целиком, иначе владелец не узнает, что Instagram тут вообще есть. */}
-            <div role="tablist" aria-label="Канал" className="flex gap-1 rounded-lg bg-muted p-1">
+            <div
+              role="tablist"
+              aria-label={tr("Канал", "Channel")}
+              className="flex gap-1 rounded-lg bg-muted p-1"
+            >
               {TABS.map((t) => {
                 const active = filter === t.key;
                 const n = counts[t.key];
@@ -379,20 +411,33 @@ export function WaChatsTab({ salonId }: { salonId: string }) {
             ) : filtered.length === 0 ? (
               <EmptyState
                 icon={filter === "instagram" ? Instagram : MessageCircle}
-                title={search ? "Ничего не нашлось" : "Переписок пока нет"}
+                title={
+                  search
+                    ? tr("Ничего не нашлось", "Nothing found")
+                    : tr("Переписок пока нет", "No chats yet")
+                }
                 body={
                   search
-                    ? "Попробуйте другое имя, номер или слово из сообщения."
+                    ? tr(
+                        "Попробуйте другое имя, номер или слово из сообщения.",
+                        "Try another name, number or a word from a message.",
+                      )
                     : filter === "instagram"
-                      ? "Когда клиент напишет в Instagram Direct, разговор появится здесь."
-                      : "Когда клиент напишет салону, разговор появится здесь — вместе с ответами ассистента."
+                      ? tr(
+                          "Когда клиент напишет в Instagram Direct, разговор появится здесь.",
+                          "When a client writes to your Instagram Direct, the conversation appears here.",
+                        )
+                      : tr(
+                          "Когда клиент напишет салону, разговор появится здесь — вместе с ответами ассистента.",
+                          "When a client messages the salon, the conversation appears here, together with the assistant's replies.",
+                        )
                 }
               />
             ) : (
               <ul className="divide-y">
                 {filtered.map((c) => {
                   const unread = isUnread(c);
-                  const s = statusTone(c);
+                  const s = statusTone(c, tr);
                   const Icon = channelOf(c) === "instagram" ? Instagram : MessageCircle;
                   return (
                     <li key={c.id}>
@@ -413,10 +458,10 @@ export function WaChatsTab({ salonId }: { salonId: string }) {
                             <span
                               className={`truncate text-sm ${unread ? "font-semibold" : "font-medium"}`}
                             >
-                              {displayName(c)}
+                              {displayName(c, tr)}
                             </span>
                             <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-                              {shortTime(c.last_message_at)}
+                              {shortTime(c.last_message_at, tr)}
                             </span>
                           </span>
                           <span className="mt-0.5 flex items-center gap-2">
@@ -430,14 +475,16 @@ export function WaChatsTab({ salonId }: { salonId: string }) {
                             {unread && (
                               <span
                                 className="h-2 w-2 shrink-0 rounded-full bg-primary"
-                                aria-label="Непрочитанное"
+                                aria-label={tr("Непрочитанное", "Unread")}
                               />
                             )}
                           </span>
                           <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
                             <StatusBadge tone={s.tone}>{s.text}</StatusBadge>
                             {c.ai_paused && !needsHuman(c) && (
-                              <StatusBadge tone="idle">отвечаете вы</StatusBadge>
+                              <StatusBadge tone="idle">
+                                {tr("отвечаете вы", "you reply")}
+                              </StatusBadge>
                             )}
                           </span>
                         </span>
@@ -458,8 +505,11 @@ export function WaChatsTab({ salonId }: { salonId: string }) {
             <div className="flex flex-1 items-center justify-center">
               <EmptyState
                 icon={MessageCircle}
-                title="Выберите разговор"
-                body="Слева — все клиенты, которые вам писали. Ассистент отвечает сам, но вы можете вмешаться в любой момент."
+                title={tr("Выберите разговор", "Select a conversation")}
+                body={tr(
+                  "Слева — все клиенты, которые вам писали. Ассистент отвечает сам, но вы можете вмешаться в любой момент.",
+                  "On the left are all the clients who wrote to you. The assistant replies on its own, but you can step in at any time.",
+                )}
               />
             </div>
           ) : (
@@ -470,7 +520,7 @@ export function WaChatsTab({ salonId }: { salonId: string }) {
                   size="icon"
                   className="md:hidden"
                   onClick={() => setActiveId(null)}
-                  aria-label="Назад к списку"
+                  aria-label={tr("Назад к списку", "Back to the list")}
                 >
                   <ArrowLeft className="h-4 w-4" />
                 </Button>
@@ -481,7 +531,7 @@ export function WaChatsTab({ salonId }: { salonId: string }) {
                     ) : (
                       <MessageCircle className="h-3.5 w-3.5 shrink-0 text-success" />
                     )}
-                    <span className="truncate font-medium">{displayName(activeConv)}</span>
+                    <span className="truncate font-medium">{displayName(activeConv, tr)}</span>
                   </div>
                   <div className="truncate text-xs text-muted-foreground">
                     {displayContact(activeConv)}
@@ -493,12 +543,14 @@ export function WaChatsTab({ salonId }: { salonId: string }) {
                   {activeConv.ai_paused || needsHuman(activeConv) ? (
                     <StatusBadge tone={needsHuman(activeConv) ? "error" : "idle"}>
                       <UserRound className="h-3 w-3" />
-                      {needsHuman(activeConv) ? "ждёт вас" : "отвечаете вы"}
+                      {needsHuman(activeConv)
+                        ? tr("ждёт вас", "needs you")
+                        : tr("отвечаете вы", "you reply")}
                     </StatusBadge>
                   ) : (
                     <StatusBadge tone="ok">
                       <Sparkles className="h-3 w-3" />
-                      отвечает ассистент
+                      {tr("отвечает ассистент", "assistant replies")}
                     </StatusBadge>
                   )}
                 </div>
@@ -526,7 +578,17 @@ export function WaChatsTab({ salonId }: { salonId: string }) {
                       >
                         {manual ? (
                           <div className="mb-0.5 text-[10px] font-medium opacity-80">
-                            Вы ответили вручную
+                            {tr("Вы ответили вручную", "Sent by you from Qabyl")}
+                          </div>
+                        ) : null}
+                        {/* Сообщение, ушедшее в ответ на комментарий с кодовым словом: без подписи
+                            непонятно, почему разговор начал салон, а не клиент. */}
+                        {m.meta?.commentTrigger ? (
+                          <div className="mb-0.5 text-[10px] font-medium opacity-80">
+                            {tr(
+                              `Ответ на комментарий «${m.meta.commentText ?? m.meta.commentTrigger}»`,
+                              `Reply to the comment “${m.meta.commentText ?? m.meta.commentTrigger}”`,
+                            )}
                           </div>
                         ) : null}
                         {m.kind === "image" && m.media_path ? (
@@ -534,14 +596,14 @@ export function WaChatsTab({ salonId }: { salonId: string }) {
                             <a href={mediaUrls[m.media_path]} target="_blank" rel="noreferrer">
                               <img
                                 src={mediaUrls[m.media_path]}
-                                alt="фото от клиента"
+                                alt={tr("фото от клиента", "photo from the client")}
                                 className="max-h-72 rounded-lg object-cover"
                               />
                             </a>
                           ) : (
                             <div className="flex items-center gap-2 opacity-70">
                               <ImageIcon className="h-4 w-4" />
-                              <span>загружаем фото…</span>
+                              <span>{tr("загружаем фото…", "loading photo…")}</span>
                             </div>
                           )
                         ) : null}
@@ -578,23 +640,37 @@ export function WaChatsTab({ salonId }: { salonId: string }) {
                         void handleSend();
                       }
                     }}
-                    placeholder="Напишите ответ клиенту…"
+                    placeholder={tr("Напишите ответ клиенту…", "Write a reply to the client…")}
                     rows={2}
                     className="max-h-32 min-h-[44px] resize-none"
                     disabled={sending}
                   />
+                  {/* Подпись рядом со стрелкой — на широком экране. Кнопка отправки клиенту должна
+                      читаться без догадок; на телефоне хватает привычной стрелки. */}
                   <Button
                     onClick={() => void handleSend()}
                     disabled={sending || !draft.trim()}
-                    size="icon"
-                    className="h-11 w-11 shrink-0"
-                    aria-label="Отправить"
+                    className="h-11 w-11 shrink-0 px-0 sm:w-auto sm:px-4"
+                    aria-label={tr("Отправить", "Send")}
                   >
                     <SendHorizonal className="h-4 w-4" />
+                    <span className="hidden sm:inline">{tr("Отправить", "Send")}</span>
                   </Button>
                 </div>
                 <div className="mt-1.5 text-[11px] text-muted-foreground">
-                  Пока вы отвечаете, ассистент молчит 5 минут, чтобы не перебивать.
+                  {activeIsInstagram && igAccount ? (
+                    <>
+                      {tr(
+                        "Ответ уйдёт в Instagram Direct от",
+                        "Your reply is sent in Instagram Direct as",
+                      )}{" "}
+                      <b>@{igAccount}</b>.{" "}
+                    </>
+                  ) : null}
+                  {tr(
+                    "Пока вы отвечаете, ассистент молчит 5 минут, чтобы не перебивать.",
+                    "While you reply, the assistant stays silent for 5 minutes so it does not interrupt.",
+                  )}
                 </div>
               </div>
             </>

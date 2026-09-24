@@ -27,17 +27,19 @@ import {
   upsertInstagramConfig,
 } from "@/lib/instagram.functions";
 import { Textarea } from "@/components/ui/textarea";
+import { adminLocale, useAdminLang, type AdminLang, type Tr } from "@/lib/admin-lang";
 
 type Diagnostics = Awaited<ReturnType<typeof getInstagramDiagnostics>>;
 
-function whenLabel(iso: string | null): string {
+function whenLabel(iso: string | null, tr: Tr, lang: AdminLang): string {
   if (!iso) return "—";
   const d = new Date(iso);
   const mins = Math.round((Date.now() - d.getTime()) / 60000);
-  if (mins < 1) return "только что";
-  if (mins < 60) return `${mins} мин назад`;
-  if (mins < 24 * 60) return `${Math.round(mins / 60)} ч назад`;
-  return d.toLocaleString("ru-RU");
+  if (mins < 1) return tr("только что", "just now");
+  if (mins < 60) return tr(`${mins} мин назад`, `${mins} min ago`);
+  if (mins < 24 * 60)
+    return tr(`${Math.round(mins / 60)} ч назад`, `${Math.round(mins / 60)} h ago`);
+  return d.toLocaleString(adminLocale(lang));
 }
 
 /**
@@ -45,7 +47,7 @@ function whenLabel(iso: string | null): string {
  * that never arrived is a Meta-side problem and no amount of fiddling on our side will fix it, so
  * that case must not be buried under "everything looks configured".
  */
-function diagnose(d: Diagnostics, enabled: boolean) {
+function diagnose(d: Diagnostics, enabled: boolean, tr: Tr, lang: AdminLang) {
   const issueAt = d.lastWebhookIssueAt ? new Date(d.lastWebhookIssueAt).getTime() : 0;
   const outAt = d.lastOutboundAt ? new Date(d.lastOutboundAt).getTime() : 0;
 
@@ -55,52 +57,94 @@ function diagnose(d: Diagnostics, enabled: boolean) {
   if (issueAt && issueAt > outAt) {
     return {
       tone: "warn" as const,
-      title: "Последняя ошибка",
-      body: `${d.lastWebhookIssue ?? "причина не записана"} (${whenLabel(d.lastWebhookIssueAt)}).`,
+      title: tr("Последняя ошибка", "Latest error"),
+      body: `${d.lastWebhookIssue ?? tr("причина не записана", "no reason recorded")} (${whenLabel(d.lastWebhookIssueAt, tr, lang)}).`,
     };
   }
   if (d.lastInboundAt && d.lastOutboundAt) {
     return {
       tone: "ok" as const,
-      title: "Всё работает",
-      body: `Последнее сообщение от клиента — ${whenLabel(d.lastInboundAt)}, последний ответ ассистента — ${whenLabel(d.lastOutboundAt)}.`,
+      title: tr("Всё работает", "Everything works"),
+      body: tr(
+        `Последнее сообщение от клиента — ${whenLabel(d.lastInboundAt, tr, lang)}, последний ответ ассистента — ${whenLabel(d.lastOutboundAt, tr, lang)}.`,
+        `Last message from a client: ${whenLabel(d.lastInboundAt, tr, lang)}. Last reply sent: ${whenLabel(d.lastOutboundAt, tr, lang)}.`,
+      ),
     };
   }
   if (d.lastInboundAt) {
     return {
       tone: "warn" as const,
-      title: "Сообщения приходят, но ответа не было",
+      title: tr(
+        "Сообщения приходят, но ответа не было",
+        "Messages arrive, but nothing was sent back",
+      ),
       body: enabled
-        ? "Webhook работает — значит дело уже на нашей стороне. Напишите ещё раз и обновите: причина появится здесь же."
-        : "Канал выключен переключателем вверху — включите его.",
+        ? tr(
+            "Webhook работает — значит дело уже на нашей стороне. Напишите ещё раз и обновите: причина появится здесь же.",
+            "Instagram delivers messages to Qabyl, so the issue is on our side. Send another message and refresh — the reason will appear here.",
+          )
+        : tr(
+            "Канал выключен переключателем вверху — включите его.",
+            "The channel is switched off at the top — turn it on.",
+          ),
     };
   }
   return {
     tone: "warn" as const,
-    title: "От Meta не пришло ни одного сообщения",
-    body: "Значит дело в настройке на стороне Meta, а не у нас. Проверьте по порядку: приложение опубликовано (в режиме Development Meta шлёт события только от аккаунтов с ролью в приложении — добавьте пишущий аккаунт как Instagram Tester и примите приглашение в самом Instagram); в разделе webhooks подписано поле messages; Callback URL и Verify Token совпадают с указанными выше.",
+    title: tr(
+      "От Meta не пришло ни одного сообщения",
+      "No messages have arrived from Instagram yet",
+    ),
+    body: tr(
+      "Значит дело в настройке на стороне Meta, а не у нас. Проверьте по порядку: приложение опубликовано (в режиме Development Meta шлёт события только от аккаунтов с ролью в приложении — добавьте пишущий аккаунт как Instagram Tester и примите приглашение в самом Instagram); в разделе webhooks подписано поле messages; Callback URL и Verify Token совпадают с указанными выше.",
+      "Send a Direct message to the salon's account from another Instagram account, wait 10–15 seconds and press Refresh. If it still does not show up, the issue is in the Meta setup: the app must be live, and the webhook must be subscribed to the messages field.",
+    ),
   };
 }
 
 /** Коды возврата из /api/public/ig-oauth/callback. */
-const IG_LOGIN_RESULT: Record<string, { ok: boolean; text: string }> = {
-  ok: { ok: true, text: "Instagram подключён. Осталось включить канал переключателем вверху." },
-  nosub: {
-    ok: false,
-    text: "Instagram подключён, но Meta не подписала аккаунт на сообщения. Нажмите «Переподключить Instagram» ещё раз.",
-  },
-  scopes: {
-    ok: false,
-    text: "Без разрешения на сообщения ассистент не сможет отвечать. Переподключите и оставьте все галочки включёнными.",
-  },
-  cancelled: { ok: false, text: "Подключение отменено." },
-  taken: { ok: false, text: "Этот Instagram-аккаунт уже подключён к другому салону в Qabyl." },
-  forbidden: { ok: false, text: "Нет доступа к этому салону." },
-  failed: {
-    ok: false,
-    text: "Не удалось подключить Instagram. Проверьте, что аккаунт профессиональный, и попробуйте ещё раз.",
-  },
-};
+function igLoginResult(code: string, tr: Tr): { ok: boolean; text: string } | undefined {
+  const results: Record<string, { ok: boolean; text: string }> = {
+    ok: {
+      ok: true,
+      text: tr(
+        "Instagram подключён. Осталось включить канал переключателем вверху.",
+        "Instagram is connected. Now turn the channel on with the switch at the top.",
+      ),
+    },
+    nosub: {
+      ok: false,
+      text: tr(
+        "Instagram подключён, но Meta не подписала аккаунт на сообщения. Нажмите «Переподключить Instagram» ещё раз.",
+        "Instagram is connected, but Meta did not subscribe the account to messages. Press “Reconnect Instagram” once more.",
+      ),
+    },
+    scopes: {
+      ok: false,
+      text: tr(
+        "Без разрешения на сообщения ассистент не сможет отвечать. Переподключите и оставьте все галочки включёнными.",
+        "Without the messages permission Qabyl cannot reply. Reconnect and keep all permissions checked.",
+      ),
+    },
+    cancelled: { ok: false, text: tr("Подключение отменено.", "Connection cancelled.") },
+    taken: {
+      ok: false,
+      text: tr(
+        "Этот Instagram-аккаунт уже подключён к другому салону в Qabyl.",
+        "This Instagram account is already connected to another salon in Qabyl.",
+      ),
+    },
+    forbidden: { ok: false, text: tr("Нет доступа к этому салону.", "No access to this salon.") },
+    failed: {
+      ok: false,
+      text: tr(
+        "Не удалось подключить Instagram. Проверьте, что аккаунт профессиональный, и попробуйте ещё раз.",
+        "Could not connect Instagram. Make sure the account is a professional one and try again.",
+      ),
+    },
+  };
+  return results[code];
+}
 
 type TestState =
   | { kind: "idle" }
@@ -119,6 +163,7 @@ type TestState =
   | { kind: "error"; message: string };
 
 function CopyField({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  const { tr } = useAdminLang();
   const [copied, setCopied] = useState(false);
   async function copy() {
     try {
@@ -126,7 +171,12 @@ function CopyField({ label, value, hint }: { label: string; value: string; hint?
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      toast.error("Не удалось скопировать — выделите и скопируйте вручную");
+      toast.error(
+        tr(
+          "Не удалось скопировать — выделите и скопируйте вручную",
+          "Could not copy — select the text and copy it manually",
+        ),
+      );
     }
   }
   return (
@@ -139,7 +189,13 @@ function CopyField({ label, value, hint }: { label: string; value: string; hint?
           className="font-mono text-xs"
           onFocus={(e) => e.currentTarget.select()}
         />
-        <Button type="button" variant="outline" size="icon" onClick={copy} title="Скопировать">
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          onClick={copy}
+          title={tr("Скопировать", "Copy")}
+        >
           {copied ? (
             <CheckCircle2 className="h-4 w-4 text-green-600" />
           ) : (
@@ -184,6 +240,7 @@ const NEW_TRIGGER = {
  * something the person can reply to. The assistant takes over from their reply onward.
  */
 function CommentTriggersCard({ salonId }: { salonId: string }) {
+  const { tr, lang } = useAdminLang();
   const list = useServerFn(listCommentTriggers);
   const upsert = useServerFn(upsertCommentTrigger);
   const remove = useServerFn(deleteCommentTrigger);
@@ -212,11 +269,15 @@ function CommentTriggersCard({ salonId }: { salonId: string }) {
 
   async function saveDraft() {
     if (draft.keyword.trim().length < 2) {
-      toast.error("Кодовое слово — минимум 2 символа");
+      toast.error(
+        tr("Кодовое слово — минимум 2 символа", "The keyword needs at least 2 characters"),
+      );
       return;
     }
     if (!draft.replyText.trim()) {
-      toast.error("Напишите сообщение, которое уйдёт в директ");
+      toast.error(
+        tr("Напишите сообщение, которое уйдёт в директ", "Write the message to send in Direct"),
+      );
       return;
     }
     setBusy(true);
@@ -236,9 +297,9 @@ function CommentTriggersCard({ salonId }: { salonId: string }) {
       });
       setDraft({ ...NEW_TRIGGER });
       await reload();
-      toast.success("Сохранено");
+      toast.success(tr("Сохранено", "Saved"));
     } catch (e: any) {
-      toast.error(humanError(e, "Не удалось сохранить"));
+      toast.error(humanError(e, tr("Не удалось сохранить", "Could not save")));
     } finally {
       setBusy(false);
     }
@@ -261,7 +322,7 @@ function CommentTriggersCard({ salonId }: { salonId: string }) {
         },
       });
     } catch (e: any) {
-      toast.error(humanError(e, "Не удалось изменить"));
+      toast.error(humanError(e, tr("Не удалось изменить", "Could not update")));
       await reload();
     }
   }
@@ -269,44 +330,80 @@ function CommentTriggersCard({ salonId }: { salonId: string }) {
   return (
     <Card className="p-4 sm:p-6 space-y-4">
       <div className="space-y-1">
-        <h2 className="font-semibold">Кодовое слово в комментариях → сообщение в директ</h2>
-        <p className="text-sm text-muted-foreground">
-          Клиент пишет под постом, например, «ХОЧУ» — и сразу получает от вас личное сообщение.
-          Дальше разговор ведёт ассистент. Работает по официальному механизму Instagram, ничего
-          обходить не нужно.
-        </p>
-        <p className="text-xs text-muted-foreground">
-          Instagram разрешает отправить такому человеку <b>только одно</b> сообщение, пока он не
-          ответит. Поэтому закончите его вопросом — так у клиента будет причина написать в ответ.
-          Ещё два ограничения Meta: ответить можно на комментарий не старше 7 дней и только один раз
-          на каждый комментарий.
-        </p>
-        <p className="text-xs text-muted-foreground">
-          Чтобы это заработало, в настройках вашего приложения Meta нужно подписать вебхук на поле{" "}
-          <code>comments</code> (там же, где уже подписано <code>messages</code>) и выдать
-          разрешение <code>instagram_business_manage_comments</code>.
-        </p>
+        <h2 className="font-semibold">
+          {tr(
+            "Кодовое слово в комментариях → сообщение в директ",
+            "Comment keyword → private message in Direct",
+          )}
+        </h2>
+        {lang === "en" ? (
+          <>
+            <p className="text-sm text-muted-foreground">
+              A follower comments a keyword such as “WANT” under your post — Qabyl replies under the
+              comment and sends them one private message in Direct. After they answer, the assistant
+              continues the conversation. This uses Instagram's official Private Replies feature.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Instagram allows <b>only one</b> private message to such a person until they reply, so
+              end it with a question. Two more Meta rules: the comment must be less than 7 days old,
+              and each comment can be answered only once.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-muted-foreground">
+              Клиент пишет под постом, например, «ХОЧУ» — и сразу получает от вас личное сообщение.
+              Дальше разговор ведёт ассистент. Работает по официальному механизму Instagram, ничего
+              обходить не нужно.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Instagram разрешает отправить такому человеку <b>только одно</b> сообщение, пока он не
+              ответит. Поэтому закончите его вопросом — так у клиента будет причина написать в
+              ответ. Ещё два ограничения Meta: ответить можно на комментарий не старше 7 дней и
+              только один раз на каждый комментарий.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Чтобы это заработало, в настройках вашего приложения Meta нужно подписать вебхук на
+              поле <code>comments</code> (там же, где уже подписано <code>messages</code>) и выдать
+              разрешение <code>instagram_business_manage_comments</code>.
+            </p>
+          </>
+        )}
       </div>
 
       {loading ? (
-        <p className="text-sm text-muted-foreground">Загрузка…</p>
+        <p className="text-sm text-muted-foreground">{tr("Загрузка…", "Loading…")}</p>
       ) : rows.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Пока ни одного кодового слова.</p>
+        <p className="text-sm text-muted-foreground">
+          {tr("Пока ни одного кодового слова.", "No keywords yet.")}
+        </p>
       ) : (
         <div className="space-y-3">
           {rows.map((r) => (
             <div key={r.id} className="rounded-md border p-3 space-y-1.5">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="font-medium truncate">«{r.keyword}»</span>
+                  <span className="font-medium truncate">
+                    {tr(`«${r.keyword}»`, `“${r.keyword}”`)}
+                  </span>
                   <span className="text-xs text-muted-foreground shrink-0">
-                    {r.match_mode === "exact" ? "точное совпадение" : "содержится в тексте"}
-                    {r.media_id ? " · один пост" : " · любой пост"}
-                    {r.sent_count > 0 ? ` · сработало ${r.sent_count}` : ""}
+                    {r.match_mode === "exact"
+                      ? tr("точное совпадение", "exact match")
+                      : tr("содержится в тексте", "contained in the comment")}
+                    {r.media_id
+                      ? tr(" · один пост", " · one post")
+                      : tr(" · любой пост", " · any post")}
+                    {r.sent_count > 0
+                      ? tr(` · сработало ${r.sent_count}`, ` · triggered ${r.sent_count}`)
+                      : ""}
                   </span>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <Switch checked={r.enabled} onCheckedChange={(v) => toggle(r, v)} />
+                  <Switch
+                    checked={r.enabled}
+                    onCheckedChange={(v) => toggle(r, v)}
+                    aria-label={tr("Кодовое слово включено", "Keyword enabled")}
+                  />
                   <Button
                     variant="ghost"
                     size="sm"
@@ -315,7 +412,7 @@ function CommentTriggersCard({ salonId }: { salonId: string }) {
                       await reload();
                     }}
                   >
-                    Удалить
+                    {tr("Удалить", "Delete")}
                   </Button>
                 </div>
               </div>
@@ -328,20 +425,20 @@ function CommentTriggersCard({ salonId }: { salonId: string }) {
       <div className="rounded-md border border-dashed p-3 space-y-3">
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <Label>Кодовое слово</Label>
+            <Label>{tr("Кодовое слово", "Keyword")}</Label>
             <Input
               value={draft.keyword}
-              placeholder="ХОЧУ"
+              placeholder={tr("ХОЧУ", "WANT")}
               onChange={(e) => setDraft({ ...draft, keyword: e.target.value })}
             />
           </div>
           <div className="space-y-1.5">
-            <Label>Как искать</Label>
+            <Label>{tr("Как искать", "How to match")}</Label>
             <div className="flex gap-2">
               {(
                 [
-                  { code: "contains", label: "Есть в комментарии" },
-                  { code: "exact", label: "Только это слово" },
+                  { code: "contains", label: tr("Есть в комментарии", "Anywhere in the comment") },
+                  { code: "exact", label: tr("Только это слово", "Only this word") },
                 ] as const
               ).map((m) => (
                 <Button
@@ -359,49 +456,68 @@ function CommentTriggersCard({ salonId }: { salonId: string }) {
         </div>
 
         <div className="space-y-1.5">
-          <Label>Сообщение в директ</Label>
+          <Label>{tr("Сообщение в директ", "Private message in Direct")}</Label>
           <Textarea
             rows={3}
             value={draft.replyText}
-            placeholder="Здравствуйте! Вижу ваш комментарий 🙂 Расскажу про кератин и цены — подскажите, какая у вас длина волос?"
+            placeholder={tr(
+              "Здравствуйте! Вижу ваш комментарий 🙂 Расскажу про кератин и цены — подскажите, какая у вас длина волос?",
+              "Hi! Saw your comment 🙂 Happy to tell you about keratin and prices — how long is your hair?",
+            )}
             onChange={(e) => setDraft({ ...draft, replyText: e.target.value })}
           />
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <Label>Ответ под постом (необязательно)</Label>
+            <Label>
+              {tr("Ответ под постом (необязательно)", "Public reply under the comment (optional)")}
+            </Label>
             <Input
               value={draft.publicReply}
-              placeholder="Ответила вам в директ 💌"
+              placeholder={tr("Ответила вам в директ 💌", "Sent you a DM 💌")}
               onChange={(e) => setDraft({ ...draft, publicReply: e.target.value })}
             />
           </div>
           <div className="space-y-1.5">
-            <Label>ID поста (необязательно)</Label>
+            <Label>{tr("ID поста (необязательно)", "Post ID (optional)")}</Label>
             <Input
               value={draft.mediaId}
-              placeholder="пусто = любой пост"
+              placeholder={tr("пусто = любой пост", "empty = any post")}
               onChange={(e) => setDraft({ ...draft, mediaId: e.target.value })}
             />
           </div>
         </div>
 
         <div className="space-y-1.5">
-          <Label>Что ассистенту знать об этом посте (необязательно)</Label>
+          <Label>
+            {tr(
+              "Что ассистенту знать об этом посте (необязательно)",
+              "What the assistant should know about this post (optional)",
+            )}
+          </Label>
           <Input
             value={draft.aiContext}
-            placeholder="Клиент пришёл с поста про кератин со скидкой"
+            placeholder={tr(
+              "Клиент пришёл с поста про кератин со скидкой",
+              "The client came from the post about discounted keratin",
+            )}
             onChange={(e) => setDraft({ ...draft, aiContext: e.target.value })}
           />
           <p className="text-xs text-muted-foreground">
-            Ассистент увидит это в начале разговора и не будет здороваться так, будто ничего не
-            было.
+            {tr(
+              "Ассистент увидит это в начале разговора и не будет здороваться так, будто ничего не было.",
+              "The assistant sees this at the start of the conversation and continues from it instead of greeting the person from scratch.",
+            )}
           </p>
         </div>
 
         <Button onClick={saveDraft} disabled={busy}>
-          {busy ? "Сохранение…" : draft.id ? "Сохранить" : "Добавить кодовое слово"}
+          {busy
+            ? tr("Сохранение…", "Saving…")
+            : draft.id
+              ? tr("Сохранить", "Save")
+              : tr("Добавить кодовое слово", "Add keyword")}
         </Button>
       </div>
     </Card>
@@ -409,6 +525,7 @@ function CommentTriggersCard({ salonId }: { salonId: string }) {
 }
 
 export function InstagramTab({ salonId, salonName }: { salonId: string; salonName?: string }) {
+  const { tr, lang } = useAdminLang();
   const load = useServerFn(getInstagramConfig);
   const save = useServerFn(upsertInstagramConfig);
   const setEnabled = useServerFn(setInstagramEnabled);
@@ -438,7 +555,9 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
       const { url } = await startLogin({ data: { salonId } });
       window.location.href = url;
     } catch (e: any) {
-      toast.error(humanError(e, "Не удалось начать подключение"));
+      toast.error(
+        humanError(e, tr("Не удалось начать подключение", "Could not start the connection")),
+      );
       setConnecting(false);
     }
   }
@@ -449,7 +568,7 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
     const params = new URLSearchParams(window.location.search);
     const code = params.get("ig");
     if (!code) return;
-    const msg = IG_LOGIN_RESULT[code];
+    const msg = igLoginResult(code, tr);
     if (msg) {
       if (msg.ok) toast.success(msg.text, { duration: 10000 });
       else toast.error(msg.text, { duration: 15000 });
@@ -470,7 +589,9 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
     try {
       setDiag(await loadDiag({ data: { salonId } }));
     } catch (e: any) {
-      toast.error(humanError(e, "Не удалось получить диагностику"));
+      toast.error(
+        humanError(e, tr("Не удалось получить диагностику", "Could not load diagnostics")),
+      );
     } finally {
       setDiagBusy(false);
     }
@@ -499,7 +620,17 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
           /* diagnostics are advisory — never block the settings form on them */
         }
       } catch (e: any) {
-        if (!cancelled) toast.error(humanError(e, "Не удалось загрузить настройки Instagram"));
+        if (!cancelled) {
+          toast.error(
+            humanError(
+              e,
+              tr(
+                "Не удалось загрузить настройки Instagram",
+                "Could not load the Instagram settings",
+              ),
+            ),
+          );
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -508,6 +639,16 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
       cancelled = true;
     };
   }, [salonId]);
+
+  // Какой именно аккаунт подключён, видно сразу, без нажатия «Проверить связь». Ради этого вкладку
+  // и открывают — и владелец, и проверяющий Meta, которому App Review велит показать выбранный
+  // аккаунт. При возврате с instagram.com проверка уже запущена эффектом выше — второй раз не зовём.
+  useEffect(() => {
+    if (loading || connectedVia !== "platform" || !userId) return;
+    if (testState.kind !== "idle") return;
+    void onTest();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, connectedVia, userId]);
 
   /**
    * Turn a connection-check result into UI state — and, when the check succeeded while the account
@@ -568,9 +709,9 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
       // A saved token is almost always followed by "did it work?" — answer it without a second click.
       setTestState({ kind: "running" });
       await applyTestResult(await test({ data: { salonId } }));
-      toast.success("Сохранено");
+      toast.success(tr("Сохранено", "Saved"));
     } catch (e: any) {
-      toast.error(humanError(e, "Не удалось сохранить"));
+      toast.error(humanError(e, tr("Не удалось сохранить", "Could not save")));
       setTestState({ kind: "idle" });
     } finally {
       setSaving(false);
@@ -582,7 +723,10 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
     try {
       await applyTestResult(await test({ data: { salonId } }));
     } catch (e: any) {
-      setTestState({ kind: "error", message: e.message ?? "Проверка не удалась" });
+      setTestState({
+        kind: "error",
+        message: e.message ?? tr("Проверка не удалась", "The check failed"),
+      });
     }
   }
 
@@ -592,10 +736,14 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
     setEnabledState(next);
     try {
       await setEnabled({ data: { salonId, enabled: next } });
-      toast.success(next ? "Ассистент отвечает в Instagram" : "В Instagram теперь отвечаете вы");
+      toast.success(
+        next
+          ? tr("Ассистент отвечает в Instagram", "The assistant now replies on Instagram")
+          : tr("В Instagram теперь отвечаете вы", "You now reply on Instagram yourself"),
+      );
     } catch (e: any) {
       setEnabledState(prev);
-      toast.error(humanError(e, "Не удалось переключить"));
+      toast.error(humanError(e, tr("Не удалось переключить", "Could not switch")));
     } finally {
       setTogglingEnabled(false);
     }
@@ -607,23 +755,34 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
         <div className="flex items-start gap-2 text-sm text-green-700 bg-green-50 rounded-md p-3">
           <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
           <div>
-            Связь с Instagram установлена
+            {tr("Связь с Instagram установлена", "Connected to Instagram")}
             {testState.username ? (
               <>
                 {" "}
-                — аккаунт <b>@{testState.username}</b>
+                — {tr("аккаунт", "account")} <b>@{testState.username}</b>
               </>
             ) : null}
             {testState.accountType ? ` (${testState.accountType})` : null}.
-            {testState.autofilledId && " Instagram account ID подставлен автоматически."}
+            {testState.autofilledId &&
+              tr(
+                " Instagram account ID подставлен автоматически.",
+                " The Instagram account ID was filled in automatically.",
+              )}
             {testState.idMismatch && testState.accountId && connectedVia !== "platform" && (
               <>
                 {" "}
-                Указанный вами ID отличается от {testState.accountId} — это нормально, у аккаунта
-                два разных ID, на работу не влияет.
+                {tr(
+                  `Указанный вами ID отличается от ${testState.accountId} — это нормально, у аккаунта два разных ID, на работу не влияет.`,
+                  `The ID you entered differs from ${testState.accountId} — that is fine, an account has two different IDs and it does not affect anything.`,
+                )}
               </>
             )}
-            {!enabled && " Осталось включить канал переключателем вверху."}
+            {!enabled &&
+              connectedVia !== "platform" &&
+              tr(
+                " Осталось включить канал переключателем вверху.",
+                " Now turn the channel on with the switch at the top.",
+              )}
           </div>
         </div>
       )}
@@ -646,59 +805,105 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
                 одинаково: разные слова для одного действия читаются как разные действия. */}
             <h2 className="font-semibold flex items-center gap-2">
               <Instagram className="h-4 w-4" />
-              Ассистент отвечает в Instagram
+              {tr("Ассистент отвечает в Instagram", "AI assistant replies on Instagram")}
             </h2>
             <p className="text-sm text-muted-foreground mt-0.5">
-              Тот же ассистент, что и в WhatsApp: консультирует, показывает свободные окна и
-              записывает прямо в переписке. Настройки (услуги, тон, база знаний) общие — настраивать
-              отдельно не нужно. Выключите, если в Instagram хотите отвечать сами.
+              {tr(
+                "Тот же ассистент, что и в WhatsApp: консультирует, показывает свободные окна и записывает прямо в переписке. Настройки (услуги, тон, база знаний) общие — настраивать отдельно не нужно. Выключите, если в Instagram хотите отвечать сами.",
+                "The same assistant as in WhatsApp: it answers questions, offers free time slots and books clients right in the chat. Its settings (services, tone, knowledge base) are shared. Switch it off if you prefer to reply on Instagram yourself.",
+              )}
             </p>
             <p className="text-xs text-muted-foreground mt-2">
-              Переписка Instagram через официальный API Meta — бесплатна. Платить нужно только за
-              ответы ассистента — так же, как в WhatsApp.
+              {tr(
+                "Переписка Instagram через официальный API Meta — бесплатна. Платить нужно только за ответы ассистента — так же, как в WhatsApp.",
+                "Instagram messaging runs on Meta's official API and is free. You only pay for the assistant's replies, the same as in WhatsApp.",
+              )}
             </p>
           </div>
           <Switch
             checked={enabled}
             onCheckedChange={onToggle}
             disabled={loading || togglingEnabled}
+            aria-label={tr("Ассистент отвечает в Instagram", "AI assistant replies on Instagram")}
           />
         </div>
         {!loading && !enabled && (
           <p className="text-xs text-amber-700">
-            Сейчас в Instagram отвечаете вы: ассистент сообщения из директа не читает. Включите
-            после того, как заполните данные ниже и проверка связи пройдёт успешно.
+            {tr(
+              "Сейчас в Instagram отвечаете вы: ассистент сообщения из директа не читает. Включите после того, как заполните данные ниже и проверка связи пройдёт успешно.",
+              "Right now you reply on Instagram yourself: the assistant does not read Direct messages. Turn it on once Instagram is connected below.",
+            )}
           </p>
         )}
       </Card>
 
       <Card className="p-4 sm:p-6 space-y-4">
         <div>
-          <h2 className="font-semibold">Шаг 1. Подготовьте аккаунт</h2>
+          <h2 className="font-semibold">
+            {tr("Шаг 1. Подготовьте аккаунт", "Step 1. Prepare the account")}
+          </h2>
           <p className="text-sm text-muted-foreground mt-1">
-            Instagram-аккаунт{salonName ? ` салона «${salonName}»` : ""} должен быть
-            профессиональным: в приложении Instagram — «Настройки» → «Тип аккаунта и инструменты» →
-            «Переключиться на профессиональный аккаунт» (Бизнес или Автор). В личном аккаунте API
-            переписки не работает.
+            {tr(
+              `Instagram-аккаунт${salonName ? ` салона «${salonName}»` : ""} должен быть профессиональным: в приложении Instagram — «Настройки» → «Тип аккаунта и инструменты» → «Переключиться на профессиональный аккаунт» (Бизнес или Автор). В личном аккаунте API переписки не работает.`,
+              `The Instagram account${salonName ? ` of “${salonName}”` : ""} must be a professional account: in the Instagram app go to Settings → Account type and tools → Switch to professional account (Business or Creator). Messaging does not work with personal accounts.`,
+            )}
           </p>
         </div>
       </Card>
 
       <Card className="p-4 sm:p-6 space-y-3">
-        <h2 className="font-semibold">Шаг 2. Подключите Instagram</h2>
+        <h2 className="font-semibold">
+          {tr("Шаг 2. Подключите Instagram", "Step 2. Connect Instagram")}
+        </h2>
         <p className="text-sm text-muted-foreground">
-          Нажмите кнопку, войдите в Instagram-аккаунт салона и разрешите доступ к сообщениям и
-          комментариям. Больше ничего настраивать не нужно — ни приложения Meta, ни токенов.
+          {tr(
+            "Нажмите кнопку, войдите в Instagram-аккаунт салона и разрешите доступ к сообщениям и комментариям. Больше ничего настраивать не нужно — ни приложения Meta, ни токенов.",
+            "Press the button, log in to the salon's Instagram account and allow access. Nothing else to set up — no Meta apps, no tokens.",
+          )}
         </p>
+        {/* Что именно Qabyl попросит у Instagram и зачем. Владельцу — чтобы не пугал экран
+            разрешений; проверяющему Meta — потому что App Review требует объяснять в интерфейсе,
+            для чего каждое разрешение. */}
+        <ul className="text-xs text-muted-foreground space-y-1 list-disc pl-4">
+          <li>
+            {tr(
+              "Профиль (имя аккаунта) — чтобы показать здесь, какой аккаунт подключён.",
+              "Profile (username) — to show here which account is connected.",
+            )}
+          </li>
+          <li>
+            {tr(
+              "Сообщения — чтобы сообщения клиентов из Direct приходили в «Переписки», а ваши ответы и ответы ассистента уходили клиенту в Instagram.",
+              "Messages — so client messages from Direct appear in Chats, and replies from you or the assistant are delivered to the client on Instagram.",
+            )}
+          </li>
+          <li>
+            {tr(
+              "Комментарии — чтобы на комментарий с кодовым словом ответить под постом и написать человеку в Direct.",
+              "Comments — to answer a comment containing your keyword under the post and message that person in Direct.",
+            )}
+          </li>
+        </ul>
         {connectedVia === "platform" && userId && (
           <div className="flex items-start gap-2 text-sm text-green-700 bg-green-50 rounded-md p-3">
             <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
             <div>
-              Instagram подключён. Доступ продлевается автоматически
+              {tr(
+                "Instagram подключён. Доступ продлевается автоматически",
+                "Instagram is connected. Access renews automatically",
+              )}
               {expiresAt
-                ? ` (текущий действует до ${new Date(expiresAt).toLocaleDateString("ru-RU")})`
+                ? tr(
+                    ` (текущий действует до ${new Date(expiresAt).toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" })})`,
+                    ` (current access valid until ${new Date(expiresAt).toLocaleDateString("en-US", { day: "numeric", month: "long", year: "numeric" })})`,
+                  )
                 : ""}
-              .{!enabled && " Осталось включить канал переключателем вверху."}
+              .
+              {!enabled &&
+                tr(
+                  " Осталось включить канал переключателем вверху.",
+                  " Now turn the channel on with the switch at the top.",
+                )}
             </div>
           </div>
         )}
@@ -706,10 +911,10 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
           <Button onClick={onConnect} disabled={connecting || loading}>
             <Instagram className="h-4 w-4 mr-2" />
             {connecting
-              ? "Открываем Instagram…"
+              ? tr("Открываем Instagram…", "Opening Instagram…")
               : connectedVia === "platform" && userId
-                ? "Переподключить Instagram"
-                : "Подключить Instagram"}
+                ? tr("Переподключить Instagram", "Reconnect Instagram")
+                : tr("Подключить Instagram", "Connect Instagram")}
           </Button>
           {connectedVia === "platform" && userId && (
             <Button
@@ -717,14 +922,18 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
               onClick={onTest}
               disabled={loading || testState.kind === "running"}
             >
-              {testState.kind === "running" ? "Проверяем..." : "Проверить связь"}
+              {testState.kind === "running"
+                ? tr("Проверяем...", "Checking...")
+                : tr("Проверить связь", "Check connection")}
             </Button>
           )}
         </div>
         {connectedVia === "platform" && testResult}
         <p className="text-xs text-muted-foreground">
-          Instagram попросит войти заново, даже если в браузере уже открыт аккаунт. Входите именно в
-          аккаунт салона, а не в личный.
+          {tr(
+            "Instagram попросит войти заново, даже если в браузере уже открыт аккаунт. Входите именно в аккаунт салона, а не в личный.",
+            "Instagram asks you to log in again even if an account is already open in this browser. Log in to the salon's account, not a personal one.",
+          )}
         </p>
       </Card>
 
@@ -734,16 +943,20 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
         open={connectedVia === "manual" || (!connectedVia && Boolean(appSecret))}
       >
         <summary className="cursor-pointer px-4 py-3 text-sm text-muted-foreground">
-          Другой способ: своё приложение Meta и токен вручную
+          {tr(
+            "Другой способ: своё приложение Meta и токен вручную",
+            "Advanced: your own Meta app and a manual token",
+          )}
         </summary>
         <div className="space-y-4 p-2 sm:p-4 pt-0">
           <Card className="p-4 sm:p-6 space-y-4">
             <div>
-              <h2 className="font-semibold">Получите доступ к API</h2>
+              <h2 className="font-semibold">{tr("Получите доступ к API", "Get API access")}</h2>
               <p className="text-sm text-muted-foreground mt-1">
-                Два способа. Первый не имеет ограничений по числу салонов и живёт постоянно — берите
-                его, если у владельца есть аккаунт Facebook. Второй быстрее и Facebook не требует,
-                но его выдаёт Qabyl вручную, и число таких подключений ограничено.
+                {tr(
+                  "Два способа. Первый не имеет ограничений по числу салонов и живёт постоянно — берите его, если у владельца есть аккаунт Facebook. Второй быстрее и Facebook не требует, но его выдаёт Qabyl вручную, и число таких подключений ограничено.",
+                  "Two options. The first has no limits and is permanent — use it if the owner has a Facebook account. The second is quicker and needs no Facebook, but Qabyl grants it manually and the number of such connections is limited.",
+                )}
               </p>
             </div>
 
@@ -751,9 +964,11 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
             и Standard Access покрывает переписку без App Review. Потолка нет: ограничение
             «до 50/500» относится к ролям в ЧУЖОМ приложении, а здесь приложение своё. */}
             <div className="rounded-md border p-4 space-y-2">
-              <div className="font-medium text-sm">Вариант А. Своё приложение салона</div>
+              <div className="font-medium text-sm">
+                {tr("Вариант А. Своё приложение салона", "Option A. The salon's own Meta app")}
+              </div>
               <p className="text-sm text-muted-foreground">
-                Откройте{" "}
+                {tr("Откройте", "Open")}{" "}
                 <a
                   className="underline inline-flex items-center gap-1"
                   href="https://developers.facebook.com/apps/create/"
@@ -763,65 +978,91 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
                   developers.facebook.com/apps/create
                   <ExternalLink className="h-3 w-3" />
                 </a>{" "}
-                → «Создать приложение» → продукт <b>Instagram</b> →{" "}
-                <b>«API setup with Instagram login»</b> (именно этот пункт, не «with Facebook
-                login»). Там подключите Instagram-аккаунт салона и сгенерируйте токен доступа с
-                правами <code className="text-xs">instagram_business_basic</code> и{" "}
+                {tr("→ «Создать приложение» → продукт", "→ Create app → product")} <b>Instagram</b>{" "}
+                → <b>API setup with Instagram login</b>{" "}
+                {tr(
+                  "(именно этот пункт, не «with Facebook login»). Там подключите Instagram-аккаунт салона и сгенерируйте токен доступа с правами",
+                  "(this one, not “with Facebook login”). Add the salon's Instagram account there and generate an access token with",
+                )}{" "}
+                <code className="text-xs">instagram_business_basic</code> {tr("и", "and")}{" "}
                 <code className="text-xs">instagram_business_manage_messages</code>.
               </p>
               <p className="text-xs text-muted-foreground">
-                Владельцу нужен аккаунт Facebook — только чтобы создать приложение. Ни страница
-                Facebook, ни привязка к ней не требуются. App Review при этом не нужен никогда:
-                аккаунт салона имеет роль в своём же приложении.
+                {tr(
+                  "Владельцу нужен аккаунт Facebook — только чтобы создать приложение. Ни страница Facebook, ни привязка к ней не требуются. App Review при этом не нужен никогда: аккаунт салона имеет роль в своём же приложении.",
+                  "The owner needs a Facebook account only to create the app. No Facebook Page is required.",
+                )}
               </p>
             </div>
 
             {/* Вариант Б. Аккаунт салона добавляется тестировщиком в приложение Qabyl. Салону не
             нужен ни Facebook, ни приложение — но это режим разработки, и роли конечны. */}
             <div className="rounded-md border p-4 space-y-2">
-              <div className="font-medium text-sm">Вариант Б. Тестировщик в приложении Qabyl</div>
+              <div className="font-medium text-sm">
+                {tr(
+                  "Вариант Б. Тестировщик в приложении Qabyl",
+                  "Option B. Tester in the Qabyl app",
+                )}
+              </div>
               <p className="text-sm text-muted-foreground">
-                Салону не нужен ни Facebook, ни своё приложение — только принять приглашение.
-                Напишите нам имя Instagram-аккаунта, мы добавим его в роли и пришлём токен для полей
-                ниже.
+                {tr(
+                  "Салону не нужен ни Facebook, ни своё приложение — только принять приглашение. Напишите нам имя Instagram-аккаунта, мы добавим его в роли и пришлём токен для полей ниже.",
+                  "No Facebook and no app of your own — only accept an invitation. Send us the Instagram username, we add it to the app roles and send you a token for the fields below.",
+                )}
               </p>
               <p className="text-sm text-muted-foreground">
-                Владелец принимает приглашение в приложении Instagram: «Настройки» → «Для
-                профессионалов» → «Приложения и сайты» → «Приглашения тестировщиков» → «Принять».
+                {tr(
+                  "Владелец принимает приглашение в приложении Instagram: «Настройки» → «Для профессионалов» → «Приложения и сайты» → «Приглашения тестировщиков» → «Принять».",
+                  "The owner accepts the invitation in the Instagram app: Settings → For professionals → Apps and websites → Tester invites → Accept.",
+                )}
               </p>
               <p className="text-xs text-amber-700">
-                Этот способ Meta предназначает для разработки и тестирования, и число ролей конечно.
-                Для постоянной работы салона лучше вариант А.
+                {tr(
+                  "Этот способ Meta предназначает для разработки и тестирования, и число ролей конечно. Для постоянной работы салона лучше вариант А.",
+                  "Meta intends this option for development and testing, and the number of roles is limited. Option A is better for everyday use.",
+                )}
               </p>
             </div>
           </Card>
 
           <Card className="p-4 sm:p-6 space-y-4">
             <div>
-              <h2 className="font-semibold">Шаг 3. Пропишите webhook в Meta</h2>
+              <h2 className="font-semibold">
+                {tr("Шаг 3. Пропишите webhook в Meta", "Step 3. Set up the webhook in Meta")}
+              </h2>
               <p className="text-sm text-muted-foreground mt-1">
-                В приложении Meta: Instagram → «Configure webhooks». Скопируйте туда эти два
-                значения и подпишитесь на поле <code className="text-xs">messages</code>.
+                {tr(
+                  "В приложении Meta: Instagram → «Configure webhooks». Скопируйте туда эти два значения и подпишитесь на поле",
+                  "In your Meta app: Instagram → Configure webhooks. Paste these two values there and subscribe to the field",
+                )}{" "}
+                <code className="text-xs">messages</code>.
               </p>
             </div>
             <CopyField
               label="Callback URL"
               value={webhookUrl}
-              hint="Вставьте в поле «Callback URL»."
+              hint={tr("Вставьте в поле «Callback URL».", "Paste into the Callback URL field.")}
             />
             <CopyField
               label="Verify Token"
               value={verifyToken}
-              hint="Вставьте в поле «Verify token». Это значение придумано нами — в Meta его нужно просто скопировать."
+              hint={tr(
+                "Вставьте в поле «Verify token». Это значение придумано нами — в Meta его нужно просто скопировать.",
+                "Paste into the Verify token field. Qabyl generated this value — just copy it into Meta.",
+              )}
             />
           </Card>
 
           <Card className="p-4 sm:p-6 space-y-4">
             <div>
-              <h2 className="font-semibold">Шаг 4. Введите данные приложения</h2>
+              <h2 className="font-semibold">
+                {tr("Шаг 4. Введите данные приложения", "Step 4. Enter the app credentials")}
+              </h2>
               <p className="text-sm text-muted-foreground mt-1">
-                Эти три значения берутся из того же приложения Meta. Они хранятся только на сервере
-                и никогда не показываются клиентам.
+                {tr(
+                  "Эти три значения берутся из того же приложения Meta. Они хранятся только на сервере и никогда не показываются клиентам.",
+                  "These three values come from the same Meta app. They are stored only on the server and never shown to clients.",
+                )}
               </p>
             </div>
 
@@ -834,10 +1075,10 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
                 disabled={loading}
               />
               <p className="text-xs text-muted-foreground mt-1">
-                Можно не заполнять: введите токен и нажмите «Сохранить и проверить» — ID подставится
-                сам. Вручную его видно в Meta → Instagram → API setup with Instagram login, под
-                названием аккаунта. У аккаунта бывает два разных ID (начинается на 178… и на другую
-                цифру) — подойдёт любой, на работу ассистента это не влияет.
+                {tr(
+                  "Можно не заполнять: введите токен и нажмите «Сохранить и проверить» — ID подставится сам. Вручную его видно в Meta → Instagram → API setup with Instagram login, под названием аккаунта. У аккаунта бывает два разных ID (начинается на 178… и на другую цифру) — подойдёт любой, на работу ассистента это не влияет.",
+                  "Optional: enter the token and press “Save and check” — the ID fills in by itself. It is also shown in Meta → Instagram → API setup with Instagram login, under the account name. An account can have two different IDs; either one works.",
+                )}
               </p>
             </div>
 
@@ -851,14 +1092,16 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
                 disabled={loading}
               />
               <p className="text-xs text-muted-foreground mt-1">
-                Meta → Instagram → <b>API setup with Instagram login</b> → блок «Generate access
-                tokens» → кнопка «Generate token» напротив вашего аккаунта. Действует 60 дней —
-                после этого сгенерируйте заново и вставьте сюда, иначе ассистент перестанет отвечать
-                в Instagram.
+                {tr(
+                  "Meta → Instagram → API setup with Instagram login → блок «Generate access tokens» → кнопка «Generate token» напротив вашего аккаунта. Действует 60 дней — после этого сгенерируйте заново и вставьте сюда, иначе ассистент перестанет отвечать в Instagram.",
+                  "Meta → Instagram → API setup with Instagram login → Generate access tokens → Generate token next to your account. It is valid for 60 days — then generate a new one and paste it here, otherwise the assistant stops replying on Instagram.",
+                )}
               </p>
               <p className="text-xs text-amber-700 mt-1">
-                Не подходит токен из «API setup with <b>Facebook</b> login» — это другой тип токена,
-                с ним переписка работать не будет.
+                {tr(
+                  "Не подходит токен из «API setup with Facebook login» — это другой тип токена, с ним переписка работать не будет.",
+                  "A token from “API setup with Facebook login” will not work — it is a different kind of token.",
+                )}
               </p>
             </div>
 
@@ -872,21 +1115,25 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
                 disabled={loading}
               />
               <p className="text-xs text-muted-foreground mt-1">
-                Meta → «Настройки приложения» → «Основное» → «Секрет приложения». Нужен, чтобы никто
-                посторонний не мог отправлять поддельные сообщения на ваш webhook.
+                {tr(
+                  "Meta → «Настройки приложения» → «Основное» → «Секрет приложения». Нужен, чтобы никто посторонний не мог отправлять поддельные сообщения на ваш webhook.",
+                  "Meta → App settings → Basic → App secret. It ensures nobody else can send fake messages to your webhook.",
+                )}
               </p>
             </div>
 
             <div className="flex gap-2 flex-wrap">
               <Button onClick={onSave} disabled={saving || loading}>
-                {saving ? "..." : "Сохранить и проверить"}
+                {saving ? "..." : tr("Сохранить и проверить", "Save and check")}
               </Button>
               <Button
                 variant="outline"
                 onClick={onTest}
                 disabled={loading || testState.kind === "running"}
               >
-                {testState.kind === "running" ? "Проверяем..." : "Проверить связь"}
+                {testState.kind === "running"
+                  ? tr("Проверяем...", "Checking...")
+                  : tr("Проверить связь", "Check connection")}
               </Button>
             </div>
 
@@ -897,7 +1144,7 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
 
       <Card className="p-4 sm:p-6 space-y-3">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="font-semibold">Диагностика</h2>
+          <h2 className="font-semibold">{tr("Диагностика", "Diagnostics")}</h2>
           <Button
             variant="outline"
             size="sm"
@@ -905,16 +1152,18 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
             disabled={diagBusy || loading}
           >
             <RefreshCw className={`h-3.5 w-3.5 mr-1 ${diagBusy ? "animate-spin" : ""}`} />
-            Обновить
+            {tr("Обновить", "Refresh")}
           </Button>
         </div>
         <p className="text-sm text-muted-foreground">
-          Если клиент написал, а ассистент не ответил — начните отсюда. Напишите в Direct салона,
-          подождите 10–15 секунд и нажмите «Обновить».
+          {tr(
+            "Если клиент написал, а ассистент не ответил — начните отсюда. Напишите в Direct салона, подождите 10–15 секунд и нажмите «Обновить».",
+            "If a client wrote and got no reply, start here. Send a Direct message to the salon, wait 10–15 seconds and press Refresh.",
+          )}
         </p>
         {diag ? (
           (() => {
-            const v = diagnose(diag, enabled);
+            const v = diagnose(diag, enabled, tr, lang);
             const cls =
               v.tone === "ok" ? "text-green-700 bg-green-50" : "text-amber-800 bg-amber-50";
             const Icon = v.tone === "ok" ? CheckCircle2 : AlertCircle;
@@ -928,20 +1177,20 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
                   </div>
                 </div>
                 <dl className="text-xs text-muted-foreground grid grid-cols-[auto,1fr] gap-x-3 gap-y-1">
-                  <dt>Диалогов в Instagram:</dt>
+                  <dt>{tr("Диалогов в Instagram:", "Instagram conversations:")}</dt>
                   <dd>{diag.conversationCount}</dd>
-                  <dt>Последнее сообщение от клиента:</dt>
+                  <dt>{tr("Последнее сообщение от клиента:", "Last message from a client:")}</dt>
                   <dd>
-                    {whenLabel(diag.lastInboundAt)}
+                    {whenLabel(diag.lastInboundAt, tr, lang)}
                     {diag.lastInboundText ? ` — «${diag.lastInboundText.slice(0, 60)}»` : ""}
                   </dd>
-                  <dt>Последний ответ ассистента:</dt>
-                  <dd>{whenLabel(diag.lastOutboundAt)}</dd>
+                  <dt>{tr("Последний ответ ассистента:", "Last reply sent:")}</dt>
+                  <dd>{whenLabel(diag.lastOutboundAt, tr, lang)}</dd>
                   {diag.lastWebhookIssueAt && (
                     <>
-                      <dt>Последняя ошибка:</dt>
+                      <dt>{tr("Последняя ошибка:", "Latest error:")}</dt>
                       <dd>
-                        {whenLabel(diag.lastWebhookIssueAt)} — {diag.lastWebhookIssue}
+                        {whenLabel(diag.lastWebhookIssueAt, tr, lang)} — {diag.lastWebhookIssue}
                       </dd>
                     </>
                   )}
@@ -950,27 +1199,40 @@ export function InstagramTab({ salonId, salonName }: { salonId: string; salonNam
             );
           })()
         ) : (
-          <p className="text-sm text-muted-foreground">Загрузка…</p>
+          <p className="text-sm text-muted-foreground">{tr("Загрузка…", "Loading…")}</p>
         )}
       </Card>
 
       <CommentTriggersCard salonId={salonId} />
 
       <Card className="p-4 sm:p-6 space-y-2">
-        <h2 className="font-semibold">Как это работает у клиента</h2>
+        <h2 className="font-semibold">
+          {tr("Как это работает у клиента", "How it works for your clients")}
+        </h2>
         <ul className="text-sm text-muted-foreground space-y-1.5 list-disc pl-4">
-          <li>Клиент пишет в Direct — ассистент отвечает сам, на языке клиента.</li>
           <li>
-            В Instagram нет номера телефона, поэтому перед оформлением записи ассистент один раз
-            попросит номер — он нужен мастеру для связи и напоминания.
+            {tr(
+              "Клиент пишет в Direct — ассистент отвечает сам, на языке клиента.",
+              "A client writes to your Direct — the assistant replies on its own, in the client's language.",
+            )}
           </li>
           <li>
-            Если вы отвечаете клиенту вручную из приложения Instagram, ассистент замолкает на 5
-            минут, чтобы не перебивать вас.
+            {tr(
+              "В Instagram нет номера телефона, поэтому перед оформлением записи ассистент один раз попросит номер — он нужен мастеру для связи и напоминания.",
+              "Instagram does not share phone numbers, so before booking the assistant asks for one once — the master needs it for reminders.",
+            )}
           </li>
           <li>
-            Когда ассистент не может помочь, он передаёт диалог вам и присылает уведомление — туда
-            же, куда приходят уведомления по WhatsApp.
+            {tr(
+              "Вы можете ответить сами — во вкладке «Переписки» или в приложении Instagram. Пока вы отвечаете, ассистент молчит 5 минут, чтобы не перебивать вас.",
+              "You can reply yourself — in the Chats tab or in the Instagram app. While you reply, the assistant stays silent for 5 minutes so it does not interrupt you.",
+            )}
+          </li>
+          <li>
+            {tr(
+              "Когда ассистент не может помочь, он передаёт диалог вам и присылает уведомление — туда же, куда приходят уведомления по WhatsApp.",
+              "When the assistant cannot help, it hands the conversation to you and sends a notification — the same way as for WhatsApp.",
+            )}
           </li>
         </ul>
       </Card>
