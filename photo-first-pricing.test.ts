@@ -207,3 +207,46 @@ describe("переписанный по guard'у ответ без отписо�
       expect(stripRetryAck(reply)).toBe(reply);
   });
 });
+
+describe("кыргызский: guard'ы понимают язык клиентки", () => {
+  // Тест 24.09, сценарий K3: фото + «Кератин канча?» — модель не вызвала расчёт и дважды назвала
+  // выдуманную вилку «4500–7000» (у салона такой нет). Русский guard её не узнал.
+  test("ловит вилку без расчёта и «мастер жеринде»", () => {
+    for (const reply of [
+      "Ошондуктан, кератин 4500 сомдон 7000 сомго чейин болот. Так баасын мастер жеринде карап айтып берет.",
+      "Кератин 2500дөн 7000 сомго чейин болот.",
+      "Так баасын мастер жеринде айтат.",
+    ])
+      expect(dodgesPhotoPrice(reply)).toBe(true);
+  });
+
+  test("не трогает точную цену и рабочие часы", () => {
+    for (const reply of [
+      "Кератин 6500 сом болот. Кайсы күнгө жазылгыңыз келет?",
+      "Биз 10дон 18ге чейин иштейбиз.",
+    ])
+      expect(dodgesPhotoPrice(reply)).toBe(false);
+  });
+
+  test("ловит анкету на кыргызском", () => {
+    for (const reply of [
+      "Чачыңыздын узундугу кандай?",
+      "Мурун чачыңызды агарткансызбы?",
+      "Тырмагыңызда азыр эмне бар?",
+    ])
+      expect(asksVisibleAttribute(reply)).toBe(true);
+    // Объяснить, от чего зависит цена, — можно.
+    expect(asksVisibleAttribute("Баасы чачтын узундугуна жараша болот.")).toBe(false);
+  });
+
+  test("зону узнаёт по кыргызским словам", () => {
+    const hairAndNails = [
+      { subject: "hair", line: photoRequestLine(hair) },
+      { subject: "nails", line: photoRequestLine(nails) },
+    ];
+    expect(photoServicesInTopic(hairAndNails, "тырмагыма дизайн канча турат?")).toEqual([
+      hairAndNails[1],
+    ]);
+    expect(photoServicesInTopic(hairAndNails, "чачыма кератин канча?")).toEqual([hairAndNails[0]]);
+  });
+});

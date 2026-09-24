@@ -2932,6 +2932,10 @@ export function asksVisibleAttribute(reply: string): boolean {
     /сложн[а-яё]*\s+(ли\s+)?дизайн/,
     /какой\s+(эффект|объ[её]м)\s+(ресниц|наращивания)/,
     /сколько\s+ногтей\s+с\s+дизайном/,
+    // Кыргызский: «чачыңыздын узундугу кандай?», «мурун агарткансызбы?», «тырмагыңызда эмне бар?»
+    /(узундуг|калыңдыг|жоондуг|тыгыздыг)[а-яёөүң]*\s+(кандай|канча)/,
+    /(боё|агарт)[а-яёөүң]*(сызбы|сизби|сузбу|сүзбү|дыңызбы|диңизби|дуңузбу|дүңүзбү)/,
+    /тырмаг[а-яёөүң]*\s+(азыр\s+)?эмне/,
   ].some((re) => re.test(text));
 }
 
@@ -2999,8 +3003,18 @@ export function dodgesPhotoPrice(reply: string): boolean {
     /на\s+месте/, // «точную цену мастер назовёт на месте»
     /пришлите[^.!?]{0,60}(фото|снимок|скрин|пример)/, // «пришлите фото желаемого дизайна»
     /(сүрөт|фото|тартып)[^.!?]{0,60}(жибер|жөнөт)/, // «фото жиберип коёсузбу», «тартып жөнөтө аласызбы»
+    // Кыргызская вилка: «4500 сомдон 7000 сомго чейин», «2500дөн 7000 сомго чейин» (тест 24.09).
+    /\d[\d\s]*(сом)?\s*-?(дөн|дон|ден|дан|төн|тон|тен|тан|нөн|нон|нен|нан)\s+\d[\d\s]*сом\s*-?(го|гө|ка|кө|ке|га|ге)?\s*чейин/,
+    /(мастер|устат)[^.!?]{0,60}жеринде/, // «так баасын мастер жеринде айтат» — «на месте»
   ].some((re) => re.test(text));
 }
+
+/**
+ * Напоминание рядом со снимком клиента — см. runWaAgentV4. Отдельная константа, чтобы вырезать
+ * его из сохраняемой истории: клиент его не писал.
+ */
+export const PHOTO_TURN_NOTE =
+  "СИСТЕМА (клиент этого не видит): к сообщению приложено фото. Если речь о цене услуги с пометкой «цена по фото», сначала вызови estimate_price_from_photo(service_id) — даже если варианты и цены уже назывались раньше — и отвечай по его результату. Цену по снимку сам не оценивай и вилку из прайса вместо расчёта не называй.";
 
 /**
  * Услуги салона с настроенной оценкой по фото: зона каждой и её фраза-просьба. Зона нужна, чтобы
@@ -3436,6 +3450,19 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     servicesRoster,
     salesBlock,
   );
+  // Фото пришло в этом ходе, и разговор — об услуге с ценой по фото. Правило «сначала
+  // estimate_price_from_photo» есть в системном промпте, но со снимком перед глазами модель чаще
+  // отвечала сама: вилкой из прайса (guard разворачивал — лишний круг Gemini в 15 ходах с фото из 23)
+  // или своей оценкой по картинке — «4500–7000 сом» на кыргызском (тест 24.09): такой вилки у
+  // салона нет, а guard кыргызский ответ не узнал. Напоминание рядом со снимком работает на
+  // любом языке; в историю и в сводку для админа оно не попадает.
+  if (input.lastMessages.some((m) => m.kind === "image")) {
+    const priced = photoServicesInTopic(
+      await loadPhotoPricedServices(db, input.salon.salonId),
+      lastText,
+    );
+    if (priced.length) clientParts.push({ text: PHOTO_TURN_NOTE });
+  }
   const contents: GeminiV2Content[] = [...v4History, { role: "user", parts: clientParts }];
 
   // Gemini prompt caching: the systemInstruction + V4_TOOL_DECLARATIONS (~5k tokens combined)
@@ -4198,7 +4225,9 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   const historyToSave = sanitizeGeminiHistory(
     contents.slice(-HISTORY_CAP).map((c) => ({
       ...c,
-      parts: c.parts.map((p: any) => (p.inlineData ? { text: "[фото]" } : p)),
+      parts: c.parts
+        .filter((p: any) => p?.text !== PHOTO_TURN_NOTE)
+        .map((p: any) => (p.inlineData ? { text: "[фото]" } : p)),
     })),
   );
 
@@ -4309,6 +4338,7 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
         const historyLines = contents
           .map((c: any) => {
             const txt = (c.parts ?? [])
+              .filter((p: any) => p?.text !== PHOTO_TURN_NOTE)
               .map((p: any) => (p.inlineData ? "[фото]" : (p.text ?? "")))
               .join(" ")
               .replace(/\s+/g, " ")
