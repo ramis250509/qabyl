@@ -6,6 +6,8 @@ import {
   photoBookingPrice,
   photoPresetsFor,
   photoEstimate,
+  forgetShot,
+  seenLabels,
   photoPriceTable,
   photoRequestLine,
   photoRuleRangeError,
@@ -284,6 +286,25 @@ describe("желаемый результат можно назвать слов
         { label: "Сложный дизайн", min: 1100, max: 1200 },
       ],
       unsure: ["Что сейчас на ногтях"],
+    });
+  });
+
+  test("одно фото на два снимка: признаки второго снимка забываются", () => {
+    const seen = { relevant: true, values: { nail_state: "gel", design: "plain" } };
+    expect(forgetShot(nails, seen, "reference")).toEqual({
+      relevant: true,
+      values: { nail_state: "gel" },
+      possible: {},
+      uncertain: ["design"],
+    });
+    expect(photoEstimate(nails, forgetShot(nails, seen, "reference"), manicure)).toMatchObject({
+      kind: "choice",
+    });
+  });
+
+  test("распознанное называется словами владельца", () => {
+    expect(seenLabels(nails, { nail_state: "gel", design: "invented" })).toEqual({
+      "Что сейчас на ногтях": "Старый гель-лак",
     });
   });
 

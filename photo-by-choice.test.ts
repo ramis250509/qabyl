@@ -80,10 +80,12 @@ function visionSees(
   values: Record<string, string>,
   uncertain: string[] = [],
   possible: Record<string, string[]> = {},
+  photoRole?: "current" | "reference" | "unclear",
 ) {
-  const calls = { count: 0 };
-  globalThis.fetch = (async () => {
+  const calls = { count: 0, body: "" };
+  globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
     calls.count++;
+    calls.body = String(init?.body ?? "");
     const text = JSON.stringify({
       relevant: true,
       values: Object.entries(values).map(([criterion_id, option_id]) => ({
@@ -92,6 +94,7 @@ function visionSees(
         possible: possible[criterion_id] ?? [option_id],
       })),
       uncertain,
+      ...(photoRole ? { photo_role: photoRole } : {}),
     });
     return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text }] } }] }), {
       status: 200,
@@ -127,6 +130,35 @@ afterEach(() => {
 
 describe("оценка по фото: пример желаемого результата можно заменить словами", () => {
   const db = makeDb(nails, { price: 800, price_max: 1200 });
+
+  test("одно фото своих ногтей при «хочу с дизайном» — дизайн с него не берётся", async () => {
+    // Тест 24.09: модель «увидела» однотон на фото текущих ногтей и назвала 900 как итог.
+    const calls = visionSees({ nail_state: "gel", design: "plain" }, [], {}, "current");
+    const result = await executeV4Tool(
+      "estimate_price_from_photo",
+      { service_id: SERVICE_ID },
+      inputWith([{ ...photo, text_body: "Хочу маникюр с дизайном, вот мои ногти" }]),
+      db,
+      newFlags(),
+    );
+    expect(result.estimate).toBe("choice");
+    expect(result.price_by_choice.map((o: any) => o.label)).toEqual(["Однотон", "Сложный дизайн"]);
+    // Слова клиентки дошли до распознавания — по ним оно и решило, что это «как сейчас».
+    expect(calls.body).toContain("вот мои ногти");
+  });
+
+  test("одно фото-пример «хочу такой» — покрытие с него не берётся", async () => {
+    visionSees({ nail_state: "bare", design: "complex" }, [], {}, "reference");
+    const result = await executeV4Tool(
+      "estimate_price_from_photo",
+      { service_id: SERVICE_ID },
+      inputWith([{ ...photo, text_body: "хочу такой" }]),
+      db,
+      newFlags(),
+    );
+    // Что сейчас на ногтях, не видно: вилка по всем покрытиям при сложном дизайне.
+    expect(result).toMatchObject({ estimate: "range", price_label: "1100–1200 сом" });
+  });
 
   test("примера нет — ассистент получает цены вариантов, а не очередную просьбу о фото", async () => {
     visionSees({ nail_state: "gel" }, ["design"]);
@@ -187,6 +219,28 @@ describe("ресницы по желаемому объёму", () => {
     expect(result).toMatchObject({ success: true, price_label: "1800 сом" });
     expect(flags.photoQuote).toMatchObject({ price: 1800 });
     expect(calls.count).toBe(0);
+  });
+
+  test("по примеру не понять, 1D или 2D, — вилка и варианты, чтобы уточнить словами", async () => {
+    // Тест 24.09 (макияж): клиентка сама написала «вечерний», а ассистент назвал вилку. Теперь
+    // инструмент отдаёт варианты, и названное словами превращается в точную цену.
+    visionSees({ lash_effect: "2d" }, [], { lash_effect: ["classic", "2d"] });
+    const result = await executeV4Tool(
+      "estimate_price_from_photo",
+      { service_id: SERVICE_ID },
+      inputWith([{ ...photo, media_path: "salon/lashes-example.jpg" }]),
+      makeDb(lashes, { price: 1500, price_max: 2500 }),
+      newFlags(),
+    );
+    expect(result).toMatchObject({
+      estimate: "range",
+      price_label: "1500–1800 сом",
+      choose: [
+        { choice: "lash_effect:classic", label: "Классика (1D)" },
+        { choice: "lash_effect:2d", label: "2D" },
+      ],
+    });
+    expect(result.ask).toContain("chosen");
   });
 
   test("прислала пример, объём не разобрать — варианты с ценами, а не «переснимите»", async () => {
@@ -270,16 +324,56 @@ describe("густоту не разобрать — вилка, а не гол�
     );
   });
 
-  test("не видно ничего, но фото про волосы — всё равно вилка, не отказ", async () => {
+  test("на фото не видно ничего нужного — просим фото волос, а не называем весь прайс", async () => {
+    // Тест 24.09: в ответ на «сколько кератин?» прислали лицо крупным планом — ассистент назвал
+    // «по фото от 2500 до 7000», то есть весь прайс под видом оценки.
     visionSees({}, ["length", "density"]);
     const result = await executeV4Tool(
       "estimate_price_from_photo",
       { service_id: SERVICE_ID },
-      inputWith([{ ...photo, media_path: "salon/dark.jpg" }]),
+      inputWith([{ ...photo, media_path: "salon/face.jpg" }]),
       makeDb(keratin, { price: 2500, price_max: 7000 }),
       newFlags(),
     );
+    expect(result.success).toBe(false);
+    expect(result.ask).toContain("фото волос");
+    expect(result.ask).toContain("цену не называй");
+  });
+
+  test("уже переснимала и снова ничего не видно — честная вилка, без петли", async () => {
+    visionSees({}, ["length", "density"]);
+    const result = await executeV4Tool(
+      "estimate_price_from_photo",
+      { service_id: SERVICE_ID },
+      inputWith([{ ...photo, media_path: "salon/dark-2.jpg" }]),
+      makeDb(keratin, { price: 2500, price_max: 7000 }),
+      {
+        ...newFlags(),
+        photoShots: [
+          { path: "salon/dark-1.jpg", at: Date.now() },
+          { path: "salon/dark-2.jpg", at: Date.now() },
+        ],
+      },
+    );
     expect(result).toMatchObject({ success: true, price_label: "2500–7000 сом" });
+    expect(result.ask).toContain("Переснять больше не предлагай");
+  });
+
+  test("после цены ассистента просят предложить запись, а описывать фото — словами салона", async () => {
+    visionSees({ length: "very_long", density: "thick" });
+    const result = await executeV4Tool(
+      "estimate_price_from_photo",
+      { service_id: SERVICE_ID },
+      inputWith([{ ...photo, media_path: "salon/hair-ok.jpg" }]),
+      makeDb(keratin, { price: 2500, price_max: 7000 }),
+      newFlags(),
+    );
+    expect(result).toMatchObject({
+      estimate: "exact",
+      price_label: "6500 сом",
+      seen: { "Длина волос": "Ниже лопаток", Густота: "Густая" },
+    });
+    expect(result.note).toContain("предложи записаться");
   });
 
   test("клиентка уже переснимала — третий раз фото не просим", async () => {

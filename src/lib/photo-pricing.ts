@@ -437,6 +437,48 @@ export function applyClientChoice(
 }
 
 /**
+ * Забыть всё, что распознано для одного из снимков. Нужна, когда фото одно, а услуге нужны два:
+ * признаки второго снимка с этого фото брать нельзя, даже если распознавание их «увидело».
+ */
+export function forgetShot(
+  raw: unknown,
+  classification: PhotoClassification,
+  shot: PhotoShot,
+): PhotoClassification {
+  const config = validatePhotoConfig(raw);
+  if (!config) return classification;
+  const ids = config.criteria.filter((c) => criterionShot(c) === shot).map((c) => c.id);
+  if (!ids.length) return classification;
+  const values = { ...classification.values };
+  const possible = { ...classification.possible };
+  for (const id of ids) {
+    delete values[id];
+    delete possible[id];
+  }
+  return {
+    ...classification,
+    values,
+    possible,
+    uncertain: [...new Set([...(classification.uncertain ?? []), ...ids])],
+  };
+}
+
+/** Распознанное — словами владельца: { "Длина волос": "До лопаток" }. */
+export function seenLabels(
+  raw: unknown,
+  selected: Record<string, string | null>,
+): Record<string, string> {
+  const config = validatePhotoConfig(raw);
+  if (!config) return {};
+  const out: Record<string, string> = {};
+  for (const c of config.criteria) {
+    const option = c.options.find((o) => o.id === selected[c.id]);
+    if (option) out[c.label] = option.label;
+  }
+  return out;
+}
+
+/**
  * Итог оценки по фото:
  * - exact — всё видно, точная цена;
  * - range — что-то видно не до конца: ориентировочная вилка от самого дешёвого до самого дорогого

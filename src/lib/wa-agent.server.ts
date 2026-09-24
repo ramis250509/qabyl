@@ -2018,7 +2018,14 @@ export async function classifyPhotoForPrice(opts: {
   images?: { base64: string; mime: string }[];
   serviceName: string;
   config: PhotoPricingConfig;
-}): Promise<PhotoClassification | { error: string }> {
+  /**
+   * Что клиент написал рядом с фото. Одно фото там, где услуге нужны два («как сейчас» и «что
+   * хочу»), без слов не разобрать: «вот мои ногти» — это текущее состояние, «хочу такой» —
+   * пример. Тест Avrora 24.09: на «хочу маникюр с дизайном» + фото своих однотонных ногтей модель
+   * взяла «однотон» и за желаемый дизайн и назвала цену однотона.
+   */
+  clientText?: string;
+}): Promise<(PhotoClassification & { photoRole?: string }) | { error: string }> {
   const images = opts.images?.length
     ? opts.images
     : opts.imageBase64
@@ -2037,6 +2044,9 @@ export async function classifyPhotoForPrice(opts: {
   // клиента не просили, значит всё присланное и есть пример. Без подсказки модель на снимке
   // красивых ресниц гадала, свои ли это, и отправляла признак в uncertain.
   const referenceOnly = opts.config.criteria.every((c) => c.shot === "reference");
+  const needsBoth =
+    opts.config.criteria.some((c) => c.shot === "reference") &&
+    opts.config.criteria.some((c) => c.shot !== "reference");
   const result = await callGemini({
     model: MODEL_VISION,
     apiKey: opts.apiKey,
@@ -2044,12 +2054,12 @@ export async function classifyPhotoForPrice(opts: {
     // угадывай», и любой такой признак уходил в uncertain, а клиентка по кругу слышала
     // «сфотографируйте получше». Теперь модель даёт лучший вариант и всё, что фото не исключает;
     // цену из этого честной вилкой считает код (photoEstimate), а не модель.
-    systemInstruction: `Оцени фото для услуги «${opts.serviceName}». Признаки и их варианты: ${JSON.stringify(criteria)}. У каждого признака поле shot говорит, на каком из присланных фото его искать: «текущее состояние клиента» или «желаемый результат (референс)».${referenceOnly ? " Клиента просили прислать только пример желаемого результата — считай референсом каждое присланное фото." : ""}
+    systemInstruction: `Оцени фото для услуги «${opts.serviceName}». Признаки и их варианты: ${JSON.stringify(criteria)}. У каждого признака поле shot говорит, на каком из присланных фото его искать: «текущее состояние клиента» или «желаемый результат (референс)».${referenceOnly ? " Клиента просили прислать только пример желаемого результата — считай референсом каждое присланное фото." : ""}${opts.clientText?.trim() ? `\nСлова клиента рядом с фото: «${opts.clientText.trim().slice(0, 300)}».` : ""}${needsBoth && images.length === 1 ? `\nФото одно, а услуге нужны два снимка. По фото и словам клиента реши, что на нём, и укажи photo_role: current — это то, что у клиента сейчас («вот мои ногти», клиент хочет другое, чем на фото); reference — пример того, что он хочет («хочу такой», «сделайте так»); unclear — не понять. Признаки другого снимка на это фото НЕ переноси — добавь их в uncertain.` : ""}
 Клиенты присылают обычные фото: темно, под углом, кадр обрезан, объект виден частично, качество низкое. Всё равно оцени по тому, что видно:
 - Для КАЖДОГО признака, который виден хотя бы частично, дай option_id — самый вероятный вариант — и possible — все варианты, которые это фото НЕ исключает (option_id тоже в нём). Уверен — в possible один вариант.
-- Не выдумывай невидимое. Волосы уходят за край кадра — possible включает все длины длиннее видимой части. Темно или размыто и густоту не понять — possible включает все густоты, которые возможны.
+- Не выдумывай невидимое. Концы волос за краем кадра — точной длины ты не знаешь: possible ОБЯЗАТЕЛЬНО включает видимую длину и все длиннее. Темно или размыто и густоту не понять — possible включает все густоты, которые возможны.
 - Признак, о котором фото не говорит совсем (нужного снимка нет — например, нет примера желаемого результата; признак целиком вне кадра), не включай в values, а добавь его id в uncertain. Не переноси признак с одного фото на другое.
-- relevant=false — только если ни одно фото не относится к услуге (для волос прислали лицо, ногти, чек).
+- relevant=false — если на фото нет того, что нужно оценить для этой услуги: для волос прислали портрет лица крупным планом, ногти, чек, скриншот переписки.
 - Не определяй и не называй цену.`,
     parts: [
       ...images.map((img) => ({ inline_data: { mime_type: img.mime, data: img.base64 } })),
@@ -2078,6 +2088,7 @@ export async function classifyPhotoForPrice(opts: {
           },
         },
         uncertain: { type: "array", items: { type: "string" } },
+        photo_role: { type: "string", enum: ["current", "reference", "unclear"] },
       },
       required: ["relevant", "values", "uncertain"],
     },
@@ -2108,6 +2119,7 @@ export async function classifyPhotoForPrice(opts: {
       values,
       possible,
       uncertain: value.uncertain.filter((x: unknown) => typeof x === "string"),
+      ...(typeof value.photo_role === "string" ? { photoRole: value.photo_role } : {}),
     };
   } catch {
     return { error: "invalid vision JSON" };
