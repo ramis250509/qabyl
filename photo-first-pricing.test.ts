@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   asksVisibleAttribute,
+  buildSystemPromptV4,
   dodgesPhotoPrice,
   photoAskFallback,
   photoServicesInTopic,
@@ -255,5 +256,37 @@ describe("кыргызский: guard'ы понимают язык клиент�
       hairAndNails[1],
     ]);
     expect(photoServicesInTopic(hairAndNails, "чачыма кератин канча?")).toEqual([hairAndNails[0]]);
+  });
+});
+
+describe("свободный текст владельца о ценах не перебивает оценку по фото", () => {
+  // Avrora 25.09: в правилах цен «оценивай по фото как мастер, называй узкий диапазон» — и под
+  // «абсолютным приоритетом» модель оценивала снимок сама вместо estimate_price_from_photo.
+  const input = (pricing_rules: string) =>
+    ({
+      salon: { salonId: "s1", salonName: "Тест", timezone: "Asia/Bishkek" },
+      config: { pricing_rules, languages: ["ru"], manage_cutoff_hours: 0, industry: "beauty" },
+      client: { phone: "996700000001", name: null },
+      history: [],
+      lastMessages: [],
+      branches: [],
+      selectedBranchId: null,
+      state: "idle",
+      stateData: {},
+      salonInfo: { working_hours: null, address: null },
+    }) as any;
+  const OWN = "Оценивай по фото как мастер, называй узкий диапазон.";
+
+  test("есть услуги «цена по фото» — сразу после правил о ценах идёт уточнение", () => {
+    const roster = "«Кератин» — 2500–7000 сом · цена по фото (id: k1)";
+    const prompt = buildSystemPromptV4(input(OWN), [], "", "ru", roster);
+    const clarification = prompt.indexOf("Такую цену считает только estimate_price_from_photo");
+    expect(clarification).toBeGreaterThan(prompt.indexOf(OWN));
+  });
+
+  test("по фото ничего не настроено — текст владельца остаётся как есть", () => {
+    const prompt = buildSystemPromptV4(input(OWN), [], "", "ru", "«Стрижка» — 500 сом (id: s1)");
+    expect(prompt).toContain(OWN);
+    expect(prompt).not.toContain("Такую цену считает только");
   });
 });

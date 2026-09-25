@@ -361,3 +361,34 @@ test("на фото ничего не видно, а прайс не назва�
   expect(note).not.toContain("без общей вилки прайса");
   expect(res.reply).toContain("2500–7000 сом");
 });
+
+test("цена без расчёта в непривычной форме — всё равно второй круг с расчётом", async () => {
+  // Живой прогон 25.09: «по фото будет стоить 800 сомов» — цену придумала модель, а регулярки
+  // «вилки из прайса» её не узнали; клиентка получила бы неверную цену.
+  modelReplies = [
+    [{ text: "Маникюр с дизайном по фото будет стоить 800 сомов." }],
+    [{ functionCall: { name: "estimate_price_from_photo", args: { service_id: MANICURE_ID } } }],
+    [{ text: "Однотон — 900 сом, сложный дизайн — 1100 сом. Какой выберете?" }],
+  ];
+  const res = await runWaAgentV4(photoTurn("Хочу маникюр с дизайном, сколько будет?"));
+  expect(res.debug.errors).toContain("photo_price_without_estimate");
+  expect(res.reply).toContain("1100 сом");
+});
+
+test("спросили цену, а в ответе ни цены, ни расчёта — второй круг (K1, 25.09)", async () => {
+  modelReplies = [
+    [{ text: "Салам! Сүрөтүңүздү карап, болжолдуу баасын айтып бере алам." }],
+    [{ functionCall: { name: "estimate_price_from_photo", args: { service_id: SERVICE_ID } } }],
+    [{ text: "Кератин болжол менен 6000–6500 сом болот." }],
+  ];
+  const res = await runWaAgentV4(photoTurn("Кератин канча турат?"));
+  expect(res.debug.errors).toContain("photo_price_without_estimate");
+  expect(res.reply).toContain("6000–6500 сом");
+});
+
+test("фото со «спасибо» — не повод считать цену", async () => {
+  modelReplies = [[{ text: "Пожалуйста! Ждём вас в салоне 🙂" }]];
+  const res = await runWaAgentV4(photoTurn("Спасибо большое!"));
+  expect(res.debug.errors).not.toContain("photo_price_without_estimate");
+  expect(modelRequests).toHaveLength(1);
+});

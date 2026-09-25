@@ -512,7 +512,18 @@ ${servicesRoster}
       const rules: string[] = [];
       if (config.ai_rules?.trim()) rules.push(config.ai_rules.trim());
       if (config.tone_instructions?.trim()) rules.push(config.tone_instructions.trim());
-      if (config.pricing_rules?.trim()) rules.push(config.pricing_rules.trim());
+      if (config.pricing_rules?.trim()) {
+        rules.push(config.pricing_rules.trim());
+        // Свободный текст о ценах владелец обычно писал ДО того, как настроил оценку по фото. У
+        // Avrora там «оценивай по фото как мастер, называй узкий диапазон» — и под «абсолютным
+        // приоритетом» модель слушалась его, а не инструмента: оценивала снимок сама или называла
+        // прайс, и guard разворачивал её на второй круг (живой тест 25.09: 10 ходов с фото из 23).
+        // Настройки «цена по фото» — тоже воля владельца, только точная.
+        if (servicesRoster.includes("· цена по фото"))
+          rules.push(
+            "Для услуг с пометкой «цена по фото» владелец настроил точные правила оценки по фото — это и есть его воля о цене этих услуг. Такую цену считает только estimate_price_from_photo: сам по снимку не оценивай и прайс вместо расчёта не называй. Правила о ценах выше применяй к тому, как подать посчитанную цену, и к остальным услугам.",
+          );
+      }
       const facts: string[] = [];
       if (knowledgeBook.trim()) facts.push(knowledgeBook.trim());
       if (config.knowledge_base?.trim()) facts.push(config.knowledge_base.trim());
@@ -3041,7 +3052,7 @@ export function dodgesPhotoPrice(reply: string): boolean {
  * его из сохраняемой истории: клиент его не писал.
  */
 export const PHOTO_TURN_NOTE =
-  "СИСТЕМА (клиент этого не видит): к сообщению приложено фото. Если речь о цене услуги с пометкой «цена по фото», сначала вызови estimate_price_from_photo(service_id) — даже если варианты и цены уже назывались раньше — и отвечай по его результату. Цену по снимку сам не оценивай и вилку из прайса вместо расчёта не называй.";
+  "СИСТЕМА (клиент этого не видит): к сообщению приложено фото. Если речь о цене услуги с пометкой «цена по фото», сначала вызови estimate_price_from_photo(service_id) и отвечай по его результату — даже если варианты и цены уже назывались раньше и даже если тебе кажется, что на фото не то или его плохо видно: что со снимком не так, инструмент скажет сам. До расчёта не оценивай цену по снимку, не называй прайс и не проси другое фото.";
 
 // «6 500» и «6 500» (неразрывный пробел) — одно число.
 const joinDigitGroups = (s: string) => s.replace(/(\d)[\s  ](?=\d{3}(?!\d))/g, "$1");
@@ -3299,6 +3310,20 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   const parts: any[][] = await Promise.all(
     input.lastMessages.map(async (m): Promise<any[]> => {
       if (m.kind === "image" && m.media_signed_url) {
+        // Симулятор кабинета присылает снимок data-ссылкой. Разбираем её сами, как это делает
+        // оценка по фото: fetch рантайма не обязан уметь data: (Workers — не Bun), а владелец в
+        // симуляторе должен видеть того же ассистента, что и клиентка в мессенджере.
+        if (String(m.media_signed_url).startsWith("data:")) {
+          const d = await downloadImageAsBase64(String(m.media_signed_url));
+          if ("error" in d) {
+            debug.errors.push(`image_fetch: ${d.error}`);
+            return m.text_body ? [{ text: m.text_body }] : [];
+          }
+          return [
+            ...(m.text_body ? [{ text: m.text_body }] : []),
+            { inlineData: { mimeType: d.mime, data: d.base64 } },
+          ];
+        }
         try {
           const r = await fetch(m.media_signed_url, { signal: AbortSignal.timeout(10_000) });
           if (r.ok) {
@@ -4161,10 +4186,19 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   // Только когда фото пришло В ЭТОМ ходе, инструмент не вызывался, ответ обходит цену и разговор
   // про услугу с настроенной оценкой. Остальные фото — чек об оплате, «подойдёт ли мне такая
   // стрижка?» — не трогаем.
+  //
+  // «Обходит цену» — не только знакомые фразы. Живой прогон 25.09: «Маникюр с дизайном по фото
+  // будет стоить 800 сомов» (цену придумала модель) и «посмотрю фото и скажу примерную цену» (цены
+  // нет вовсе) прошли мимо регулярок. Поэтому ещё: ответ называет цену без расчёта или клиентка
+  // спросила цену, а расчёта не было.
+  const askedPrice =
+    /сколько|цен[аеуы]|сто(ит|им)|почём|почем|прайс|канча|баас|how much|price|cost/i.test(
+      latestClientText,
+    );
   if (
     input.lastMessages.some((m) => m.kind === "image") &&
     !photoToolRanThisTurn &&
-    dodgesPhotoPrice(reply)
+    (dodgesPhotoPrice(reply) || pricesInReply(reply).length > 0 || askedPrice)
   ) {
     const pricedInTopic = photoServicesInTopic(
       await loadPhotoPricedServices(db, input.salon.salonId),

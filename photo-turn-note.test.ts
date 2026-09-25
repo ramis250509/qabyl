@@ -76,13 +76,8 @@ function useDb() {
 let requests: any[] = [];
 globalThis.fetch = (async (url: any, init?: RequestInit) => {
   const u = String(url);
-  if (u.startsWith("data:")) {
-    const [, base64] = u.split(",");
-    return new Response(Buffer.from(base64, "base64"), {
-      status: 200,
-      headers: { "content-type": "image/jpeg" },
-    });
-  }
+  // Как в Workers: fetch не обязан открывать data:-ссылки из симулятора.
+  if (u.startsWith("data:")) throw new TypeError("Fetch API cannot load: data:");
   if (u.includes("/cachedContents")) return new Response('{"error":"skip"}', { status: 400 });
   if (u.includes("generativelanguage.googleapis.com")) {
     requests.push(JSON.parse(String(init?.body ?? "{}")));
@@ -149,4 +144,11 @@ test("без фото напоминания нет", async () => {
 test("фото про другую зону — напоминания нет: по фото у салона считаются только волосы", async () => {
   await runWaAgentV4(turn({ kind: "image", text: "Сколько стоит маникюр вот такой?" }));
   expect(lastUserTexts(requests[0])).not.toContain(PHOTO_TURN_NOTE);
+});
+
+test("снимок из симулятора (data-ссылка) доходит до модели, даже если fetch её не открывает", async () => {
+  const res = await runWaAgentV4(turn({ kind: "image", text: "Кератин канча?" }));
+  const lastUser = (requests[0].contents ?? []).filter((c: any) => c.role === "user").at(-1);
+  expect(lastUser.parts.some((p: any) => p.inlineData?.data === "AA==")).toBe(true);
+  expect(res.debug.errors.join(" ")).not.toContain("image_fetch");
 });
