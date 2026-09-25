@@ -387,8 +387,21 @@ test("спросили цену, а в ответе ни цены, ни расч
 });
 
 test("фото со «спасибо» — не повод считать цену", async () => {
-  modelReplies = [[{ text: "Пожалуйста! Ждём вас в салоне 🙂" }]];
+  modelReplies = [[{ text: "Пожалуйста! Ждём вас в салоне 🙂 Записать вас и на следующий раз?" }]];
   const res = await runWaAgentV4(photoTurn("Спасибо большое!"));
   expect(res.debug.errors).not.toContain("photo_price_without_estimate");
   expect(modelRequests).toHaveLength(1);
+});
+
+test("вместо цены по фото — вопрос о желаемом результате: сначала расчёт (P1, 25.09)", async () => {
+  // «Какую именно причёску вы бы хотели? Может быть, у вас есть пример?» — ни цены, ни «пришлите»,
+  // клиентка цену не спрашивала, и страховка молчала. ТЗ владельца: сначала цена по фото.
+  modelReplies = [
+    [{ text: "Вижу ваши ноготки. Какой дизайн вы бы хотели? Может быть, у вас есть пример?" }],
+    [{ functionCall: { name: "estimate_price_from_photo", args: { service_id: MANICURE_ID } } }],
+    [{ text: "Однотон — 900 сом, сложный дизайн — 1100 сом. Какой выберете или пришлёте пример?" }],
+  ];
+  const res = await runWaAgentV4(photoTurn("Хочу маникюр с дизайном, вот мои ногти"));
+  expect(res.debug.errors).toContain("photo_price_without_estimate");
+  expect(res.reply).toContain("1100 сом");
 });
