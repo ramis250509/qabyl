@@ -1,1 +1,95 @@
-{"nodes": [{"id": "c_users_akbarov_ramis_onedrive_desktop_qabyl_qa_assistant_sim_readme_md", "label": "README.md", "file_type": "document", "source_file": "qa/assistant-sim/README.md", "source_location": "L1"}, {"id": "assistant_sim_readme_ai_assistant_quality_test", "label": "AI Assistant Quality Test", "file_type": "document", "source_file": "qa/assistant-sim/README.md", "source_location": "L1"}, {"id": "assistant_sim_readme_\u0434\u0432\u0435_\u0447\u0430\u0441\u0442\u0438", "label": "\u0414\u0432\u0435 \u0447\u0430\u0441\u0442\u0438", "file_type": "document", "source_file": "qa/assistant-sim/README.md", "source_location": "L6"}, {"id": "assistant_sim_readme_\u043a\u0430\u043a_\u0443\u0441\u0442\u0440\u043e\u0435\u043d\u043e", "label": "\u041a\u0430\u043a \u0443\u0441\u0442\u0440\u043e\u0435\u043d\u043e", "file_type": "document", "source_file": "qa/assistant-sim/README.md", "source_location": "L13"}, {"id": "assistant_sim_readme_\u043a\u043e\u043c\u0430\u043d\u0434\u044b", "label": "\u041a\u043e\u043c\u0430\u043d\u0434\u044b", "file_type": "document", "source_file": "qa/assistant-sim/README.md", "source_location": "L45"}, {"id": "assistant_sim_readme_\u0436\u0430\u043b\u043e\u0431\u0430_\u0441\u0430\u043b\u043e\u043d\u0430_\u0440\u0435\u0433\u0440\u0435\u0441\u0441\u0438\u043e\u043d\u043d\u044b\u0439_\u0442\u0435\u0441\u0442", "label": "\u0416\u0430\u043b\u043e\u0431\u0430 \u0441\u0430\u043b\u043e\u043d\u0430 \u2192 \u0440\u0435\u0433\u0440\u0435\u0441\u0441\u0438\u043e\u043d\u043d\u044b\u0439 \u0442\u0435\u0441\u0442", "file_type": "document", "source_file": "qa/assistant-sim/README.md", "source_location": "L63"}], "edges": [{"source": "c_users_akbarov_ramis_onedrive_desktop_qabyl_qa_assistant_sim_readme_md", "target": "assistant_sim_readme_ai_assistant_quality_test", "relation": "contains", "confidence": "EXTRACTED", "source_file": "qa/assistant-sim/README.md", "source_location": "L1", "weight": 1.0}, {"source": "assistant_sim_readme_ai_assistant_quality_test", "target": "assistant_sim_readme_\u0434\u0432\u0435_\u0447\u0430\u0441\u0442\u0438", "relation": "contains", "confidence": "EXTRACTED", "source_file": "qa/assistant-sim/README.md", "source_location": "L6", "weight": 1.0}, {"source": "assistant_sim_readme_ai_assistant_quality_test", "target": "assistant_sim_readme_\u043a\u0430\u043a_\u0443\u0441\u0442\u0440\u043e\u0435\u043d\u043e", "relation": "contains", "confidence": "EXTRACTED", "source_file": "qa/assistant-sim/README.md", "source_location": "L13", "weight": 1.0}, {"source": "assistant_sim_readme_ai_assistant_quality_test", "target": "assistant_sim_readme_\u043a\u043e\u043c\u0430\u043d\u0434\u044b", "relation": "contains", "confidence": "EXTRACTED", "source_file": "qa/assistant-sim/README.md", "source_location": "L45", "weight": 1.0}, {"source": "assistant_sim_readme_ai_assistant_quality_test", "target": "assistant_sim_readme_\u0436\u0430\u043b\u043e\u0431\u0430_\u0441\u0430\u043b\u043e\u043d\u0430_\u0440\u0435\u0433\u0440\u0435\u0441\u0441\u0438\u043e\u043d\u043d\u044b\u0439_\u0442\u0435\u0441\u0442", "relation": "contains", "confidence": "EXTRACTED", "source_file": "qa/assistant-sim/README.md", "source_location": "L63", "weight": 1.0}], "input_tokens": 0, "output_tokens": 0}
+{
+  "nodes": [
+    {
+      "id": "c_users_akbarov_ramis_onedrive_desktop_qabyl_qa_assistant_sim_readme_md",
+      "label": "README.md",
+      "file_type": "document",
+      "source_file": "qa/assistant-sim/README.md",
+      "source_location": "L1"
+    },
+    {
+      "id": "assistant_sim_readme_ai_assistant_quality_test",
+      "label": "AI Assistant Quality Test",
+      "file_type": "document",
+      "source_file": "qa/assistant-sim/README.md",
+      "source_location": "L1"
+    },
+    {
+      "id": "assistant_sim_readme_\u0434\u0432\u0435_\u0447\u0430\u0441\u0442\u0438",
+      "label": "\u0414\u0432\u0435 \u0447\u0430\u0441\u0442\u0438",
+      "file_type": "document",
+      "source_file": "qa/assistant-sim/README.md",
+      "source_location": "L6"
+    },
+    {
+      "id": "assistant_sim_readme_\u043a\u0430\u043a_\u0443\u0441\u0442\u0440\u043e\u0435\u043d\u043e",
+      "label": "\u041a\u0430\u043a \u0443\u0441\u0442\u0440\u043e\u0435\u043d\u043e",
+      "file_type": "document",
+      "source_file": "qa/assistant-sim/README.md",
+      "source_location": "L13"
+    },
+    {
+      "id": "assistant_sim_readme_\u043a\u043e\u043c\u0430\u043d\u0434\u044b",
+      "label": "\u041a\u043e\u043c\u0430\u043d\u0434\u044b",
+      "file_type": "document",
+      "source_file": "qa/assistant-sim/README.md",
+      "source_location": "L45"
+    },
+    {
+      "id": "assistant_sim_readme_\u0436\u0430\u043b\u043e\u0431\u0430_\u0441\u0430\u043b\u043e\u043d\u0430_\u0440\u0435\u0433\u0440\u0435\u0441\u0441\u0438\u043e\u043d\u043d\u044b\u0439_\u0442\u0435\u0441\u0442",
+      "label": "\u0416\u0430\u043b\u043e\u0431\u0430 \u0441\u0430\u043b\u043e\u043d\u0430 \u2192 \u0440\u0435\u0433\u0440\u0435\u0441\u0441\u0438\u043e\u043d\u043d\u044b\u0439 \u0442\u0435\u0441\u0442",
+      "file_type": "document",
+      "source_file": "qa/assistant-sim/README.md",
+      "source_location": "L63"
+    }
+  ],
+  "edges": [
+    {
+      "source": "c_users_akbarov_ramis_onedrive_desktop_qabyl_qa_assistant_sim_readme_md",
+      "target": "assistant_sim_readme_ai_assistant_quality_test",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "qa/assistant-sim/README.md",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "assistant_sim_readme_ai_assistant_quality_test",
+      "target": "assistant_sim_readme_\u0434\u0432\u0435_\u0447\u0430\u0441\u0442\u0438",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "qa/assistant-sim/README.md",
+      "source_location": "L6",
+      "weight": 1.0
+    },
+    {
+      "source": "assistant_sim_readme_ai_assistant_quality_test",
+      "target": "assistant_sim_readme_\u043a\u0430\u043a_\u0443\u0441\u0442\u0440\u043e\u0435\u043d\u043e",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "qa/assistant-sim/README.md",
+      "source_location": "L13",
+      "weight": 1.0
+    },
+    {
+      "source": "assistant_sim_readme_ai_assistant_quality_test",
+      "target": "assistant_sim_readme_\u043a\u043e\u043c\u0430\u043d\u0434\u044b",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "qa/assistant-sim/README.md",
+      "source_location": "L45",
+      "weight": 1.0
+    },
+    {
+      "source": "assistant_sim_readme_ai_assistant_quality_test",
+      "target": "assistant_sim_readme_\u0436\u0430\u043b\u043e\u0431\u0430_\u0441\u0430\u043b\u043e\u043d\u0430_\u0440\u0435\u0433\u0440\u0435\u0441\u0441\u0438\u043e\u043d\u043d\u044b\u0439_\u0442\u0435\u0441\u0442",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "qa/assistant-sim/README.md",
+      "source_location": "L63",
+      "weight": 1.0
+    }
+  ],
+  "input_tokens": 0,
+  "output_tokens": 0
+}

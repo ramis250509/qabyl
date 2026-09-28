@@ -221,6 +221,19 @@ export const inviteEmployee = createServerFn({ method: "POST" })
     const mod = await import("@/integrations/supabase/client.server");
     const supabaseAdmin = mod.supabaseAdmin as any;
 
+    // branchId приходит из браузера. Проверяем tenant ДО отправки письма и создания аккаунта:
+    // иначе администратор салона мог привязать роль мастера к филиалу другого бизнеса.
+    if (data.role === "master" && data.branchId) {
+      const { data: branch, error: branchError } = await supabaseAdmin
+        .from("branches")
+        .select("id")
+        .eq("id", data.branchId)
+        .eq("salon_id", data.salonId)
+        .maybeSingle();
+      if (branchError) throw new Error(branchError.message);
+      if (!branch) throw new Error("Филиал не принадлежит этому бизнесу");
+    }
+
     // 1) Завести аккаунт или найти существующий — и ЧЕСТНО сказать, ушло ли письмо.
     //
     // ЧТО БЫЛО СЛОМАНО (логи auth за 12.09). За сутки было два вызова /invite: один вернул 200
@@ -234,13 +247,24 @@ export const inviteEmployee = createServerFn({ method: "POST" })
     // салон, или владелец нажал «Пригласить» дважды. Дальше по коду `outcome` доезжает до экрана,
     // и тот говорит разными словами про «письмо ушло» и «письма не было».
     let userId: string | null = null;
-    let outcome: "invited" | "already_registered" | "password" = "invited";
+    let outcome: "invited" | "existing_notified" | "already_registered" | "password" = "invited";
     let password: string | null = null;
 
     const existing = await findUserByEmail(supabaseAdmin, data.email);
     if (existing) {
       userId = existing.id;
-      outcome = "already_registered";
+      if (data.method === "email") {
+        // inviteUserByEmail закономерно отвечает 422 для существующего аккаунта. Письмо всё
+        // равно обязано уйти ДО выдачи роли, иначе доступ появляется, а человек о нём не знает.
+        // Recovery link приводит на тот же экран задания пароля и не создаёт второй аккаунт.
+        const { error } = await supabaseAdmin.auth.resetPasswordForEmail(data.email, {
+          redirectTo: inviteRedirectTo(data.origin),
+        });
+        if (error) throw new Error(mailErrorText(error.message));
+        outcome = "existing_notified";
+      } else {
+        outcome = "already_registered";
+      }
     } else if (data.method === "password") {
       password = generateNumericPassword();
       // email_confirm: true — подтверждать почту нечем и незачем: адрес мог быть выдуман
@@ -264,7 +288,11 @@ export const inviteEmployee = createServerFn({ method: "POST" })
         const again = await findUserByEmail(supabaseAdmin, data.email);
         if (!again) throw new Error(mailErrorText(inviteResult.error.message));
         userId = again.id;
-        outcome = "already_registered";
+        const { error: notifyError } = await supabaseAdmin.auth.resetPasswordForEmail(data.email, {
+          redirectTo: inviteRedirectTo(data.origin),
+        });
+        if (notifyError) throw new Error(mailErrorText(notifyError.message));
+        outcome = "existing_notified";
       } else {
         userId = inviteResult.data.user!.id;
         outcome = "invited";
@@ -315,7 +343,7 @@ export const inviteEmployee = createServerFn({ method: "POST" })
       ok: true,
       userId,
       /** Ушло ли письмо. Единственное, что отличает «сотрудник узнает» от «не узнает». */
-      emailSent: outcome === "invited",
+      emailSent: outcome === "invited" || outcome === "existing_notified",
       outcome,
       invited: outcome === "invited",
       /** Показывается ровно один раз и нигде не сохраняется. */

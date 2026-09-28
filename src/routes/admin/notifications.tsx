@@ -25,6 +25,8 @@ import { LoadingState } from "@/components/ui/loading-state";
 import { useRegisterRefresh } from "@/lib/refresh-context";
 import { ensurePushSubscription, isPushSupported, isIos, isStandalonePWA } from "@/lib/push";
 import { matchesBranchScope } from "@/lib/branch-scope";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useBusinessVocabulary } from "@/hooks/use-business-vocabulary";
 
 export const Route = createFileRoute("/admin/notifications")({
   head: () => ({ meta: [{ title: "Уведомления — Qabyl" }] }),
@@ -41,11 +43,22 @@ type RestoreTarget = {
   ends_at: string;
 };
 
+type AppointmentDetails = {
+  client_name: string | null;
+  client_phone: string | null;
+  starts_at: string;
+  status: string;
+  services: { name: string } | null;
+  masters: { name: string } | null;
+  branches: { name: string } | null;
+};
+
 function NotificationsPage() {
   const { isSuperAdmin, isMaster, salonId, branchId: ownBranchId } = useAuth();
   const canRestore = !isMaster || isSuperAdmin;
   const filters = useAdminFilters();
   const tz = useSalonTimezone(filters.salonId !== "all" ? filters.salonId : salonId);
+  const vocabulary = useBusinessVocabulary(filters.salonId !== "all" ? filters.salonId : salonId);
   // Мастера видят строго свой филиал — независимо от UI-фильтра.
   const effectiveBranchId =
     isMaster && !isSuperAdmin ? ownBranchId : filters.branchId !== "all" ? filters.branchId : null;
@@ -64,6 +77,24 @@ function NotificationsPage() {
 
   const [restoreTarget, setRestoreTarget] = useState<RestoreTarget | null>(null);
   const [conflictInfo, setConflictInfo] = useState<ConflictInfo | null>(null);
+  const [detailNotification, setDetailNotification] = useState<any | null>(null);
+  const [details, setDetails] = useState<AppointmentDetails | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+
+  async function openDetails(n: any) {
+    setDetailNotification(n);
+    setDetails(null);
+    if (!n.appointment_id) return;
+    setDetailsLoading(true);
+    const { data } = await supabase
+      .from("appointments")
+      .select("client_name, client_phone, starts_at, status, services(name), masters(name), branches(name)")
+      .eq("id", n.appointment_id)
+      .maybeSingle();
+    setDetails((data as AppointmentDetails | null) ?? null);
+    setDetailsLoading(false);
+    if (!n.is_read) markRead(n.id);
+  }
 
   // Map appointment_id → branch_id and addons list.
   const [apptBranch, setApptBranch] = useState<Record<string, string | null>>({});
@@ -467,8 +498,28 @@ function NotificationsPage() {
           tz={tz}
           apptAddons={apptAddons}
           salonNames={isSuperAdmin ? salonNames : null}
+          openDetails={openDetails}
         />
       )}
+
+      <Dialog open={!!detailNotification} onOpenChange={(open) => !open && setDetailNotification(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Детали записи</DialogTitle></DialogHeader>
+          {detailsLoading ? <LoadingState /> : details ? (
+            <dl className="grid grid-cols-[auto,1fr] gap-x-4 gap-y-2 text-sm">
+              <dt className="text-muted-foreground">{vocabulary.client[0].toUpperCase() + vocabulary.client.slice(1)}</dt><dd>{details.client_name || "—"}</dd>
+              <dt className="text-muted-foreground">Телефон</dt><dd>{details.client_phone || "—"}</dd>
+              <dt className="text-muted-foreground">{vocabulary.service[0].toUpperCase() + vocabulary.service.slice(1)}</dt><dd>{details.services?.name || "—"}</dd>
+              <dt className="text-muted-foreground">{vocabulary.specialist[0].toUpperCase() + vocabulary.specialist.slice(1)}</dt><dd>{details.masters?.name || "—"}</dd>
+              {details.branches?.name && <><dt className="text-muted-foreground">Филиал</dt><dd>{details.branches.name}</dd></>}
+              <dt className="text-muted-foreground">Дата и время</dt><dd>{formatInTz(details.starts_at, tz, { dateStyle: "medium", timeStyle: "short" })}</dd>
+              <dt className="text-muted-foreground">Статус</dt><dd>{details.status === "confirmed" ? "Подтверждена" : details.status === "cancelled" ? "Отменена" : details.status}</dd>
+              {detailNotification?.metadata?.previous_starts_at && <><dt className="text-muted-foreground">Было</dt><dd>{formatInTz(detailNotification.metadata.previous_starts_at, tz, { dateStyle: "medium", timeStyle: "short" })}</dd></>}
+              {detailNotification?.metadata?.cancelled_by && <><dt className="text-muted-foreground">Кто отменил</dt><dd>{detailNotification.metadata.cancelled_by}</dd></>}
+            </dl>
+          ) : <p className="text-sm text-muted-foreground">Исторические детали этой записи недоступны. {detailNotification?.body}</p>}
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={!!restoreTarget} onOpenChange={(o) => !o && setRestoreTarget(null)}>
         <AlertDialogContent>
@@ -536,6 +587,7 @@ function NotificationsByDay({
   tz,
   apptAddons,
   salonNames,
+  openDetails,
 }: {
   items: any[];
   markRead: (id: string) => void;
@@ -544,6 +596,7 @@ function NotificationsByDay({
   tz: string;
   apptAddons: Record<string, string[]>;
   salonNames?: Record<string, string> | null;
+  openDetails: (n: any) => void;
 }) {
   const groups = useMemo(() => {
     const todayKey = dayKeyInTz(new Date(), tz);
@@ -599,7 +652,13 @@ function NotificationsByDay({
                 return (
                   <Card
                     key={n.id}
-                    className={`p-4 flex items-start gap-3 ${n.is_read ? "opacity-70" : ""}`}
+                    role={n.appointment_id ? "button" : undefined}
+                    tabIndex={n.appointment_id ? 0 : undefined}
+                    onClick={() => n.appointment_id && openDetails(n)}
+                    onKeyDown={(e) => {
+                      if (n.appointment_id && (e.key === "Enter" || e.key === " ")) openDetails(n);
+                    }}
+                    className={`p-4 flex items-start gap-3 ${n.appointment_id ? "cursor-pointer hover:bg-muted/30" : ""} ${n.is_read ? "opacity-70" : ""}`}
                   >
                     <div
                       className={`h-2 w-2 rounded-full mt-2 shrink-0 ${n.is_read ? "bg-muted" : "bg-primary"}`}
@@ -628,7 +687,7 @@ function NotificationsByDay({
                           variant="outline"
                           size="sm"
                           className="mt-2"
-                          onClick={() => onRestore(n)}
+                          onClick={(e) => { e.stopPropagation(); onRestore(n); }}
                         >
                           <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
                           Восстановить запись
@@ -639,7 +698,7 @@ function NotificationsByDay({
                       <Button
                         variant="ghost"
                         size="icon"
-                        onClick={() => markRead(n.id)}
+                        onClick={(e) => { e.stopPropagation(); markRead(n.id); }}
                         title="Отметить прочитанным"
                       >
                         <Check className="h-4 w-4" />

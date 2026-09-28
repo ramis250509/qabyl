@@ -945,6 +945,7 @@ export type Database = {
           created_at: string
           id: string
           is_read: boolean
+          metadata: Json | null
           salon_id: string
           title: string
           type: string
@@ -956,6 +957,7 @@ export type Database = {
           created_at?: string
           id?: string
           is_read?: boolean
+          metadata?: Json | null
           salon_id: string
           title: string
           type: string
@@ -967,6 +969,7 @@ export type Database = {
           created_at?: string
           id?: string
           is_read?: boolean
+          metadata?: Json | null
           salon_id?: string
           title?: string
           type?: string

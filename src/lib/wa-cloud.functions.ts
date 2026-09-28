@@ -56,6 +56,7 @@ const TEMPLATE_KINDS = [
   "reminder",
   "reschedule",
   "cancellation",
+  "restoration",
   "owner_alert",
   "owner_change",
 ] as const;

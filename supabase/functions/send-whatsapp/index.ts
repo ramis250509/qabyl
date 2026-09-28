@@ -42,6 +42,7 @@ type TemplateKind =
   | "reminder"
   | "reschedule"
   | "cancellation"
+  | "restoration"
   | "owner_alert"
   | "owner_change";
 
@@ -491,6 +492,8 @@ Deno.serve(async (req) => {
       // Sent when a salon admin cancels a booking in the calendar. starts_at still points at
       // the (now cancelled) slot, which is exactly what the client needs to recognise it.
       text = `Здравствуйте, ${clientFirstName}.\n\nК сожалению, ваша запись в "${salon.name}" на ${timeStr} — ${weekday}, ${dateStr} (${serviceName}) была отменена.\n\nПриносим извинения за неудобства. Чтобы записаться на другое время — просто напишите нам. 🙏${salon.phone ? `\n📞 ${salon.phone}` : ""}`;
+    } else if (kind === "restoration") {
+      text = `Здравствуйте, ${clientFirstName}! ✅\n\nВаша запись в "${salon.name}" восстановлена.\n\n${serviceName}\nСпециалист: ${masterName}\n${timeStr} — ${weekday}, ${dateStr}${salon.address ? `\n📍 ${salon.address}` : ""}${manageLine}`;
     } else {
       text = `Здравствуйте, ${clientFirstName}! 🎉\n\nВы успешно записаны на ${serviceName} в ${timeStr} — ${weekday}, ${dateStr}.\n\nЖдём вас в ${salon.name}!${salon.address ? `\n📍 ${salon.address}` : ""}${salon.phone ? `\n📞 ${salon.phone}` : ""}${manageLine}`;
     }
@@ -504,6 +507,8 @@ Deno.serve(async (req) => {
           ? "reschedule"
           : kind === "cancellation"
             ? "cancellation"
+            : kind === "restoration"
+              ? "restoration"
             : "confirmation";
     // Each kind has its OWN parameter list — they are not interchangeable. The approved templates
     // phrase the time differently: the reminder says "сегодня в {{2}}" and wants a bare clock

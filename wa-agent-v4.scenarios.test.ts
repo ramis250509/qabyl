@@ -1122,6 +1122,89 @@ test("стойкое зависание: если модель зависла д
 });
 
 // ============================================================
+// Kyrgyz through the whole reply pipeline. The guards were written against Russian output; a
+// natural Kyrgyz reply mixes in Russian words, and each of these slipped past them before.
+// ============================================================
+
+test("кыргызский: стойкое зависание → передача администратору живым кыргызским", async () => {
+  (globalThis as any).__WA_DB__ = makeDb();
+  geminiQueue = [
+    [{ text: "Азыр карап көрөйүн 🙂" }],
+    [{ text: "Бир минут, азыр проверить кылам." }], // смешанный кыргызский: раньше не ловился
+  ];
+  const res = await runWaAgentV4(
+    makeInput("Эртеңге свободно барбы?", { stateData: { language: "ky" } }),
+  );
+  expect(res.debug.errors).toContain("stall_persisted_using_fallback");
+  expect(res.debug.errors).toContain("apology_loop_detected_forcing_escalation");
+  expect(res.reply).toContain("Администраторго өткөрүп берем");
+  // Старый текст: опечатка «жаттам» и канцелярское «Диалогду».
+  expect(res.reply).not.toMatch(/Диалогду|жаттам/);
+  expect((res.nextStateData as any).needs_human).toBe(true);
+}, 20_000);
+
+test("кыргызская сводка без имени: повтор, затем вопрос об имени по-кыргызски", async () => {
+  (globalThis as any).__WA_DB__ = makeDb();
+  const summaryNoName =
+    "Текшерип коюңузчу:\n\n✂️ Услуга: Маникюр\n👤 Мастер: Айгуль\n📅 Күнү: 1-январь\n🕒 Саат: 10:00\n💰 Баасы: 1000 сом\n\nБаары туура болсо, «ооба» деп жазып коюңуз 🙂";
+  geminiQueue = [[{ text: summaryNoName }], [{ text: summaryNoName }]];
+  const res = await runWaAgentV4(makeInput("Ооба, 10:00 болот", { stateData: { language: "ky" } }));
+  expect(res.debug.errors).toContain("summary_without_name_forcing_retry");
+  expect(res.debug.errors).toContain("summary_without_name_suppressed");
+  expect(res.reply).toBe("Атыңыз ким? Анан дароо жазып коём 🙂");
+}, 20_000);
+
+test("строка «Имя:» без эмодзи — это имя: сводку не бракуем (\\b не работает на кириллице)", async () => {
+  (globalThis as any).__WA_DB__ = makeDb();
+  geminiQueue = [
+    [
+      {
+        text: "Пожалуйста, подтвердите запись:\n\nУслуга: Маникюр\nМастер: Айгуль\nДата: 1 января\nВремя: 10:00\nСтоимость: 1000 сом\nИмя: Айжан\n\nВсё верно? Если да — подтвердите запись.",
+      },
+    ],
+  ];
+  const res = await runWaAgentV4(makeInput("Да, 10:00 подходит"));
+  expect(res.debug.errors).not.toContain("summary_without_name_forcing_retry");
+  expect(res.reply).toContain("Имя: Айжан");
+});
+
+test("кыргызская ложная занятость («свободно жок») без инструмента → повторный проход", async () => {
+  (globalThis as any).__WA_DB__ = makeDb();
+  geminiQueue = [
+    [{ text: "Эртеңге свободно жок 😔" }],
+    [
+      fc("get_available_slots", {
+        service_id: "11111111-1111-4111-8111-111111111111",
+        date: "2099-01-01",
+      }),
+    ],
+    [{ text: "Эртеңге 10:00 свободно. Болобу?" }],
+  ];
+  const res = await runWaAgentV4(
+    makeInput("Эртеңге маникюрга свободно барбы?", { stateData: { language: "ky" } }),
+  );
+  expect(res.debug.errors).toContain("fake_busy_without_tool_call_forcing_retry");
+  expect(res.reply).toContain("10:00");
+  expect(res.reply).not.toContain("жок");
+});
+
+test("кыргызский промпт: модель видит, как пишет клиент, а русский диалог — нет", async () => {
+  (globalThis as any).__WA_DB__ = makeDb();
+  geminiQueue = [[{ text: "Макул 🙂 Кайсы услуга керек эле?" }]];
+  await runWaAgentV4(makeInput("Салам, запись керек эле, завтра свободно болобу?"));
+  const kySystem = JSON.stringify(geminiRequests[0]?.systemInstruction ?? {});
+  expect(kySystem).toContain("ЖИВОЙ КЫРГЫЗСКИЙ");
+  expect(kySystem).toContain("КАК ПИШЕТ ЭТОТ КЛИЕНТ: сам вставляет русские слова");
+
+  geminiRequests = [];
+  geminiQueue = [[{ text: "Здравствуйте! На какую услугу вас записать?" }]];
+  await runWaAgentV4(makeInput("Здравствуйте, хочу записаться"));
+  const ruSystem = JSON.stringify(geminiRequests[0]?.systemInstruction ?? {});
+  expect(ruSystem).not.toContain("ЖИВОЙ КЫРГЫЗСКИЙ");
+  expect(ruSystem).toContain("НУЛЕВАЯ ТЕРПИМОСТЬ К СМЕШЕНИЮ");
+});
+
+// ============================================================
 // Industry vertical: medical clinic — system-prompt construction (deterministic, no Gemini).
 // These lock in that the medical persona + hard safety boundaries actually reach the prompt,
 // and that beauty-only guidance (photo pricing) is NOT leaked into a medical clinic.

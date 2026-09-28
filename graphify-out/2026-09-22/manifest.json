@@ -25,8 +25,8 @@
     "semantic_hash": "345bdd57e188e0e4525edcd00e5003f5"
   },
   "package.json": {
-    "mtime": 1789313848.6607778,
-    "ast_hash": "039d6e3631e6a0fe45505bfbd5b6916d",
+    "mtime": 1790072788.7622344,
+    "ast_hash": "3f3df7adab6acceac871c81bfe3cd730",
     "semantic_hash": ""
   },
   "public/sw.js": {
@@ -35,8 +35,8 @@
     "semantic_hash": ""
   },
   "src/components/admin/AiAssistantTab.tsx": {
-    "mtime": 1789204506.092122,
-    "ast_hash": "58dc41bd49c0436d3c796c9200ac71d6",
+    "mtime": 1790073428.8918502,
+    "ast_hash": "e43c96de54b505e1da086fb08a68bf6e",
     "semantic_hash": ""
   },
   "src/components/admin/AppointmentDialogs.tsx": {
@@ -165,9 +165,9 @@
     "semantic_hash": "415d91d7006d4cc654e27620fca340f6"
   },
   "src/components/ui/card.tsx": {
-    "mtime": 1782493584.0485463,
-    "ast_hash": "d6c48ea36221b9cdc3576d305d12d5d5",
-    "semantic_hash": "d6c48ea36221b9cdc3576d305d12d5d5"
+    "mtime": 1790066076.0893369,
+    "ast_hash": "a851ff0bbc0a9015826b9340807d9576",
+    "semantic_hash": ""
   },
   "src/components/ui/carousel.tsx": {
     "mtime": 1782493584.0994103,
@@ -400,8 +400,8 @@
     "semantic_hash": ""
   },
   "src/integrations/supabase/types.ts": {
-    "mtime": 1788457430.55158,
-    "ast_hash": "970474b0b3928e132a941541fa83fcb1",
+    "mtime": 1790072374.5035164,
+    "ast_hash": "d90a0babbf4160c522a357443b3b72e4",
     "semantic_hash": ""
   },
   "src/lib/api/example.functions.ts": {
@@ -480,8 +480,8 @@
     "semantic_hash": "d9837f38cc05303254571985e3164050"
   },
   "src/lib/wa-agent.server.ts": {
-    "mtime": 1790064935.8620262,
-    "ast_hash": "adffc84cefd51cc61f84c18553185ba6",
+    "mtime": 1790074562.578574,
+    "ast_hash": "c471831ed9577606d1bf9977ac90d945",
     "semantic_hash": ""
   },
   "src/lib/wa-config.functions.ts": {
@@ -500,23 +500,23 @@
     "semantic_hash": "8f905e713b0eba7fa8148b7995a708c9"
   },
   "src/routes/__root.tsx": {
-    "mtime": 1787130628.5185711,
-    "ast_hash": "a46d2bb8931a29a97b7fe330b7500d47",
+    "mtime": 1790066550.678347,
+    "ast_hash": "68b1e767851eaf20063aad2759f2b35e",
     "semantic_hash": ""
   },
   "src/routes/admin.tsx": {
-    "mtime": 1790062943.7479792,
-    "ast_hash": "2889121070633333ded0e484d0c8535e",
+    "mtime": 1790066681.6311808,
+    "ast_hash": "1609ab8546e9be4ca56206cdf24b5a98",
     "semantic_hash": ""
   },
   "src/routes/admin/calendar.tsx": {
-    "mtime": 1789208508.0469866,
-    "ast_hash": "07e39920cf1c1ce9cc958b18e48f3885",
+    "mtime": 1790066682.593545,
+    "ast_hash": "18db2e19326a14536c26e115319d9513",
     "semantic_hash": ""
   },
   "src/routes/admin/index.tsx": {
-    "mtime": 1790062498.337271,
-    "ast_hash": "f30ae3267d27f535680cc585fffcb586",
+    "mtime": 1790066681.9563067,
+    "ast_hash": "19a8da7933ccfea81a56786dbedb5183",
     "semantic_hash": ""
   },
   "src/routes/admin/notifications.tsx": {
@@ -525,8 +525,8 @@
     "semantic_hash": ""
   },
   "src/routes/admin/salons/$salonId.tsx": {
-    "mtime": 1789309459.0640128,
-    "ast_hash": "2f0c570c45d72492223a5bc37e5ec781",
+    "mtime": 1790066684.1490827,
+    "ast_hash": "1e3aa199a5981f1864331aa49ebb3629",
     "semantic_hash": ""
   },
   "src/routes/admin/salons/index.tsx": {
@@ -1080,8 +1080,8 @@
     "semantic_hash": ""
   },
   "src/lib/wa-agent-v4.server.ts": {
-    "mtime": 1789668591.9909337,
-    "ast_hash": "84a44cee8dc48ed2ccb9a1812b96564a",
+    "mtime": 1790074561.757967,
+    "ast_hash": "caeec69da414ead34ec062a9c9bffbd6",
     "semantic_hash": ""
   },
   "supabase/migrations/20260710120000_create_wa_media_bucket.sql": {
@@ -1095,8 +1095,8 @@
     "semantic_hash": ""
   },
   "wa-agent-v4.scenarios.test.ts": {
-    "mtime": 1789308619.7858863,
-    "ast_hash": "caaf7dd4907434186948892f2e2c7290",
+    "mtime": 1790074232.8890052,
+    "ast_hash": "ff27549e37e869dd4cb8e64f390b5fa7",
     "semantic_hash": ""
   },
   "wa-native-greeting-race.test.ts": {
@@ -1140,8 +1140,8 @@
     "semantic_hash": ""
   },
   "src/routes/admin/account.tsx": {
-    "mtime": 1789204506.1600595,
-    "ast_hash": "8430c85c60939d79e62a3b558927fb95",
+    "mtime": 1790066684.2646139,
+    "ast_hash": "0a4f58298685f16e98644d0a33825334",
     "semantic_hash": ""
   },
   "supabase/migrations/20260713120000_v5_industry.sql": {
@@ -1320,8 +1320,8 @@
     "semantic_hash": ""
   },
   "src/routes/api/public/ig.$salonId.ts": {
-    "mtime": 1789477817.0034685,
-    "ast_hash": "29b010b10bb1cd1319ba49b1d689ac4e",
+    "mtime": 1790074563.660267,
+    "ast_hash": "4e1486ab1b09a76c4c3eb5bc53f9d3cb",
     "semantic_hash": ""
   },
   "src/routes/catalog.$slug.tsx": {
@@ -1440,8 +1440,8 @@
     "semantic_hash": ""
   },
   "wa-v4-kb-priority.test.ts": {
-    "mtime": 1786542961.3829844,
-    "ast_hash": "476f54c8e18fc8e1c62ff9d643d280e3",
+    "mtime": 1790073428.9922743,
+    "ast_hash": "e16feac632ffa0880451b5f5eb0a5cb7",
     "semantic_hash": ""
   },
   "wa-v4-services-grounding.test.ts": {
@@ -1825,8 +1825,8 @@
     "semantic_hash": ""
   },
   "src/routes/api/public/wacloud.$salonId.ts": {
-    "mtime": 1789655401.6655242,
-    "ast_hash": "b00162022f08c298e2e6c203b99f937a",
+    "mtime": 1790074564.7818449,
+    "ast_hash": "b37b1de0af46d2dc33934c20742b64b9",
     "semantic_hash": ""
   },
   "src/routes/terms.tsx": {
@@ -2070,8 +2070,8 @@
     "semantic_hash": ""
   },
   "qa/assistant-sim/preload.ts": {
-    "mtime": 1789662733.1973617,
-    "ast_hash": "d9458fc187bf333f249cc004f90e0ffc",
+    "mtime": 1790074650.2150023,
+    "ast_hash": "a65571b0df21443451bbff388370b9f3",
     "semantic_hash": ""
   },
   "qa/assistant-sim/report.ts": {
@@ -2135,8 +2135,8 @@
     "semantic_hash": ""
   },
   "src/components/admin/ProductTour.tsx": {
-    "mtime": 1789208508.023344,
-    "ast_hash": "f0e3f8d33e720a82d86ef42e74749497",
+    "mtime": 1790065269.6213388,
+    "ast_hash": "dea16d86423b5bebda230ca33f49178a",
     "semantic_hash": ""
   },
   "src/components/admin/SetupChecklist.tsx": {
@@ -5002,6 +5002,56 @@
   "wa-status-view.test.ts": {
     "mtime": 1790063141.8049574,
     "ast_hash": "96435f5551b1eb374472b2e714251bc7",
+    "semantic_hash": ""
+  },
+  "photo-pricing.test.ts": {
+    "mtime": 1790073423.4861805,
+    "ast_hash": "c6f91c6233d5ddf955b7c6a881159c24",
+    "semantic_hash": ""
+  },
+  "photo-vision-contract.test.ts": {
+    "mtime": 1790074232.0147433,
+    "ast_hash": "9766935869565d6688b71e02daa37654",
+    "semantic_hash": ""
+  },
+  "qa/photo-regression/cases.json": {
+    "mtime": 1790072717.5983002,
+    "ast_hash": "58e0494c51d30eb3494f7c9198986bb9",
+    "semantic_hash": ""
+  },
+  "qa/photo-regression/catalog.json": {
+    "mtime": 1790072716.449492,
+    "ast_hash": "58e0494c51d30eb3494f7c9198986bb9",
+    "semantic_hash": ""
+  },
+  "qa/photo-regression/run.ts": {
+    "mtime": 1790074648.3773458,
+    "ast_hash": "9cda9a4a37b002d627474bd7c989b253",
+    "semantic_hash": ""
+  },
+  "src/components/admin/PhotoPricingEditor.tsx": {
+    "mtime": 1790074209.7439194,
+    "ast_hash": "a3378eab384e5f91666f220933cef486",
+    "semantic_hash": ""
+  },
+  "src/lib/photo-pricing.ts": {
+    "mtime": 1790073422.489255,
+    "ast_hash": "44143f6b210e7a94e922522ad101a31c",
+    "semantic_hash": ""
+  },
+  "src/lib/theme.ts": {
+    "mtime": 1790066870.6348085,
+    "ast_hash": "b36fbc5226560143fd53593ea9185f22",
+    "semantic_hash": ""
+  },
+  "supabase/migrations/20260922101151_service_photo_pricing_config.sql": {
+    "mtime": 1790071989.4194486,
+    "ast_hash": "a72d0a4f77ea9403a0d0af7e93bf4b76",
+    "semantic_hash": ""
+  },
+  "qa/photo-regression/README.md": {
+    "mtime": 1790074655.636088,
+    "ast_hash": "316193113824aef3a251babcb36e9dd3",
     "semantic_hash": ""
   }
 }

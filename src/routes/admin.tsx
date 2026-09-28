@@ -30,6 +30,8 @@ import { ProductTour, ownerTourSteps, useTourAutostart } from "@/components/admi
 import { InstallPrompt } from "@/components/admin/InstallPrompt";
 import { watchSystemTheme } from "@/lib/theme";
 import type { BillingState } from "@/lib/billing-logic";
+import { ThemeQuickToggle } from "@/components/ThemeQuickToggle";
+import { useBusinessVocabulary } from "@/hooks/use-business-vocabulary";
 
 export const Route = createFileRoute("/admin")({
   head: () => ({ meta: [{ title: "Админ-панель — Qabyl" }] }),
@@ -53,6 +55,7 @@ function AdminLayout() {
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [billing, setBilling] = useState<BillingState | null>(null);
+  const vocabulary = useBusinessVocabulary(salonId);
 
   // Редирект на экран входа — необратимое действие: человек теряет место, на котором стоял, и
   // обратно его приводит только повторный ввод пароля. Поэтому он делается ТОЛЬКО когда сессии
@@ -223,7 +226,7 @@ function AdminLayout() {
               ? [
                   {
                     to: `/admin/salons/${salonId}`,
-                    label: "Мой салон",
+                    label: vocabulary.businessPossessive,
                     icon: Settings,
                     tour: "nav-settings",
                   },
@@ -350,7 +353,7 @@ function AdminLayout() {
   const roleLabel = isSuperAdmin
     ? "Админ-панель"
     : isSalonAdmin
-      ? "Кабинет салона"
+      ? `Кабинет: ${vocabulary.business}`
       : managerOnly
         ? "Кабинет администратора"
         : "Кабинет мастера";
@@ -432,7 +435,13 @@ function AdminLayout() {
               (i as any).exact ? location.pathname === i.to : location.pathname.startsWith(i.to),
             )?.label ?? "Кабинет"}
           </span>
+          <div className="ml-auto"><ThemeQuickToggle /></div>
         </header>
+        <div className="pointer-events-none absolute right-4 top-3 z-40 hidden md:block">
+          <div className="pointer-events-auto rounded-md border bg-card/90 shadow-sm backdrop-blur">
+            <ThemeQuickToggle />
+          </div>
+        </div>
         {!isSuperAdmin && <BillingBanner state={billing} isOwner={isSalonAdmin} />}
         <RefreshProvider>
           <PullToRefresh className="flex-1 overflow-auto relative">

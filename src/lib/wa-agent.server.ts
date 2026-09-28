@@ -535,8 +535,12 @@ function availablePartsToday(nowHour: number): Array<"morning" | "afternoon" | "
 // NB: ASCII \b does not work around Cyrillic, so use Unicode-aware letter boundaries
 // (?<![\p{L}]) / (?![\p{L}]). Words that also exist in Russian (бар, etc.) are excluded to
 // avoid misdetecting Russian as Kyrgyz.
+// Bishkek writes Kyrgyz around Russian words, and a message like «Маникюрга запись барбы?» or
+// «Бугунку свободно болобу?» has no ң/ү/ө at all — it used to come out as Russian, and the first
+// reply then set Russian for the whole chat. The second line below is the Kyrgyz glue those
+// messages are made of: question particles, pronouns, time words. None of them is Russian.
 const KY_WORD_RE =
-  /(?<![\p{L}])(алейкум|ассалму|байке|эже|аке|иним|кандайс[\p{L}]*|сала?мат[\p{L}]*|салам(атсызбы|атчылык)?|жакшы|кандай|канча|ооба|жок|макул|бүгүн|бугун|эртең|эртен|эртеси|кеч(инде|ке|ки)?|таңда|түш(тө|кү)?|менин|жаз[\p{L}]*|куну|күнү|кереги|керек|рахмат|тушун[\p{L}]*|түшүн[\p{L}]*|саат|болот|кайра|кызмат[\p{L}]*)(?![\p{L}])/iu;
+  /(?<![\p{L}])(алейкум|ассалму|байке|эже|аке|иним|кандайс[\p{L}]*|сала?мат[\p{L}]*|салам(атсызбы|атчылык)?|жакшы|кандай|канча|ооба|жок|макул|бүгүн|бугун[\p{L}]*|эртең|эртен[\p{L}]*|эртеси|кеч(инде|ке|ки)?|таңда|түш(тө|кү)?|менин|жаз[\p{L}]*|куну|күнү|кереги|керек|рахмат|тушун[\p{L}]*|түшүн[\p{L}]*|саат|болот|кайра|кызмат[\p{L}]*|барбы|болобу|жокпу|керекпи|эмне(ге)?|кайсы[\p{L}]*|качан|экен|эмес|сизге|бизге|сиздер[\p{L}]*|анан|дагы|азыр|кийин[\p{L}]*|чейин|ушул[\p{L}]*|ошол[\p{L}]*|жасат[\p{L}]*|жасай[\p{L}]*)(?![\p{L}])/iu;
 
 export function detectLanguage(text: string): "ru" | "ky" | "en" {
   if (!text) return "ru";

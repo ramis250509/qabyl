@@ -1,1 +1,79 @@
-{"nodes": [{"id": "c_users_akbarov_ramis_onedrive_desktop_qabyl_claude_agents_wa_agent_navigator_md", "label": "wa-agent-navigator.md", "file_type": "document", "source_file": ".claude/agents/wa-agent-navigator.md", "source_location": "L1"}, {"id": "agents_wa_agent_navigator_\u043f\u043e\u0447\u0435\u043c\u0443_\u0442\u044b_\u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u0435\u0448\u044c", "label": "\u041f\u043e\u0447\u0435\u043c\u0443 \u0442\u044b \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u0435\u0448\u044c", "file_type": "document", "source_file": ".claude/agents/wa-agent-navigator.md", "source_location": "L11"}, {"id": "agents_wa_agent_navigator_\u043a\u0430\u043a_\u0438\u0441\u043a\u0430\u0442\u044c", "label": "\u041a\u0430\u043a \u0438\u0441\u043a\u0430\u0442\u044c", "file_type": "document", "source_file": ".claude/agents/wa-agent-navigator.md", "source_location": "L26"}, {"id": "agents_wa_agent_navigator_\u0447\u0442\u043e_\u043f\u043e\u043c\u043d\u0438\u0442\u044c_\u043f\u0440\u043e_\u044d\u0442\u043e\u0442_\u043a\u043e\u0434", "label": "\u0427\u0442\u043e \u043f\u043e\u043c\u043d\u0438\u0442\u044c \u043f\u0440\u043e \u044d\u0442\u043e\u0442 \u043a\u043e\u0434", "file_type": "document", "source_file": ".claude/agents/wa-agent-navigator.md", "source_location": "L34"}, {"id": "agents_wa_agent_navigator_\u0444\u043e\u0440\u043c\u0430\u0442_\u043e\u0442\u0432\u0435\u0442\u0430", "label": "\u0424\u043e\u0440\u043c\u0430\u0442 \u043e\u0442\u0432\u0435\u0442\u0430", "file_type": "document", "source_file": ".claude/agents/wa-agent-navigator.md", "source_location": "L43"}], "edges": [{"source": "c_users_akbarov_ramis_onedrive_desktop_qabyl_claude_agents_wa_agent_navigator_md", "target": "agents_wa_agent_navigator_\u043f\u043e\u0447\u0435\u043c\u0443_\u0442\u044b_\u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u0435\u0448\u044c", "relation": "contains", "confidence": "EXTRACTED", "source_file": ".claude/agents/wa-agent-navigator.md", "source_location": "L11", "weight": 1.0}, {"source": "c_users_akbarov_ramis_onedrive_desktop_qabyl_claude_agents_wa_agent_navigator_md", "target": "agents_wa_agent_navigator_\u043a\u0430\u043a_\u0438\u0441\u043a\u0430\u0442\u044c", "relation": "contains", "confidence": "EXTRACTED", "source_file": ".claude/agents/wa-agent-navigator.md", "source_location": "L26", "weight": 1.0}, {"source": "c_users_akbarov_ramis_onedrive_desktop_qabyl_claude_agents_wa_agent_navigator_md", "target": "agents_wa_agent_navigator_\u0447\u0442\u043e_\u043f\u043e\u043c\u043d\u0438\u0442\u044c_\u043f\u0440\u043e_\u044d\u0442\u043e\u0442_\u043a\u043e\u0434", "relation": "contains", "confidence": "EXTRACTED", "source_file": ".claude/agents/wa-agent-navigator.md", "source_location": "L34", "weight": 1.0}, {"source": "c_users_akbarov_ramis_onedrive_desktop_qabyl_claude_agents_wa_agent_navigator_md", "target": "agents_wa_agent_navigator_\u0444\u043e\u0440\u043c\u0430\u0442_\u043e\u0442\u0432\u0435\u0442\u0430", "relation": "contains", "confidence": "EXTRACTED", "source_file": ".claude/agents/wa-agent-navigator.md", "source_location": "L43", "weight": 1.0}], "input_tokens": 0, "output_tokens": 0}
+{
+  "nodes": [
+    {
+      "id": "c_users_akbarov_ramis_onedrive_desktop_qabyl_claude_agents_wa_agent_navigator_md",
+      "label": "wa-agent-navigator.md",
+      "file_type": "document",
+      "source_file": ".claude/agents/wa-agent-navigator.md",
+      "source_location": "L1"
+    },
+    {
+      "id": "agents_wa_agent_navigator_\u043f\u043e\u0447\u0435\u043c\u0443_\u0442\u044b_\u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u0435\u0448\u044c",
+      "label": "\u041f\u043e\u0447\u0435\u043c\u0443 \u0442\u044b \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u0435\u0448\u044c",
+      "file_type": "document",
+      "source_file": ".claude/agents/wa-agent-navigator.md",
+      "source_location": "L11"
+    },
+    {
+      "id": "agents_wa_agent_navigator_\u043a\u0430\u043a_\u0438\u0441\u043a\u0430\u0442\u044c",
+      "label": "\u041a\u0430\u043a \u0438\u0441\u043a\u0430\u0442\u044c",
+      "file_type": "document",
+      "source_file": ".claude/agents/wa-agent-navigator.md",
+      "source_location": "L26"
+    },
+    {
+      "id": "agents_wa_agent_navigator_\u0447\u0442\u043e_\u043f\u043e\u043c\u043d\u0438\u0442\u044c_\u043f\u0440\u043e_\u044d\u0442\u043e\u0442_\u043a\u043e\u0434",
+      "label": "\u0427\u0442\u043e \u043f\u043e\u043c\u043d\u0438\u0442\u044c \u043f\u0440\u043e \u044d\u0442\u043e\u0442 \u043a\u043e\u0434",
+      "file_type": "document",
+      "source_file": ".claude/agents/wa-agent-navigator.md",
+      "source_location": "L34"
+    },
+    {
+      "id": "agents_wa_agent_navigator_\u0444\u043e\u0440\u043c\u0430\u0442_\u043e\u0442\u0432\u0435\u0442\u0430",
+      "label": "\u0424\u043e\u0440\u043c\u0430\u0442 \u043e\u0442\u0432\u0435\u0442\u0430",
+      "file_type": "document",
+      "source_file": ".claude/agents/wa-agent-navigator.md",
+      "source_location": "L43"
+    }
+  ],
+  "edges": [
+    {
+      "source": "c_users_akbarov_ramis_onedrive_desktop_qabyl_claude_agents_wa_agent_navigator_md",
+      "target": "agents_wa_agent_navigator_\u043f\u043e\u0447\u0435\u043c\u0443_\u0442\u044b_\u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u0435\u0448\u044c",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": ".claude/agents/wa-agent-navigator.md",
+      "source_location": "L11",
+      "weight": 1.0
+    },
+    {
+      "source": "c_users_akbarov_ramis_onedrive_desktop_qabyl_claude_agents_wa_agent_navigator_md",
+      "target": "agents_wa_agent_navigator_\u043a\u0430\u043a_\u0438\u0441\u043a\u0430\u0442\u044c",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": ".claude/agents/wa-agent-navigator.md",
+      "source_location": "L26",
+      "weight": 1.0
+    },
+    {
+      "source": "c_users_akbarov_ramis_onedrive_desktop_qabyl_claude_agents_wa_agent_navigator_md",
+      "target": "agents_wa_agent_navigator_\u0447\u0442\u043e_\u043f\u043e\u043c\u043d\u0438\u0442\u044c_\u043f\u0440\u043e_\u044d\u0442\u043e\u0442_\u043a\u043e\u0434",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": ".claude/agents/wa-agent-navigator.md",
+      "source_location": "L34",
+      "weight": 1.0
+    },
+    {
+      "source": "c_users_akbarov_ramis_onedrive_desktop_qabyl_claude_agents_wa_agent_navigator_md",
+      "target": "agents_wa_agent_navigator_\u0444\u043e\u0440\u043c\u0430\u0442_\u043e\u0442\u0432\u0435\u0442\u0430",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": ".claude/agents/wa-agent-navigator.md",
+      "source_location": "L43",
+      "weight": 1.0
+    }
+  ],
+  "input_tokens": 0,
+  "output_tokens": 0
+}

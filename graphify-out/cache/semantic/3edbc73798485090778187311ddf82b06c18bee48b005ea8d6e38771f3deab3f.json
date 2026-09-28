@@ -1,1 +1,168 @@
-{"nodes": [{"id": "wa_agent_improvements_wa_agent_improvements", "label": "WA Agent Intelligence Improvements (June 2026)", "file_type": "document", "source_file": "WA_AGENT_IMPROVEMENTS.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "wa_agent_improvements_thinking_budget", "label": "Gemini Thinking Budget (5000 tokens)", "file_type": "concept", "source_file": "WA_AGENT_IMPROVEMENTS.md", "source_location": "Line 289", "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "wa_agent_improvements_fuzzy_matching", "label": "Service Fuzzy Matching (lowered threshold)", "file_type": "concept", "source_file": "WA_AGENT_IMPROVEMENTS.md", "source_location": "Line 438, 444", "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "wa_agent_improvements_intent_promotion", "label": "Intent Promotion Logic (ask_price \u2192 booking)", "file_type": "concept", "source_file": "WA_AGENT_IMPROVEMENTS.md", "source_location": "Line 621-632", "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "wa_agent_improvements_master_name_matching", "label": "Master Name Matching (edit distance 40%)", "file_type": "concept", "source_file": "WA_AGENT_IMPROVEMENTS.md", "source_location": "Line 1269-1280", "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "wa_agent_improvements_yes_no_detection", "label": "Yes/No Detection Patterns (multilingual)", "file_type": "concept", "source_file": "WA_AGENT_IMPROVEMENTS.md", "source_location": "Line 508-516", "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [{"source": "wa_agent_improvements_wa_agent_improvements", "target": "claude_md_wa_agent", "relation": "references", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "WA_AGENT_IMPROVEMENTS.md", "source_location": null, "weight": 1.0}, {"source": "wa_agent_improvements_wa_agent_improvements", "target": "wa_agent_improvements_thinking_budget", "relation": "references", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "WA_AGENT_IMPROVEMENTS.md", "source_location": "Line 289", "weight": 1.0}, {"source": "wa_agent_improvements_wa_agent_improvements", "target": "wa_agent_improvements_fuzzy_matching", "relation": "references", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "WA_AGENT_IMPROVEMENTS.md", "source_location": "Line 438, 444", "weight": 1.0}, {"source": "wa_agent_improvements_wa_agent_improvements", "target": "wa_agent_improvements_intent_promotion", "relation": "references", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "WA_AGENT_IMPROVEMENTS.md", "source_location": "Line 621-632", "weight": 1.0}, {"source": "wa_agent_improvements_wa_agent_improvements", "target": "wa_agent_improvements_master_name_matching", "relation": "references", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "WA_AGENT_IMPROVEMENTS.md", "source_location": "Line 1269-1280", "weight": 1.0}, {"source": "wa_agent_improvements_wa_agent_improvements", "target": "wa_agent_improvements_yes_no_detection", "relation": "references", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "WA_AGENT_IMPROVEMENTS.md", "source_location": "Line 508-516", "weight": 1.0}, {"source": "wa_agent_improvements_fuzzy_matching", "target": "wa_agent_improvements_master_name_matching", "relation": "semantically_similar_to", "confidence": "INFERRED", "confidence_score": 0.85, "source_file": "WA_AGENT_IMPROVEMENTS.md", "source_location": null, "weight": 1.0}, {"source": "wa_agent_improvements_thinking_budget", "target": "lovable_plan_gemini_intent_classifier", "relation": "conceptually_related_to", "confidence": "INFERRED", "confidence_score": 0.85, "source_file": "WA_AGENT_IMPROVEMENTS.md", "source_location": null, "weight": 1.0}], "hyperedges": [{"id": "wa_agent_improvement_nlp_cluster", "label": "WA Agent NLP Improvements (fuzzy + intent + yes/no detection)", "nodes": ["wa_agent_improvements_fuzzy_matching", "wa_agent_improvements_intent_promotion", "wa_agent_improvements_yes_no_detection", "wa_agent_improvements_master_name_matching"], "relation": "implement", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "WA_AGENT_IMPROVEMENTS.md"}]}
+{
+  "nodes": [
+    {
+      "id": "wa_agent_improvements_wa_agent_improvements",
+      "label": "WA Agent Intelligence Improvements (June 2026)",
+      "file_type": "document",
+      "source_file": "WA_AGENT_IMPROVEMENTS.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "wa_agent_improvements_thinking_budget",
+      "label": "Gemini Thinking Budget (5000 tokens)",
+      "file_type": "concept",
+      "source_file": "WA_AGENT_IMPROVEMENTS.md",
+      "source_location": "Line 289",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "wa_agent_improvements_fuzzy_matching",
+      "label": "Service Fuzzy Matching (lowered threshold)",
+      "file_type": "concept",
+      "source_file": "WA_AGENT_IMPROVEMENTS.md",
+      "source_location": "Line 438, 444",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "wa_agent_improvements_intent_promotion",
+      "label": "Intent Promotion Logic (ask_price \u2192 booking)",
+      "file_type": "concept",
+      "source_file": "WA_AGENT_IMPROVEMENTS.md",
+      "source_location": "Line 621-632",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "wa_agent_improvements_master_name_matching",
+      "label": "Master Name Matching (edit distance 40%)",
+      "file_type": "concept",
+      "source_file": "WA_AGENT_IMPROVEMENTS.md",
+      "source_location": "Line 1269-1280",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "wa_agent_improvements_yes_no_detection",
+      "label": "Yes/No Detection Patterns (multilingual)",
+      "file_type": "concept",
+      "source_file": "WA_AGENT_IMPROVEMENTS.md",
+      "source_location": "Line 508-516",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "wa_agent_improvements_wa_agent_improvements",
+      "target": "claude_md_wa_agent",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "WA_AGENT_IMPROVEMENTS.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "wa_agent_improvements_wa_agent_improvements",
+      "target": "wa_agent_improvements_thinking_budget",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "WA_AGENT_IMPROVEMENTS.md",
+      "source_location": "Line 289",
+      "weight": 1.0
+    },
+    {
+      "source": "wa_agent_improvements_wa_agent_improvements",
+      "target": "wa_agent_improvements_fuzzy_matching",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "WA_AGENT_IMPROVEMENTS.md",
+      "source_location": "Line 438, 444",
+      "weight": 1.0
+    },
+    {
+      "source": "wa_agent_improvements_wa_agent_improvements",
+      "target": "wa_agent_improvements_intent_promotion",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "WA_AGENT_IMPROVEMENTS.md",
+      "source_location": "Line 621-632",
+      "weight": 1.0
+    },
+    {
+      "source": "wa_agent_improvements_wa_agent_improvements",
+      "target": "wa_agent_improvements_master_name_matching",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "WA_AGENT_IMPROVEMENTS.md",
+      "source_location": "Line 1269-1280",
+      "weight": 1.0
+    },
+    {
+      "source": "wa_agent_improvements_wa_agent_improvements",
+      "target": "wa_agent_improvements_yes_no_detection",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "WA_AGENT_IMPROVEMENTS.md",
+      "source_location": "Line 508-516",
+      "weight": 1.0
+    },
+    {
+      "source": "wa_agent_improvements_fuzzy_matching",
+      "target": "wa_agent_improvements_master_name_matching",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "WA_AGENT_IMPROVEMENTS.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "wa_agent_improvements_thinking_budget",
+      "target": "lovable_plan_gemini_intent_classifier",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "WA_AGENT_IMPROVEMENTS.md",
+      "source_location": null,
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": [
+    {
+      "id": "wa_agent_improvement_nlp_cluster",
+      "label": "WA Agent NLP Improvements (fuzzy + intent + yes/no detection)",
+      "nodes": [
+        "wa_agent_improvements_fuzzy_matching",
+        "wa_agent_improvements_intent_promotion",
+        "wa_agent_improvements_yes_no_detection",
+        "wa_agent_improvements_master_name_matching"
+      ],
+      "relation": "implement",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "WA_AGENT_IMPROVEMENTS.md"
+    }
+  ]
+}

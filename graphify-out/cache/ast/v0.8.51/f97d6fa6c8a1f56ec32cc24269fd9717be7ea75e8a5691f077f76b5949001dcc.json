@@ -1,1 +1,95 @@
-{"nodes": [{"id": "c_users_akbarov_ramis_onedrive_desktop_qabyl_vertical_readiness_md", "label": "VERTICAL_READINESS.md", "file_type": "document", "source_file": "VERTICAL_READINESS.md", "source_location": "L1"}, {"id": "qabyl_vertical_readiness_vertical_readiness_2026_07_30", "label": "Vertical readiness \u2014 2026-07-30", "file_type": "document", "source_file": "VERTICAL_READINESS.md", "source_location": "L1"}, {"id": "qabyl_vertical_readiness_rating_rubric", "label": "Rating rubric", "file_type": "document", "source_file": "VERTICAL_READINESS.md", "source_location": "L5"}, {"id": "qabyl_vertical_readiness_per_vertical_scores", "label": "Per-vertical scores", "file_type": "document", "source_file": "VERTICAL_READINESS.md", "source_location": "L17"}, {"id": "qabyl_vertical_readiness_what_each_vertical_is_missing_nothing_critical", "label": "What each vertical is missing (nothing critical)", "file_type": "document", "source_file": "VERTICAL_READINESS.md", "source_location": "L45"}, {"id": "qabyl_vertical_readiness_acceptance_criteria_explicitly_verified", "label": "Acceptance criteria explicitly verified", "file_type": "document", "source_file": "VERTICAL_READINESS.md", "source_location": "L51"}], "edges": [{"source": "c_users_akbarov_ramis_onedrive_desktop_qabyl_vertical_readiness_md", "target": "qabyl_vertical_readiness_vertical_readiness_2026_07_30", "relation": "contains", "confidence": "EXTRACTED", "source_file": "VERTICAL_READINESS.md", "source_location": "L1", "weight": 1.0}, {"source": "qabyl_vertical_readiness_vertical_readiness_2026_07_30", "target": "qabyl_vertical_readiness_rating_rubric", "relation": "contains", "confidence": "EXTRACTED", "source_file": "VERTICAL_READINESS.md", "source_location": "L5", "weight": 1.0}, {"source": "qabyl_vertical_readiness_vertical_readiness_2026_07_30", "target": "qabyl_vertical_readiness_per_vertical_scores", "relation": "contains", "confidence": "EXTRACTED", "source_file": "VERTICAL_READINESS.md", "source_location": "L17", "weight": 1.0}, {"source": "qabyl_vertical_readiness_vertical_readiness_2026_07_30", "target": "qabyl_vertical_readiness_what_each_vertical_is_missing_nothing_critical", "relation": "contains", "confidence": "EXTRACTED", "source_file": "VERTICAL_READINESS.md", "source_location": "L45", "weight": 1.0}, {"source": "qabyl_vertical_readiness_vertical_readiness_2026_07_30", "target": "qabyl_vertical_readiness_acceptance_criteria_explicitly_verified", "relation": "contains", "confidence": "EXTRACTED", "source_file": "VERTICAL_READINESS.md", "source_location": "L51", "weight": 1.0}], "input_tokens": 0, "output_tokens": 0}
+{
+  "nodes": [
+    {
+      "id": "c_users_akbarov_ramis_onedrive_desktop_qabyl_vertical_readiness_md",
+      "label": "VERTICAL_READINESS.md",
+      "file_type": "document",
+      "source_file": "VERTICAL_READINESS.md",
+      "source_location": "L1"
+    },
+    {
+      "id": "qabyl_vertical_readiness_vertical_readiness_2026_07_30",
+      "label": "Vertical readiness \u2014 2026-07-30",
+      "file_type": "document",
+      "source_file": "VERTICAL_READINESS.md",
+      "source_location": "L1"
+    },
+    {
+      "id": "qabyl_vertical_readiness_rating_rubric",
+      "label": "Rating rubric",
+      "file_type": "document",
+      "source_file": "VERTICAL_READINESS.md",
+      "source_location": "L5"
+    },
+    {
+      "id": "qabyl_vertical_readiness_per_vertical_scores",
+      "label": "Per-vertical scores",
+      "file_type": "document",
+      "source_file": "VERTICAL_READINESS.md",
+      "source_location": "L17"
+    },
+    {
+      "id": "qabyl_vertical_readiness_what_each_vertical_is_missing_nothing_critical",
+      "label": "What each vertical is missing (nothing critical)",
+      "file_type": "document",
+      "source_file": "VERTICAL_READINESS.md",
+      "source_location": "L45"
+    },
+    {
+      "id": "qabyl_vertical_readiness_acceptance_criteria_explicitly_verified",
+      "label": "Acceptance criteria explicitly verified",
+      "file_type": "document",
+      "source_file": "VERTICAL_READINESS.md",
+      "source_location": "L51"
+    }
+  ],
+  "edges": [
+    {
+      "source": "c_users_akbarov_ramis_onedrive_desktop_qabyl_vertical_readiness_md",
+      "target": "qabyl_vertical_readiness_vertical_readiness_2026_07_30",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "VERTICAL_READINESS.md",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "qabyl_vertical_readiness_vertical_readiness_2026_07_30",
+      "target": "qabyl_vertical_readiness_rating_rubric",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "VERTICAL_READINESS.md",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "qabyl_vertical_readiness_vertical_readiness_2026_07_30",
+      "target": "qabyl_vertical_readiness_per_vertical_scores",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "VERTICAL_READINESS.md",
+      "source_location": "L17",
+      "weight": 1.0
+    },
+    {
+      "source": "qabyl_vertical_readiness_vertical_readiness_2026_07_30",
+      "target": "qabyl_vertical_readiness_what_each_vertical_is_missing_nothing_critical",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "VERTICAL_READINESS.md",
+      "source_location": "L45",
+      "weight": 1.0
+    },
+    {
+      "source": "qabyl_vertical_readiness_vertical_readiness_2026_07_30",
+      "target": "qabyl_vertical_readiness_acceptance_criteria_explicitly_verified",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "VERTICAL_READINESS.md",
+      "source_location": "L51",
+      "weight": 1.0
+    }
+  ],
+  "input_tokens": 0,
+  "output_tokens": 0
+}

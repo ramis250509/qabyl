@@ -46,7 +46,16 @@ import {
 import { INDUSTRY_EXPERT } from "@/lib/wa-industries.server";
 import { INDUSTRIES_META, normalizeIndustry, type IndustryKey } from "@/lib/industries";
 import { bookingUrl } from "@/lib/booking-link";
-import { languageStyleBlock } from "@/lib/wa-language-style";
+import {
+  KY_APOLOGY_LOOP_RE,
+  KY_FAKE_BUSY_RE,
+  KY_OFFER_RE,
+  KY_STALL_RE,
+  KY_SUMMARY_RE,
+  kyrgyzRegister,
+  languageFinalCheck,
+  languageStyleBlock,
+} from "@/lib/wa-language-style";
 import {
   classifyFunnelStage,
   classifyReadiness,
@@ -180,6 +189,25 @@ function renderPhotoNotes(notes: PhotoNote[] | undefined): string {
     .join("\n");
 }
 
+// The client's own recent words, oldest first — what the Kyrgyz guide mirrors. The webhooks pass
+// `history: []` to V4, so earlier turns come from the stored Gemini history, minus everything in
+// it that the client did not write: tool results, the "[фото]" placeholder, and the "СИСТЕМА:"
+// nudges the reply guards append as user turns.
+function recentClientTexts(input: WaAgentInput, limit = 4): string[] {
+  const stored = (input.stateData as Record<string, unknown> | undefined)?.v4_history;
+  const past = (Array.isArray(stored) ? (stored as GeminiV2Content[]) : [])
+    .filter((c) => c?.role === "user")
+    .map((c) =>
+      (c.parts ?? [])
+        .map((p: { text?: unknown }) => (typeof p?.text === "string" ? p.text.trim() : ""))
+        .filter((t: string) => t && t !== "[фото]" && !t.startsWith("СИСТЕМА:"))
+        .join(" "),
+    )
+    .filter(Boolean);
+  const now = (input.lastMessages ?? []).map((m) => m.text_body?.trim() ?? "").filter(Boolean);
+  return [...past, ...now].slice(-limit);
+}
+
 export function buildSystemPromptV4(
   input: WaAgentInput,
   closedDates: string[] = [],
@@ -227,6 +255,14 @@ export function buildSystemPromptV4(
   const langs = (config.languages?.length ? config.languages : ["ru"]).join(", ");
   const langName = language === "ky" ? "кыргызском" : language === "en" ? "английском" : "русском";
   const cutoff = config.manage_cutoff_hours ?? 0;
+  // The Kyrgyz guide tells the model to write the way THIS client writes — almost pure Kyrgyz or
+  // Kyrgyz with Russian words dropped in — and it can only mirror what it is shown.
+  const kyMirror = language === "ky" ? kyrgyzRegister(recentClientTexts(input)) : null;
+  const styleBlock = languageStyleBlock(language, {
+    register: kyMirror?.register,
+    clientRussianWords: kyMirror?.russianWords,
+    specialist: sn.nomSg,
+  });
 
   const lines: string[] = [
     ind.persona(salon.salonName),
@@ -250,11 +286,18 @@ export function buildSystemPromptV4(
     ``,
     `МОЛЧАЛИВОЕ ВЫПОЛНЕНИЕ (КРИТИЧЕСКИ ВАЖНО): никогда не пиши клиенту, что ты сейчас что-то проверяешь/смотришь/уточняешь. ЗАПРЕЩЕНЫ фразы «сейчас проверю», «подождите», «минуточку», «секундочку», «дайте гляну», «азыр текшерип көрөйүн», «бир аз күтө туруңуз». Вместо этого СНАЧАЛА молча выполни все нужные вызовы инструментов (календарь, свободные окна, цена, анализ фото, любые запросы), дождись результата — и только потом отправь клиенту ГОТОВЫЙ ответ. Пусть это займёт на пару секунд дольше — клиент должен видеть результат, а не процесс. У тебя один ответ за ход, поэтому «подождите» = клиент останется без ответа. Так делать нельзя.`,
     `ЕСЛИ ИНСТРУМЕНТ ВЕРНУЛ ОШИБКУ (обязательно, железное правило): НЕ извиняйся дважды за одно и то же. Первый раз — попробуй перевызвать инструмент по-другому (другая дата, без master_id, другой филиал). Если и второй вызов не дал результата — ОБЯЗАТЕЛЬНО вызови escalate_to_human (в reason опиши, что запрашивал клиент и какой инструмент упал) и вежливо скажи клиенту, что передаёшь диалог администратору. НЕЛЬЗЯ отвечать «сейчас не получилось получить данные, попробуйте через минуту» два раза подряд — это выглядит как сломанный бот и злит клиента.`,
-    `ЯЗЫК ЭТОГО ДИАЛОГА (СТРОГО, ЖЁСТКОЕ ПРАВИЛО, НУЛЕВАЯ ТЕРПИМОСТЬ К СМЕШЕНИЮ): отвечай ТОЛЬКО на ${langName} языке (языки салона: ${langs}). Этот язык уже определён системой по всей истории диалога — доверяй ему, а не только последнему сообщению. НА ${langName} ЯЗЫКЕ должно быть АБСОЛЮТНО ВСЁ в твоём сообщении БЕЗ ЕДИНОГО ИСКЛЮЧЕНИЯ: сам текст, пояснения, инструкции, подписи, сводка подтверждения записи, сообщения после записи/переноса/отмены, любые шаблоны и подписи к ссылкам. Ни одного слова, фразы или строки на другом языке в одном сообщении быть НЕ ДОЛЖНО — даже служебной подписи вроде «reschedule or cancel». Если не знаешь слово на ${langName} — перефразируй, но НЕ вставляй иноязычный фрагмент. КОРОТКИЕ и НЕЯЗЫКОВЫЕ реплики клиента (цифра варианта, название филиала или ${sn.genSg}, «да»/«ок»/«макул», имя, дата, время) НЕ являются сигналом смены языка — отвечай НА ЭТОМ ЖЕ языке. Переключайся на другой язык, ТОЛЬКО когда клиент явно и уверенно пишет РАЗВЁРНУТОЕ сообщение на другом языке (не одно слово/цифра/имя) — и тогда ВЕСЬ следующий ответ полностью на новом языке.`,
+    // Kyrgyz gets its own wording of the same rule. «Ни одного слова на другом языке» is right for
+    // Russian and English, and wrong for Kyrgyz: Bishkek writes Kyrgyz with Russian words in it,
+    // and this rule, being the loudest line in the prompt, made the model translate even the
+    // salon's price list into literary Kyrgyz (prod, August). What stays forbidden in Kyrgyz is
+    // the mixing that actually hurts: whole Russian sentences, Russian templates, EN labels.
+    language === "ky"
+      ? `ЯЗЫК ЭТОГО ДИАЛОГА — КЫРГЫЗСКИЙ (СТРОГО, ЖЁСТКОЕ ПРАВИЛО): отвечай на кыргызском (языки салона: ${langs}). Этот язык уже определён системой по всей истории диалога — доверяй ему, а не только последнему сообщению. Кыргызская основа — у ВСЕГО сообщения без исключения: сам текст, пояснения, сводка подтверждения записи, сообщения после записи/переноса/отмены, подписи к ссылкам. ОТДЕЛЬНЫЕ бытовые русские слова внутри кыргызской фразы («запись», «${sn.nomSg}», «свободно», «удобно», «цена») — НЕ смешение языков, а норма живой бишкекской речи (подробно — в блоке стиля ниже). ЗАПРЕЩЕНО, НУЛЕВАЯ ТЕРПИМОСТЬ: целые русские предложения и фразы, русские шаблоны («Пожалуйста, подтвердите запись», «Если ваши планы изменятся…»), абзац по-русски рядом с абзацем по-кыргызски, английские служебные подписи вроде «reschedule or cancel». КОРОТКИЕ и НЕЯЗЫКОВЫЕ реплики клиента (цифра варианта, название филиала или ${sn.genSg}, «да»/«ок»/«макул», имя, дата, время) НЕ являются сигналом смены языка — отвечай так же по-кыргызски. Переключайся на другой язык, ТОЛЬКО когда клиент явно и уверенно пишет РАЗВЁРНУТОЕ сообщение целиком на другом языке (не одно слово/цифра/имя) — и тогда ВЕСЬ следующий ответ полностью на новом языке.`
+      : `ЯЗЫК ЭТОГО ДИАЛОГА (СТРОГО, ЖЁСТКОЕ ПРАВИЛО, НУЛЕВАЯ ТЕРПИМОСТЬ К СМЕШЕНИЮ): отвечай ТОЛЬКО на ${langName} языке (языки салона: ${langs}). Этот язык уже определён системой по всей истории диалога — доверяй ему, а не только последнему сообщению. НА ${langName} ЯЗЫКЕ должно быть АБСОЛЮТНО ВСЁ в твоём сообщении БЕЗ ЕДИНОГО ИСКЛЮЧЕНИЯ: сам текст, пояснения, инструкции, подписи, сводка подтверждения записи, сообщения после записи/переноса/отмены, любые шаблоны и подписи к ссылкам. Ни одного слова, фразы или строки на другом языке в одном сообщении быть НЕ ДОЛЖНО — даже служебной подписи вроде «reschedule or cancel». Если не знаешь слово на ${langName} — перефразируй, но НЕ вставляй иноязычный фрагмент. КОРОТКИЕ и НЕЯЗЫКОВЫЕ реплики клиента (цифра варианта, название филиала или ${sn.genSg}, «да»/«ок»/«макул», имя, дата, время) НЕ являются сигналом смены языка — отвечай НА ЭТОМ ЖЕ языке. Переключайся на другой язык, ТОЛЬКО когда клиент явно и уверенно пишет РАЗВЁРНУТОЕ сообщение на другом языке (не одно слово/цифра/имя) — и тогда ВЕСЬ следующий ответ полностью на новом языке.`,
     `ОБРАЩЕНИЕ: всегда на «Вы», даже если клиент пишет на «ты» — это вежливый стиль администратора. В кыргызском используй вежливые формы (сиз, -ңыз/-ңиз/-ыңыз), в других языках — аналогичную вежливую форму, если она есть в языке.`,
     // Only the guide for THIS language is rendered (see wa-language-style.ts). Russian returns
     // "" and is filtered out below, so the common path pays nothing for this.
-    ...(languageStyleBlock(language) ? [``, languageStyleBlock(language)] : []),
+    ...(styleBlock ? [``, styleBlock] : []),
     // Instagram Direct carries no phone number. Every appointment needs one (мастер должен иметь
     // возможность позвонить, плюс серверная валидация требует 10–15 цифр), so on this channel the
     // assistant has to collect it — and must not blurt the request out at "здравствуйте", which
@@ -343,7 +386,7 @@ ${servicesRoster}
   ШАГ 6. reason=master_off_that_day — предложи ЛИБО другого мастера в этот же день, ЛИБО того же мастера в другой день (сам сканируй вперёд).
   ШАГ 7. Клиент отклонил предложенные времена («не подходит», «попозже», «пораньше») — не сдавайся: предложи следующие реальные окна из того же дня, потом соседних дней. Продолжай до тех пор, пока клиент не выберет, не откажется от записи, не попросит человека, или не окажется, что 7+ дней подряд ничего нет.
   ЗАПРЕЩЕНО: придумывать время; предлагать время до проверки get_available_slots; сразу говорить «нет времени, передаю администратору» после ОДНОГО неудачного дня; писать «не вижу расписание», если инструмент вернул конкретный reason.`,
-    `- ЯЗЫК ОТВЕТА (СТРОГО): всегда отвечай на языке ПОСЛЕДНЕГО сообщения клиента, а не на языке первого сообщения диалога. Клиент переключился с русского на кыргызский — ты тоже переходишь на кыргызский. Ответил по-казахски (близок к кыргызскому, но с казахскими особенностями: «қалай», «болады», «жоқ», «иә», «үшін», «жақсы» — узнавай по вокализации ұ/ү и словам-маркёрам) — отвечай на казахском. Английский → английский. Не смешивай языки внутри одного ответа. Если сомневаешься между кыргызским и казахским — держи ответ нейтрально-простым и следуй маркёрам, которые уже проявил клиент.`,
+    `- ЯЗЫК ОТВЕТА (СТРОГО): всегда отвечай на языке ПОСЛЕДНЕГО сообщения клиента, а не на языке первого сообщения диалога. Клиент переключился с русского на кыргызский — ты тоже переходишь на кыргызский. Ответил по-казахски (близок к кыргызскому, но с казахскими особенностями: «қалай», «болады», «жоқ», «иә», «үшін», «жақсы» — узнавай по вокализации ұ/ү и словам-маркёрам) — отвечай на казахском. Английский → английский. Не смешивай языки внутри одного ответа${language === "ky" ? " — отдельные бытовые русские слова в кыргызской речи смешением не считаются (см. блок стиля)" : ""}. Если сомневаешься между кыргызским и казахским — держи ответ нейтрально-простым и следуй маркёрам, которые уже проявил клиент.`,
     `- Если запрос неполный — задай 1 короткий уточняющий вопрос по сути (что именно нужно, важные детали запроса). Не заваливай вопросами.`,
     `- Сам определи подходящую услугу и коротко объясни выбор. Отвечай на вопросы из базы знаний: кому подходит, противопоказания, отличия, сроки, уход, совместимость.`,
     `- Темп: не дави записью и не спеши закончить. Сними сомнения и возражения (цена, безопасность, «подумаю»), и лишь когда клиент определился — ненавязчиво предложи подобрать время.`,
@@ -448,7 +491,26 @@ ${servicesRoster}
     `- АКЦИИ И СПЕЦПРЕДЛОЖЕНИЯ (ОБЯЗАТЕЛЬНО): если в фактах о салоне / книге знаний есть акция или подарок, связанные с услугой, о которой спрашивает или на которую записывается клиент, — упомяни её САМ, естественно и заранее (при обсуждении услуги и до подтверждения записи), НЕ дожидаясь вопроса клиента. Пример: клиент интересуется кератином, а есть акция «кератин + стрижка + СПА + ботокс в подарок» — расскажи о ней («кстати, сейчас на кератин действует акция — …»). Никогда не выдумывай акции, которых нет в фактах салона.`,
     `- ИМЯ КЛИЕНТА (ОБЯЗАТЕЛЬНО, без него не записывать): перед записью ВСЕГДА спроси имя клиента естественным вопросом — «Как вас зовут?» или «Подскажите, пожалуйста, ваше имя». НИКОГДА не используй формулировку «Как вас записать?» — она непонятна клиентам. Пропустить вопрос можно в ДВУХ случаях: клиент сам назвал имя в этом диалоге, ИЛИ get_client_context вернул client_name — так он представился при прошлой записи. Во втором случае обратись по имени и НЕ переспрашивай: постоянный клиент, которого каждый раз спрашивают «как вас зовут», понимает, что его не помнят. НИКОГДА не придумывай имя, не бери его из WhatsApp-профиля/названия чата и не подставляй заглушки вроде «Клиент» — в client_name должно попасть имя, которое клиент назвал сам.`,
     `- ОБЯЗАТЕЛЬНОЕ ПОДТВЕРЖДЕНИЕ ПЕРЕД ЗАПИСЬЮ (КРИТИЧНО, железное правило): НИКОГДА не вызывай create_appointment, пока не показал клиенту полную сводку записи И не получил на неё явное «да». Сначала отправь клиенту красиво оформленную сводку ОТДЕЛЬНЫМ сообщением ровно в таком формате (каждый пункт с новой строки, эмодзи в НАЧАЛЕ строки, БЕЗ маркеров «-»/«•», без markdown-жирности «**», без нумерации — это единственное место, где допускается такой построчный формат вместо сплошного текста):
-Пожалуйста, подтвердите запись:
+${
+  // A Kyrgyz client used to get this Russian template with a Kyrgyz tail glued on («Пожалуйста,
+  // подтвердите запись: … Баары туурабы? Эгер ооба болсо — жазууну ырастаңыз», prod 08.08), or a
+  // word-for-word literary translation of it. The Kyrgyz template is written out instead. Its
+  // header is what KY_SUMMARY_RE looks for, and its last line asks for «ооба», which the
+  // confirmation gate in create_appointment accepts.
+  language === "ky"
+    ? `(Пояснение для тебя, клиенту его не пиши: сводка на кыргызском; в правилах ниже строка «Стоимость» — это «💰 Баасы», «Продолжительность» — «⏳ Узактыгы», «Имя» — «🙍 Атыңыз». Заголовок и последнюю строку пиши дословно, по-русски сводку не пиши.)
+Текшерип коюңузчу:
+
+✂️ Услуга: <название услуги ДОСЛОВНО из прайса, не переводи>
+👤 ${sn.nomSg[0].toUpperCase() + sn.nomSg.slice(1)}: <имя ${sn.genSg}>
+📅 Күнү: <дата по-кыргызски, напр. «24-июль, шаршемби»>
+🕒 Саат: <HH:MM>
+⏳ Узактыгы: <если известна из get_services, напр. «1 саат» / «1 саат 30 мүнөт» — иначе строку не пиши>
+💰 Баасы: <цена или вилка из get_services — «700 сом» / «3000–5000 сом»>
+🙍 Атыңыз: <имя клиента, на которое записываем — НИКОГДА «Неизвестно»/«Клиент», сервер такое не примет>
+
+Баары туура болсо, «ооба» деп жазып коюңуз 🙂`
+    : `Пожалуйста, подтвердите запись:
 
 ✂️ Услуга: <название>
 👤 ${sn.nomSg[0].toUpperCase() + sn.nomSg.slice(1)}: <имя ${sn.genSg}>
@@ -458,7 +520,8 @@ ${servicesRoster}
 💰 Стоимость: <цена или вилка из get_services — «700 сом» / «от 3000 до 5000 сом»>
 🙍 Имя: <имя клиента, на которое записываем — НИКОГДА «Неизвестно»/«Клиент», сервер такое не примет>
 
-Всё верно? Если да — подтвердите запись.`,
+Всё верно? Если да — подтвердите запись.`
+}`,
     `- ЦЕНА В СВОДКЕ ОБЯЗАТЕЛЬНА: если стоимость услуги известна (get_services вернул цену или вилку, либо вы согласовали сумму по фото/подвиду) — она ДОЛЖНА быть в сводке подтверждения. Не подтверждай запись без строки «Стоимость». Для услуги-вилки покажи СУЖЕННУЮ оценку (если согласовали в диалоге) либо общую вилку (если сузить не удалось). Приписку «точную цену ${sn.nomSg} подтвердит на месте» добавляй ТОЛЬКО когда цена реально может измениться (например, у оценки confidence=low или данные всё ещё неполные), а не автоматически всегда. Строку «Продолжительность» указывай, если длительность известна из get_services (для вилки длительности — выбранную по фото или диапазон).`,
     `- create_appointment вызывай ТОЛЬКО после того, как клиент явно подтвердил ЭТУ сводку («да», «верно», «записывайте», «ооба», «макул»). Если клиент в ответ меняет деталь (другое время/${sn.accSg}/услугу) — обнови сводку и снова попроси подтверждение, запись не создавай.`,
     `- БЕЗ ДУБЛЕЙ: если create_appointment вернул reason=already_booked — у клиента уже есть запись на эту услугу (данные в поле existing). Не создавай вторую молча: назови существующую запись (дата/время/${sn.nomSg}) и спроси, оформить ЕЩЁ ОДНУ (напр. на другого человека) или изменить эту. Вторую запись создавай только после явного согласия — повторным вызовом create_appointment с confirm_duplicate:true.`,
@@ -480,7 +543,7 @@ ${servicesRoster}
     `- ГАРАНТИЯ/СРОКИ: точную гарантию салона называй ТОЛЬКО если она есть в фактах о салоне выше. Не придумывай срок гарантии. И следи за логикой: гарантия не может быть длиннее, чем держится результат (напр. если кератин держится 3–5 месяцев, гарантия в «10 месяцев» — бессмыслица). Если салон не задал гарантию — честно скажи, что условия уточнит ${sn.nomSg}, не выдумывай цифру.`,
     `- ЗДОРОВЬЕ И БЕЗОПАСНОСТЬ (АВТО-ЭСКАЛАЦИЯ, критично): если клиент сам сообщает о беременности, аллергии на препараты/материалы, хроническом заболевании, приёме лекарств, свежих травмах/операциях, кожных заболеваниях в зоне процедуры, онкологии, сердечно-сосудистых проблемах или другом потенциально опасном факторе — НЕ решай сам, безопасна ли услуга, и НЕ дожидайся, пока клиент спросит. Сразу вызови escalate_to_human (в reason кратко перечисли, что назвал клиент), а клиенту тепло скажи: «Спасибо, что предупредили — по такому случаю ${sn.datSg} нужно оценить лично, передаю ваш запрос ${sn.datSg}, он свяжется с вами». Общую информацию из базы знаний дать можно, но окончательное «можно/нельзя» — только специалист.`,
     `- ЦЕНА ПО ФОТО: не выводи цифры из изображения сам. Для услуги с диапазоном вызови estimate_price_from_photo (service_id). Только success=true разрешает назвать рассчитанную инструментом цену (и цены вариантов из price_by_choice — как варианты на выбор); при needs сделай то, что написано в поле ask, при unconfigured назови только общий диапазон каталога и скажи, что точную цену уточнит мастер. Никогда не обещай точную цену без настроенных правил салона.`,
-    `- «НЕТ СВОБОДНОГО ВРЕМЕНИ» — только по факту инструмента (СТРОГО): фразы «свободных окон нет», «занято», «жок экен», «bош убакыт жок», «no free time», «all booked» РАЗРЕШЕНЫ только если В ЭТОМ ЖЕ ХОДЕ инструмент get_available_slots вернул reason=fully_booked / part_unavailable / closed_that_day / master_off_that_day / hours_not_configured. Если ты НЕ вызывал get_available_slots в этом ходе — не имеешь права утверждать, что времени нет. Вызови инструмент, посмотри реальный ответ, потом уже говори.`,
+    `- «НЕТ СВОБОДНОГО ВРЕМЕНИ» — только по факту инструмента (СТРОГО): фразы «свободных окон нет», «занято», «жок экен», «бош убакыт жок», «свободно жок», «no free time», «all booked» РАЗРЕШЕНЫ только если В ЭТОМ ЖЕ ХОДЕ инструмент get_available_slots вернул reason=fully_booked / part_unavailable / closed_that_day / master_off_that_day / hours_not_configured. Если ты НЕ вызывал get_available_slots в этом ходе — не имеешь права утверждать, что времени нет. Вызови инструмент, посмотри реальный ответ, потом уже говори.`,
     `- Не обещай «100%» результат и не преувеличивай сроки.`,
     `- create_appointment — только после явного «да» («да», «записывайте», «ооба», «макул»).`,
     `- reason=slot_not_free при записи → время только что заняли у выбранного ${sn.genSg}. Если ответ содержит masters_free_at_requested_time — предложи записаться на ТО ЖЕ время к этим ${sn.genPl} (назови их), иначе предложи времена из nearest у выбранного ${sn.genSg}. Извинись коротко и запиши только после согласия клиента.`,
@@ -495,6 +558,9 @@ ${servicesRoster}
     // it refines (especially the anti-nag stop rule, which must beat every close
     // instruction above it), while still yielding to whatever the owner wrote below.
     ...(salesBlock ? [``, salesBlock] : []),
+    // Kyrgyz self-check, close to the point of generation (see languageFinalCheck). Above the
+    // owner's block on purpose: an owner who wants literary Kyrgyz still gets the last word.
+    ...(languageFinalCheck(language, sn.nomSg) ? [``, languageFinalCheck(language, sn.nomSg)] : []),
     // ────────────────────────────────────────────────────────────────
     // ПРАВИЛА ЭТОГО САЛОНА (highest-priority overrides block)
     // ────────────────────────────────────────────────────────────────
@@ -1867,14 +1933,24 @@ export async function executeV4Tool(
       // Strict yes-words. Deliberately narrow — a fuzzy match risks accepting a "yes-shaped"
       // clarification like "да, а сколько?" as a booking green-light.
       //  ru: да, ага, конечно, подтверждаю, всё верно, верно, согласен, записывайте
-      //  ky: ооба, макул, туура, жазып, жаз
+      //  ky: ооба, макул, туура, жазып, жаз, болот, мейли, жарайт, баары туура, ок/окей
       //  kz: иә, ия, жарайды, жазыңыз, ойе
       //  en: yes, yeah, yep, ok, okay, confirm, book it, go ahead, sounds good
       // Additionally we require the quote to be SHORT (≤ 80 chars) — long paraphrases hide
       // qualifiers like "а если …" that flip the meaning.
+      // «Болот», «мейли», «ок» are how Bishkek most often says yes to a summary; without them the
+      // gate refused a real confirmation and the client got the same summary twice. «ок» must
+      // stand alone — as a prefix it would accept «окошко есть?».
       const YES_RE =
-        /^(да|ага|конечно|подтвержда(ю|ем)|(всё\s+|все\s+)?верно|согласен|согласна|записывай(те)?|давай(те)?|ооба|макул|туура|жазып(\s+койсоңуз)?|жаз(\s+бер(ейин)?)?|иә|ия|жарайды|жазыңыз|ойе|yes|yeah|yep|yup|ok(ay)?|confirm(ed)?|book(\s+it)?|go\s+ahead|sounds\s+good|approve[d]?)([\s\.\!\?,]*.{0,60})?$/i;
-      const isRealYes = rawConf.length > 0 && rawConf.length <= 80 && YES_RE.test(rawConf);
+        /^(да|ага|конечно|подтвержда(ю|ем)|(всё\s+|все\s+)?верно|согласен|согласна|записывай(те)?|давай(те)?|ооба|макул|туура|жазып(\s+койсоңуз)?|жаз(\s+бер(ейин)?)?|болот(?![а-яёөүң])|мейли|жарайт|баары\s+туура|ок(?:ей|эй)?(?![а-яёөүңa-z])|иә|ия|жарайды|жазыңыз|ойе|yes|yeah|yep|yup|ok(ay)?|confirm(ed)?|book(\s+it)?|go\s+ahead|sounds\s+good|approve[d]?)([\s\.\!\?,]*.{0,60})?$/i;
+      // «Болот» is also a common Kyrgyz name. A model quoting the client's NAME as the
+      // confirmation («Атыңыз ким?» → «Болот») has not heard a yes.
+      const lettersOf = (s: unknown) =>
+        typeof s === "string" ? s.toLowerCase().replace(/[^\p{L}]/gu, "") : "";
+      const quotedTheName =
+        lettersOf(rawConf) !== "" && lettersOf(rawConf) === lettersOf(args.client_name);
+      const isRealYes =
+        rawConf.length > 0 && rawConf.length <= 80 && YES_RE.test(rawConf) && !quotedTheName;
       if (!isRealYes) {
         return {
           success: false,
@@ -2878,8 +2954,7 @@ export function photoAskFallback(
   services: { line: string }[],
   language: "ru" | "ky" | "en",
 ): string {
-  if (language === "ky")
-    return "Сүрөт жиберсеңиз, баасын так айтып берем 🙂 Сураныч, фото жөнөтүңүз.";
+  if (language === "ky") return "Фото жиберип коёсузбу? Баасын так айтып берем 🙂";
   if (language === "en")
     return "Could you send a photo? I'll tell you the exact price right away 🙂";
   const lines = [...new Set(services.map((s) => s.line).filter(Boolean))];
@@ -3025,7 +3100,7 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     const hadImage = input.lastMessages.some((m) => m.kind === "image");
     const resend = hadImage
       ? language === "ky"
-        ? "Кечиресиз, сүрөтүңүздү ача алган жокмун 🙏 Дагы бир жолу жөнөтүп көрүңүзчү."
+        ? "Кечиресиз, фото ачылбай калды 🙏 Дагы бир жолу жиберип коёсузбу?"
         : language === "en"
           ? "Sorry, I couldn't open your photo 🙏 Could you send it once more?"
           : "Извините, не получилось открыть ваше фото 🙏 Пришлите, пожалуйста, ещё раз."
@@ -3357,7 +3432,7 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
         flags.escalateReason = `AI недоступен (${res.error ?? "no parts"}). Ответьте клиенту вручную.`;
         r =
           language === "ky"
-            ? "Кечиресиз, азыр ассистент жеткиликсиз 🙏 Администратор бир аздан кийин сизге жооп берет."
+            ? "Кечиресиз, ассистент азыр иштебей турат 🙏 Администратор жакында өзү жазат."
             : language === "en"
               ? "Sorry, the assistant is unavailable right now 🙏 Our admin will reply to you shortly."
               : "Извините, ассистент сейчас недоступен 🙏 Администратор ответит вам в ближайшее время.";
@@ -3495,8 +3570,13 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   // first-person verbs and wait-phrases so it never catches a legit imperative to the CLIENT
   // ("уточните, пожалуйста, день" = "уточнИТЕ", not "уточню").
   const STALL_RE =
-    /(сейчас\s+(проверю|гляну|узна|посмотрю|уточню|выясню|определю|подберу|рассчита|загляну|скажу)|\b(проверю|проверяю|уточняю|уточню|выясняю|посмотрю|гляну|подберу)\b|проверю\s+(распис|кален|свобод|нали)|секундоч|минуточ|минутку|пару\s+(секунд|минут)|подожд|обожд|погоди|ожидайте|одну\s+секунд|дайте\s+(мне\s+)?(секунд|минут|момент)|азыр\s+(текшер|кара|көр|бил|айт)|текшерип\s+көр|карап\s+көр|күтө\s+тур|бир\s+аз\s+күт|let me (check|see)|i['’]?ll check|i will check|checking\b|one moment|hold on|bear with|give me a (sec|moment|minute))/i;
-  if (reply && STALL_RE.test(reply)) {
+    /(сейчас\s+(проверю|гляну|узна|посмотрю|уточню|выясню|определю|подберу|рассчита|загляну|скажу)|\b(проверю|проверяю|уточняю|уточню|выясняю|посмотрю|гляну|подберу)\b|проверю\s+(распис|кален|свобод|нали)|секундоч|минуточ|минутку|пару\s+(секунд|минут)|подожд|обожд|погоди|ожидайте|одну\s+секунд|дайте\s+(мне\s+)?(секунд|минут|момент)|азыр\s+(текшер|кара|көр|бил|айт)|текшерип\s+көр(өйүн|өм|үп)|карап\s+көр(өйүн|өм|үп)|күтө\s+тур|бир\s+аз\s+күт|let me (check|see)|i['’]?ll check|i will check|checking\b|one moment|hold on|bear with|give me a (sec|moment|minute))/i;
+  // «текшерип/карап көр…» used to match any form, including «карап көрүңүз» — «have a look»,
+  // said TO the client, which a Kyrgyz reply uses naturally. Only the first person is a stall
+  // now, the same distinction the Russian arm draws between «уточню» and «уточните». The
+  // mixed-language stalls («бир минут», «азыр проверить кылам») live in KY_STALL_RE.
+  const isStall = (text: string) => STALL_RE.test(text) || KY_STALL_RE.test(text);
+  if (reply && isStall(reply)) {
     debug.errors.push("stall_detected_forcing_completion");
     contents.push({
       role: "user",
@@ -3510,11 +3590,13 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     if (retry) reply = retry;
     // Still stalling after the nudge → never leave the client hanging: send a graceful,
     // deterministic message instead of a bare "подождите".
-    if (!reply || STALL_RE.test(reply)) {
+    if (!reply || isStall(reply)) {
       debug.errors.push("stall_persisted_using_fallback");
+      // Like the Russian line, this one is caught by the apology-loop guard right below and
+      // becomes the hand-off to a human; the wording has to keep matching KY_APOLOGY_LOOP_RE.
       reply =
         language === "ky"
-          ? "Кечиресиз, азыр маалыматты ала алган жокмын. Бир аздан кийин кайра жазып көрүңүз, же сурооңузду администраторго өткөрүп берейин."
+          ? "Кечиресиз, азыр расписаниени ача албай жатам 🙏 Бир аздан кийин кайра жазып көрүңүз же администраторго өткөрүп берейин."
           : language === "en"
             ? "Sorry, I couldn't fetch the data just now. Please try again in a minute, or I can pass your request to the salon admin."
             : "К сожалению, сейчас не удалось получить данные. Попробуйте, пожалуйста, ещё раз через минуту — или я передам ваш запрос администратору.";
@@ -3525,8 +3607,10 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     debug.errors.push("no text reply after tool loop");
     reply =
       language === "ky"
-        ? "Кечиресиз, дагы бир жолу жазыңызчы."
-        : "Извините, напишите, пожалуйста, ещё раз.";
+        ? "Кечиресиз, дагы бир жолу жазып коёсузбу?"
+        : language === "en"
+          ? "Sorry, could you write that once more?"
+          : "Извините, напишите, пожалуйста, ещё раз.";
   }
 
   // APOLOGY-LOOP GUARD (fix for the Kyrgyz "не смог уточнить расписание, попробуйте через
@@ -3538,7 +3622,7 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   // the "жок экен" ("turns out there's none") pattern seen when the model INVENTS busyness.
   const APOLOGY_LOOP_RE =
     /(не\s+получилось|не\s+удалось|не\s+смог).*?(расписан|данные|график|информац|распис)|(тактай\s+ал(ган)?\s+(жокмун|жокмын)|маалыматты\s+ала\s+алган\s+(жокмун|жокмын)|расписаниени\s+тактай|түшүнгөн\s+(жокмун|жокмын))|couldn['’]?t\s+(fetch|get|find).*(schedule|data|info)/i;
-  if (APOLOGY_LOOP_RE.test(reply)) {
+  if (APOLOGY_LOOP_RE.test(reply) || KY_APOLOGY_LOOP_RE.test(reply)) {
     debug.errors.push("apology_loop_detected_forcing_escalation");
     flags.needsHuman = true;
     flags.escalateReason =
@@ -3546,7 +3630,7 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
       `AI не смог получить данные расписания/услуг несмотря на попытки. Клиенту нужен живой ответ.`;
     reply =
       language === "ky"
-        ? "Кечиресиз, мен азыр так жооп бере албай жатам 🙏 Диалогду администраторго өткөрүп жаттам — ал жакында сизге кайра жазат."
+        ? "Кечиресиз, азыр так жооп бере албай турам 🙏 Администраторго өткөрүп берем — ал жакында өзү жазат."
         : language === "en"
           ? "I'm sorry, I can't answer this reliably right now 🙏 I'm handing the conversation to the admin — they'll message you back shortly."
           : "Извините, я сейчас не могу ответить уверенно 🙏 Передаю диалог администратору — он свяжется с вами в ближайшее время.";
@@ -3608,7 +3692,9 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     .slice()
     .reverse()
     .some((a) => a.startsWith("tool:get_available_slots") || a.startsWith("tool:check_time"));
-  if (FAKE_BUSY_RE.test(reply) && !slotToolCalledThisTurn) {
+  // KY_FAKE_BUSY_RE: the same claim in mixed Kyrgyz («свободно жок», «15:00 занят экен»), which
+  // the Kyrgyz arm above (literary words only) never saw.
+  if ((FAKE_BUSY_RE.test(reply) || KY_FAKE_BUSY_RE.test(reply)) && !slotToolCalledThisTurn) {
     debug.errors.push("fake_busy_without_tool_call_forcing_retry");
     contents.push({
       role: "user",
@@ -3661,6 +3747,9 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   // while still catching wholesale fabrication.
   const OFFER_RE =
     /(свободн|есть\s+окош|окошк|могу\s+предложить|предлож|подойд[её]т|удобно\s+будет|запишу\s+вас\s+на)|(бош\s+убак|орун\s+бар|жаз(ып)?\s+кой)|(available|free\s+slots?|i\s+can\s+offer|would\s+\w+\s+work)/i;
+  // KY_OFFER_RE adds the Kyrgyz ways of offering a time («15:00 бош», «жазып коёюнбу?»,
+  // «кайсысы сизге удобно?») that the literary arm above does not know.
+  const isOffer = (text: string) => OFFER_RE.test(text) || KY_OFFER_RE.test(text);
   const clockTimesInReply = (text: string) =>
     [...text.matchAll(/\b([01]?\d|2[0-3]):([0-5]\d)\b/g)].map(
       (m) => `${m[1].padStart(2, "0")}:${m[2]}`,
@@ -3673,13 +3762,13 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     .map((m) => m.text_body ?? "")
     .join(" ");
   const asksAvailability =
-    /(завтра|послезавтра|сегодня|когда|врем[яени]|час|окош|свобод|можно|барбы|качан|эртең|бүгүн|available|tomorrow|today)/i.test(
+    /(завтра|послезавтра|сегодня|когда|врем[яени]|час|окош|свобод|можно|барбы|качан|эртең|бүгүн|эртен|бугун|саат|убак|бош|available|tomorrow|today)/i.test(
       latestClientText,
     );
   if (
     !slotToolRanThisTurn &&
     asksAvailability &&
-    OFFER_RE.test(reply) &&
+    isOffer(reply) &&
     clockTimesInReply(reply).length > 0
   ) {
     debug.errors.push("unverified_slot_offer_forcing_retry");
@@ -3693,10 +3782,15 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     });
     const retry = await runToolLoop();
     if (retry) reply = retry;
-    if (!slotToolRanThisTurn && OFFER_RE.test(reply) && clockTimesInReply(reply).length > 0) {
+    if (!slotToolRanThisTurn && isOffer(reply) && clockTimesInReply(reply).length > 0) {
       debug.errors.push("unverified_slot_offer_suppressed");
       flags.needsHuman = true;
-      reply = "Не хочу обещать время без проверки календаря. Передам ваш вопрос администратору.";
+      reply =
+        language === "ky"
+          ? "Убакытты текшербей туруп убада бергим келбейт 🙏 Администраторго өткөрүп берем, ал жакында жазат."
+          : language === "en"
+            ? "I'd rather not promise a time without checking the calendar. I'm passing your question to the admin."
+            : "Не хочу обещать время без проверки календаря. Передам ваш вопрос администратору.";
     }
   }
   const mentionedTimes = clockTimesInReply(reply);
@@ -3711,7 +3805,7 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   // создавалась (полный прогон: B01/B13/B15/B17 свалились из PASS в «запись не создана»).
   // Случай «вообще без инструмента» ловится расширенным FAKE_BUSY_RE выше — он про утверждение,
   // а не про перечисление времён, и ложных срабатываний не даёт.
-  if (slotToolRanThisTurn && OFFER_RE.test(reply) && noneVerified) {
+  if (slotToolRanThisTurn && isOffer(reply) && noneVerified) {
     debug.errors.push("invented_slots_forcing_retry");
     const truth = verifiedFreeTimes.size
       ? `Календарь на этот ход вернул ТОЛЬКО эти свободные времена: ${[...verifiedFreeTimes].sort().join(", ")}.`
@@ -3736,14 +3830,21 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
       (m) => `${m[1].padStart(2, "0")}:${m[2]}`,
     );
     const stillInvented =
-      retryTimes.length > 0 &&
-      !retryTimes.some((t) => verifiedFreeTimes.has(t)) &&
-      OFFER_RE.test(reply);
+      retryTimes.length > 0 && !retryTimes.some((t) => verifiedFreeTimes.has(t)) && isOffer(reply);
     if (stillInvented) {
       debug.errors.push("invented_slots_suppressed");
+      const free = [...verifiedFreeTimes].sort().join(", ");
       reply = verifiedFreeTimes.size
-        ? `Свободное время есть: ${[...verifiedFreeTimes].sort().join(", ")}. Какое вам удобно?`
-        : "Сейчас уточню свободное время у администратора и вернусь с ответом.";
+        ? language === "ky"
+          ? `${free} свободно. Кайсысы сизге удобно?`
+          : language === "en"
+            ? `Free times: ${free}. Which one suits you?`
+            : `Свободное время есть: ${free}. Какое вам удобно?`
+        : language === "ky"
+          ? "Убакытты администратор тактап, жакында жазат 🙏"
+          : language === "en"
+            ? "The admin will confirm the free times and message you shortly."
+            : "Сейчас уточню свободное время у администратора и вернусь с ответом.";
       if (!verifiedFreeTimes.size) flags.needsHuman = true;
     }
     try {
@@ -3817,9 +3918,15 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   //
   // Имя надо спросить ДО сводки. Инструкцией это уже требуется и всё равно нарушается, поэтому
   // сводку без имени наружу просто не выпускаем.
+  //
+  // A Kyrgyz summary opens with «Текшерип коюңузчу:» (the template in the prompt) — that is
+  // KY_SUMMARY_RE. The name line used to be matched with \bИмя / \bАты, and \b in JS is ASCII-only:
+  // it never fires before a Cyrillic letter, so a summary with «Имя:» but no 🙍 counted as
+  // nameless. A letter lookbehind with the u flag is what works on Cyrillic.
   const SUMMARY_RE = /подтвердите\s+запись|confirm\s+your\s+booking|жазууну\s+ырастаңыз/i;
-  const HAS_NAME_LINE_RE = /(🙍|\bИмя\s*:|\bName\s*:|\bАты\s*:)/i;
-  if (SUMMARY_RE.test(reply) && !HAS_NAME_LINE_RE.test(reply)) {
+  const isSummary = (text: string) => SUMMARY_RE.test(text) || KY_SUMMARY_RE.test(text);
+  const HAS_NAME_LINE_RE = /(🙍|(?<!\p{L})(?:Имя|Name|Аты|Атыңыз)\s*:)/iu;
+  if (isSummary(reply) && !HAS_NAME_LINE_RE.test(reply)) {
     debug.errors.push("summary_without_name_forcing_retry");
     contents.push({
       role: "user",
@@ -3832,9 +3939,14 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     const retry = await runToolLoop();
     if (retry) reply = retry;
     // Снова сводка без имени — не отправляем её, спрашиваем имя сами.
-    if (SUMMARY_RE.test(reply) && !HAS_NAME_LINE_RE.test(reply)) {
+    if (isSummary(reply) && !HAS_NAME_LINE_RE.test(reply)) {
       debug.errors.push("summary_without_name_suppressed");
-      reply = "Подскажите, пожалуйста, как вас зовут — и сразу оформлю запись.";
+      reply =
+        language === "ky"
+          ? "Атыңыз ким? Анан дароо жазып коём 🙂"
+          : language === "en"
+            ? "May I have your name? Then I'll book you right away."
+            : "Подскажите, пожалуйста, как вас зовут — и сразу оформлю запись.";
     }
   }
 
@@ -3866,7 +3978,12 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
     if (retry) reply = retry;
     if (TECH_LEAK_RE.test(reply)) {
       debug.errors.push("tech_leak_suppressed");
-      reply = "Секунду, уточню у администратора и вернусь с ответом.";
+      reply =
+        language === "ky"
+          ? "Бул боюнча администратордон тактап, жакында жазабыз 🙏"
+          : language === "en"
+            ? "Let me check this with the admin — we'll message you shortly."
+            : "Секунду, уточню у администратора и вернусь с ответом.";
       flags.needsHuman = true;
     }
   }
@@ -3960,7 +4077,7 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   if (flags.justBookedManageUrl && !reply.includes(flags.justBookedManageUrl)) {
     const manageIntro =
       language === "ky"
-        ? "Пландарыңыз өзгөрсө — административга жазбай туруп, төмөнкү шилтеме аркылуу өзүңүз которо же жокко чыгара аласыз:"
+        ? "Пландар өзгөрсө, ушул ссылкадан өзүңүз перенести же отменить кылсаңыз болот:"
         : language === "en"
           ? "If your plans change, you can reschedule or cancel yourself via the link below — no need to message us:"
           : "Если ваши планы изменятся, вы сможете сами перенести или отменить запись по ссылке ниже — без переписки с администратором:";
@@ -3973,7 +4090,7 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
   if (flags.bookingLinkSent && !reply.includes(flags.bookingLinkSent)) {
     const linkIntro =
       language === "ky"
-        ? "Убакытты өзүңүз тандагыңыз келсе — ушул шилтеме аркылуу онлайн жазыла аласыз:"
+        ? "Убакытты өзүңүз тандагыңыз келсе, ушул ссылкадан онлайн жазылсаңыз болот:"
         : language === "en"
           ? "If you'd rather pick a time yourself, you can book online here:"
           : "Если удобнее выбрать время самостоятельно — можно записаться онлайн здесь:";
@@ -4148,7 +4265,7 @@ export async function runWaAgentV4(input: WaAgentInput): Promise<WaAgentResult> 
             fileName: "payment-qr.png",
             caption:
               language === "ky"
-                ? `Төлөм үчүн QR-код: ${flags.prepayment!.amount} ${flags.prepayment!.currency}. Төлөгөндөн кийин чектин скриншотун ушул жерге жөнөтүңүз.`
+                ? `Предоплата үчүн QR-код: ${flags.prepayment!.amount} ${flags.prepayment!.currency}. Төлөгөндөн кийин чектин скриншотун ушул жерге жиберип коюңуз 🙏`
                 : language === "en"
                   ? `Payment QR: ${flags.prepayment!.amount} ${flags.prepayment!.currency}. After paying, please send the receipt screenshot right here.`
                   : `QR-код для оплаты: ${flags.prepayment!.amount} ${flags.prepayment!.currency}. После оплаты пришлите, пожалуйста, скриншот чека сюда, в этот чат.`,

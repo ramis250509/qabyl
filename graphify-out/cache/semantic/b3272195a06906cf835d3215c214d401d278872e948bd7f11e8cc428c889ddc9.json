@@ -1,1 +1,101 @@
-{"nodes": [{"id": "public_icon512_app_icon", "label": "Qabyl App Icon (512px)", "file_type": "image", "source_file": "public/icon-512.png", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "public_icon512_brand_identity", "label": "Qabyl Brand Identity", "file_type": "image", "source_file": "public/icon-512.png", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "public_icon512_logo_q", "label": "Stylized Q Logo Mark", "file_type": "image", "source_file": "public/icon-512.png", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "public_icon512_gradient_background", "label": "Teal-to-Pink Gradient Background", "file_type": "image", "source_file": "public/icon-512.png", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [{"source": "public_icon512_app_icon", "target": "public_icon512_brand_identity", "relation": "conceptually_related_to", "confidence": "INFERRED", "confidence_score": 0.95, "source_file": "public/icon-512.png", "source_location": null, "weight": 1.0}, {"source": "public_icon512_app_icon", "target": "public_icon512_logo_q", "relation": "conceptually_related_to", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "public/icon-512.png", "source_location": null, "weight": 1.0}, {"source": "public_icon512_app_icon", "target": "public_icon512_gradient_background", "relation": "conceptually_related_to", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "public/icon-512.png", "source_location": null, "weight": 1.0}, {"source": "public_icon512_logo_q", "target": "public_icon512_brand_identity", "relation": "conceptually_related_to", "confidence": "INFERRED", "confidence_score": 0.95, "source_file": "public/icon-512.png", "source_location": null, "weight": 1.0}, {"source": "public_icon512_gradient_background", "target": "public_icon512_brand_identity", "relation": "conceptually_related_to", "confidence": "INFERRED", "confidence_score": 0.85, "source_file": "public/icon-512.png", "source_location": null, "weight": 1.0}], "hyperedges": []}
+{
+  "nodes": [
+    {
+      "id": "public_icon512_app_icon",
+      "label": "Qabyl App Icon (512px)",
+      "file_type": "image",
+      "source_file": "public/icon-512.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "public_icon512_brand_identity",
+      "label": "Qabyl Brand Identity",
+      "file_type": "image",
+      "source_file": "public/icon-512.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "public_icon512_logo_q",
+      "label": "Stylized Q Logo Mark",
+      "file_type": "image",
+      "source_file": "public/icon-512.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "public_icon512_gradient_background",
+      "label": "Teal-to-Pink Gradient Background",
+      "file_type": "image",
+      "source_file": "public/icon-512.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "public_icon512_app_icon",
+      "target": "public_icon512_brand_identity",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.95,
+      "source_file": "public/icon-512.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "public_icon512_app_icon",
+      "target": "public_icon512_logo_q",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "public/icon-512.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "public_icon512_app_icon",
+      "target": "public_icon512_gradient_background",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "public/icon-512.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "public_icon512_logo_q",
+      "target": "public_icon512_brand_identity",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.95,
+      "source_file": "public/icon-512.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "public_icon512_gradient_background",
+      "target": "public_icon512_brand_identity",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "public/icon-512.png",
+      "source_location": null,
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": []
+}

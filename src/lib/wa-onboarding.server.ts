@@ -130,6 +130,13 @@ export const NOTIFICATION_TEMPLATES = [
     examples: ["Айгуль", "12 августа в 19:00"],
   },
   {
+    kind: "restoration",
+    name: "booking_restored",
+    header: "Запись восстановлена",
+    body: "Здравствуйте, {{1}}!\n\nВаша запись восстановлена — ждём вас {{2}} у специалиста {{3}} ✅\n\nИзменить запись можно тут: https://qabyl.com/manage/{{4}}",
+    examples: ["Айгуль", "14 августа в 16:00", "Бегимай", "a7f3c9e2b1d4"],
+  },
+  {
     kind: "owner_alert",
     name: "owner_new_booking",
     header: "Новая запись",

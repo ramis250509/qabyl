@@ -1,1 +1,58 @@
-{"nodes": [{"id": "c_users_akbarov_ramis_onedrive_desktop_qabyl_codex_deploy_scripts_check_invariants_sh", "label": "check-invariants.sh", "file_type": "code", "source_file": ".codex-deploy/scripts/check-invariants.sh", "source_location": "L1", "metadata": {"language": "bash", "kind": "file"}}, {"id": "c_users_akbarov_ramis_onedrive_desktop_qabyl_codex_deploy_scripts_check_invariants_sh__entry", "label": "check-invariants.sh script", "file_type": "code", "source_file": ".codex-deploy/scripts/check-invariants.sh", "source_location": "L1", "metadata": {"language": "bash", "kind": "bash_entrypoint"}}, {"id": "scripts_check_invariants_fail_setup", "label": "fail_setup()", "file_type": "code", "source_file": ".codex-deploy/scripts/check-invariants.sh", "source_location": "L15", "metadata": {"language": "bash", "kind": "bash_function"}}], "edges": [{"source": "c_users_akbarov_ramis_onedrive_desktop_qabyl_codex_deploy_scripts_check_invariants_sh", "target": "c_users_akbarov_ramis_onedrive_desktop_qabyl_codex_deploy_scripts_check_invariants_sh__entry", "relation": "contains", "confidence": "EXTRACTED", "source_file": ".codex-deploy/scripts/check-invariants.sh", "source_location": "L1", "weight": 1.0}, {"source": "c_users_akbarov_ramis_onedrive_desktop_qabyl_codex_deploy_scripts_check_invariants_sh", "target": "scripts_check_invariants_fail_setup", "relation": "defines", "confidence": "EXTRACTED", "source_file": ".codex-deploy/scripts/check-invariants.sh", "source_location": "L15", "weight": 1.0}, {"source": "c_users_akbarov_ramis_onedrive_desktop_qabyl_codex_deploy_scripts_check_invariants_sh__entry", "target": "scripts_check_invariants_fail_setup", "relation": "calls", "confidence": "EXTRACTED", "source_file": ".codex-deploy/scripts/check-invariants.sh", "source_location": "L27", "weight": 1.0, "context": "call"}]}
+{
+  "nodes": [
+    {
+      "id": "c_users_akbarov_ramis_onedrive_desktop_qabyl_codex_deploy_scripts_check_invariants_sh",
+      "label": "check-invariants.sh",
+      "file_type": "code",
+      "source_file": ".codex-deploy/scripts/check-invariants.sh",
+      "source_location": "L1",
+      "metadata": { "language": "bash", "kind": "file" }
+    },
+    {
+      "id": "c_users_akbarov_ramis_onedrive_desktop_qabyl_codex_deploy_scripts_check_invariants_sh__entry",
+      "label": "check-invariants.sh script",
+      "file_type": "code",
+      "source_file": ".codex-deploy/scripts/check-invariants.sh",
+      "source_location": "L1",
+      "metadata": { "language": "bash", "kind": "bash_entrypoint" }
+    },
+    {
+      "id": "scripts_check_invariants_fail_setup",
+      "label": "fail_setup()",
+      "file_type": "code",
+      "source_file": ".codex-deploy/scripts/check-invariants.sh",
+      "source_location": "L15",
+      "metadata": { "language": "bash", "kind": "bash_function" }
+    }
+  ],
+  "edges": [
+    {
+      "source": "c_users_akbarov_ramis_onedrive_desktop_qabyl_codex_deploy_scripts_check_invariants_sh",
+      "target": "c_users_akbarov_ramis_onedrive_desktop_qabyl_codex_deploy_scripts_check_invariants_sh__entry",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": ".codex-deploy/scripts/check-invariants.sh",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "c_users_akbarov_ramis_onedrive_desktop_qabyl_codex_deploy_scripts_check_invariants_sh",
+      "target": "scripts_check_invariants_fail_setup",
+      "relation": "defines",
+      "confidence": "EXTRACTED",
+      "source_file": ".codex-deploy/scripts/check-invariants.sh",
+      "source_location": "L15",
+      "weight": 1.0
+    },
+    {
+      "source": "c_users_akbarov_ramis_onedrive_desktop_qabyl_codex_deploy_scripts_check_invariants_sh__entry",
+      "target": "scripts_check_invariants_fail_setup",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": ".codex-deploy/scripts/check-invariants.sh",
+      "source_location": "L27",
+      "weight": 1.0,
+      "context": "call"
+    }
+  ]
+}

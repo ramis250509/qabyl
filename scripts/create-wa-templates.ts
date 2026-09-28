@@ -29,6 +29,7 @@ const DRY_RUN = process.argv.includes("--dry-run");
 
 interface TemplateDef {
   name: string;
+  category?: "UTILITY" | "MARKETING";
   /** Жирная строка над сообщением. Пустой HEADER Meta отклоняет — либо текст, либо секции нет. */
   header: string;
   body: string;
@@ -104,6 +105,19 @@ const TEMPLATES: TemplateDef[] = [
     examples: ["Айгуль", "12 августа в 19:00"],
   },
   {
+    name: "booking_restored",
+    header: "Запись восстановлена",
+    contract: "имя · дата и время · мастер · токен ссылки",
+    body: [
+      "Здравствуйте, {{1}}!",
+      "",
+      "Ваша запись восстановлена — ждём вас {{2}} у специалиста {{3}} ✅",
+      "",
+      "Изменить запись можно тут: https://qabyl.com/manage/{{4}}",
+    ].join("\n"),
+    examples: ["Айгуль", "14 августа в 16:00", "Бегимай", "a7f3c9e2b1d4"],
+  },
+  {
     name: "owner_new_booking",
     header: "Новая запись",
     // Уходит владельцу салона, а не клиенту: без приветствий, чтобы суть читалась сразу.
@@ -121,11 +135,32 @@ const TEMPLATES: TemplateDef[] = [
   },
 ];
 
+// Marketing хранится отдельно от transactional-набора: Meta требует отдельную категорию,
+// а отправка допустима только клиентам с зафиксированным marketing opt-in.
+const MARKETING_TEMPLATES: TemplateDef[] = [
+  {
+    name: "client_return_offer",
+    category: "MARKETING",
+    header: "Будем рады видеть вас снова",
+    contract: "имя · название бизнеса · предложение · срок",
+    body: "Здравствуйте, {{1}}! Давно не виделись в {{2}}. Для вас есть предложение: {{3}}. Оно действует до {{4}}. Если сообщения неактуальны, ответьте «Стоп».",
+    examples: ["Айгуль", "Qabyl Clinic", "скидка 10% на повторный приём", "31 августа"],
+  },
+  {
+    name: "service_repeat_reminder",
+    category: "MARKETING",
+    header: "Пора повторить услугу?",
+    contract: "имя · услуга · название бизнеса",
+    body: "Здравствуйте, {{1}}! Возможно, пришло время повторить {{2}} в {{3}}. Ответьте на это сообщение — подберём удобное время. Если сообщения неактуальны, ответьте «Стоп».",
+    examples: ["Айгуль", "процедуру ухода", "Qabyl Clinic"],
+  },
+];
+
 function buildPayload(t: TemplateDef) {
   return {
     name: t.name,
     language: "ru",
-    category: "UTILITY",
+    category: t.category ?? "UTILITY",
     components: [
       { type: "HEADER", format: "TEXT", text: t.header },
       // example.body_text — массив НАБОРОВ примеров, отсюда вложенный массив. Один набор нам
@@ -184,7 +219,10 @@ async function main() {
   // Расхождение текста и примеров даёт отказ уже на стороне Meta, где причина формулируется
   // невнятно. Дешевле поймать здесь.
   let broken = false;
-  for (const t of TEMPLATES) {
+  const selected = process.argv.includes("--include-marketing")
+    ? [...TEMPLATES, ...MARKETING_TEMPLATES]
+    : TEMPLATES;
+  for (const t of selected) {
     const n = placeholderCount(t.body);
     if (n !== t.examples.length) {
       console.error(`❌ ${t.name}: ${n} плейсхолдеров, но ${t.examples.length} примеров`);
@@ -193,10 +231,10 @@ async function main() {
   }
   if (broken) process.exit(1);
 
-  console.log(`WABA ${WABA_ID}, Graph ${GRAPH_VERSION}, шаблонов: ${TEMPLATES.length}\n`);
+  console.log(`WABA ${WABA_ID}, Graph ${GRAPH_VERSION}, шаблонов: ${selected.length}\n`);
 
   if (DRY_RUN) {
-    for (const t of TEMPLATES) {
+    for (const t of selected) {
       console.log(`── ${t.name} · ${t.contract}`);
       console.log(JSON.stringify(buildPayload(t), null, 2));
       console.log();
