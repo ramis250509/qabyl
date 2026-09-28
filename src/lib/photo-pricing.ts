@@ -32,7 +32,15 @@ export type PhotoPricingConfig = {
 };
 export type PhotoClassification = {
   relevant: boolean;
+  /** Самый вероятный вариант по каждому признаку, который на фото виден хотя бы частично. */
   values: Record<string, string | null>;
+  /**
+   * Все варианты, которые фото НЕ исключает (включая самый вероятный). Кадр обрезан — сюда
+   * попадают все длины длиннее видимой части; темно — все возможные густоты. Нет записи —
+   * признак определён уверенно.
+   */
+  possible?: Record<string, string[]>;
+  /** Признаки, о которых фото не говорит ничего: нет нужного снимка или признак вне кадра. */
   uncertain?: string[];
 };
 
@@ -226,15 +234,16 @@ export function photoSubjectOf(
 /**
  * О какой зоне идёт речь в тексте. Нужно guard'у «анкета вместо фото»: вопрос «что сейчас на
  * ногтях?» законен, если у салона по фото настроены только волосы, — ногти ассистенту приходится
- * уточнять словами.
+ * уточнять словами. Кыргызские корни — рядом с русскими: «чач» (волосы), «тырмак» (ногти),
+ * «кирпик» (ресницы), «каш» (брови).
  */
 export function photoSubjectsMentioned(text: string): string[] {
   const t = (text ?? "").toLowerCase();
   const words: [string, RegExp][] = [
-    ["lashes", /ресниц/],
-    ["brows", /бров/],
-    ["nails", /ногт|маникюр|педикюр|покрыти|гель-?лак|дизайн/],
-    ["hair", /волос|густот|осветл|обесцвеч|окрашив|мелирова|кератин|стрижк|причёс|причес/],
+    ["lashes", /ресниц|кирпик/],
+    ["brows", /бров|каш(ы|тар|ка|ым)/],
+    ["nails", /ногт|маникюр|педикюр|покрыти|гель-?лак|дизайн|тырмак|тырмаг/],
+    ["hair", /волос|густот|осветл|обесцвеч|окрашив|мелирова|кератин|стрижк|причёс|причес|чач/],
   ];
   return words.filter(([, re]) => re.test(t)).map(([id]) => id);
 }
@@ -409,6 +418,7 @@ export function applyClientChoice(
   const config = validatePhotoConfig(raw);
   if (!config || !Array.isArray(chosen)) return classification;
   const values = { ...classification.values };
+  const possible = { ...classification.possible };
   const uncertain = new Set(classification.uncertain ?? []);
   let applied = false;
   for (const token of chosen) {
@@ -418,46 +428,188 @@ export function applyClientChoice(
     if (!criterion || criterionShot(criterion) !== "reference") continue;
     if (!criterion.options.some((o) => o.id === optionId)) continue;
     values[criterionId] = optionId;
+    possible[criterionId] = [optionId];
     uncertain.delete(criterionId);
     applied = true;
   }
-  return applied ? { ...classification, values, uncertain: [...uncertain] } : classification;
+  return applied
+    ? { ...classification, values, possible, uncertain: [...uncertain] }
+    : classification;
 }
 
 /**
- * Примера нет, а всё остальное по фото понятно, — считаем цену для каждого варианта желаемого
- * результата. Клиент сразу видит «однотон — 900, сложный дизайн — 1200» вместо третьей просьбы
- * прислать пример, которого у него нет. Это ровно то, что сделал бы живой администратор.
- *
- * Только когда не хватает ровно одного критерия и он читается с референса. Не хватает большего —
- * вариантов становится столько, что это уже не ответ, а прайс-лист.
+ * Забыть всё, что распознано для одного из снимков. Нужна, когда фото одно, а услуге нужны два:
+ * признаки второго снимка с этого фото брать нельзя, даже если распознавание их «увидело».
  */
-export function photoPriceByChoice(
+export function forgetShot(
+  raw: unknown,
+  classification: PhotoClassification,
+  shot: PhotoShot,
+): PhotoClassification {
+  const config = validatePhotoConfig(raw);
+  if (!config) return classification;
+  const ids = config.criteria.filter((c) => criterionShot(c) === shot).map((c) => c.id);
+  if (!ids.length) return classification;
+  const values = { ...classification.values };
+  const possible = { ...classification.possible };
+  for (const id of ids) {
+    delete values[id];
+    delete possible[id];
+  }
+  return {
+    ...classification,
+    values,
+    possible,
+    uncertain: [...new Set([...(classification.uncertain ?? []), ...ids])],
+  };
+}
+
+/** Распознанное — словами владельца: { "Длина волос": "До лопаток" }. */
+export function seenLabels(
+  raw: unknown,
+  selected: Record<string, string | null>,
+): Record<string, string> {
+  const config = validatePhotoConfig(raw);
+  if (!config) return {};
+  const out: Record<string, string> = {};
+  for (const c of config.criteria) {
+    const option = c.options.find((o) => o.id === selected[c.id]);
+    if (option) out[c.label] = option.label;
+  }
+  return out;
+}
+
+/**
+ * Итог оценки по фото:
+ * - exact — всё видно, точная цена;
+ * - range — что-то видно не до конца: ориентировочная вилка от самого дешёвого до самого дорогого
+ *   варианта, которые фото не исключает, и самая вероятная цена внутри неё;
+ * - choice — нет примера желаемого результата: цена каждого варианта на выбор (вилкой, если и
+ *   текущее состояние видно не до конца);
+ * - needs — оценить нечего: фото не про эту услугу или не хватает нескольких примеров.
+ */
+export type PhotoEstimate =
+  | { kind: "exact"; price: number; selected: Record<string, string> }
+  | {
+      kind: "range";
+      min: number;
+      max: number;
+      likely: number;
+      selected: Record<string, string>;
+      /** Названия признаков, которые фото не определило до конца, — ради них можно переснять. */
+      unsure: string[];
+    }
+  | {
+      kind: "choice";
+      criterion: string;
+      options: { choice: string; label: string; min: number; max: number }[];
+      unsure: string[];
+    }
+  | {
+      kind: "needs";
+      /** irrelevant — фото не про эту услугу; reference — нет нескольких примеров сразу. */
+      reason: "irrelevant" | "reference";
+      needs: string[];
+      needShots: PhotoShot[];
+    }
+  | { kind: "error"; error: string };
+
+/**
+ * Оценивает ЛЮБОЕ фото, которое относится к услуге. Клиенты шлют то, что есть: темно, под углом,
+ * кадр обрезан, волосы видны наполовину. Раньше каждый неуверенный признак означал «пришлите фото
+ * получше» — и в живом тесте клиентка трижды слышала «сфотографируйте волосы до пояса», так и не
+ * узнав цену. Теперь неуверенность превращается в честную вилку по правилам салона: считаются все
+ * варианты, которые фото не исключает, и ничего сверх них.
+ *
+ * Невидимое не выдумывается. Признак, о котором фото не говорит совсем, берётся во всём диапазоне
+ * его вариантов — вилка шире, но честная. Исключение — желаемый результат (дизайн, объём): это
+ * выбор клиента, поэтому вместо вилки — варианты с ценами.
+ */
+export function photoEstimate(
   raw: unknown,
   classification: PhotoClassification,
   service: { price: number; price_max: number },
-): { criterion: string; options: { choice: string; label: string; price: number }[] } | null {
+): PhotoEstimate {
   const config = validatePhotoConfig(raw);
-  if (!config || !classification.relevant) return null;
-  const missing = config.criteria.filter(
-    (c) =>
-      !c.options.some((o) => o.id === classification.values?.[c.id]) ||
-      classification.uncertain?.includes(c.id),
-  );
-  if (missing.length !== 1 || criterionShot(missing[0]) !== "reference") return null;
-  const criterion = missing[0];
-  const options: { choice: string; label: string; price: number }[] = [];
-  for (const option of criterion.options) {
-    const choice = `${criterion.id}:${option.id}`;
-    const priced = calculatePhotoPrice(
-      config,
-      applyClientChoice(config, classification, [choice]),
-      service,
-    );
-    if (!("price" in priced)) return null;
-    options.push({ choice, label: option.label, price: priced.price });
+  if (!config) return { kind: "error", error: "photo_rules_not_configured" };
+  if (!classification.relevant)
+    return {
+      kind: "needs",
+      reason: "irrelevant",
+      needs: ["Фото не относится к выбранной услуге — попросите подходящее фото."],
+      needShots: photoShotsNeeded(config),
+    };
+  const candidates = new Map<string, PhotoOption[]>();
+  const selected: Record<string, string> = {};
+  const unsure: string[] = [];
+  const missingReference: PhotoCriterion[] = [];
+  for (const criterion of config.criteria) {
+    const best = criterion.options.find((o) => o.id === classification.values?.[criterion.id]);
+    if (!best || classification.uncertain?.includes(criterion.id)) {
+      if (criterionShot(criterion) === "reference") missingReference.push(criterion);
+      else {
+        candidates.set(criterion.id, criterion.options);
+        unsure.push(criterion.label);
+      }
+      continue;
+    }
+    selected[criterion.id] = best.id;
+    const ids = classification.possible?.[criterion.id];
+    const possible = Array.isArray(ids)
+      ? criterion.options.filter((o) => o.id === best.id || ids.includes(o.id))
+      : [best];
+    candidates.set(criterion.id, possible);
+    if (possible.length > 1) unsure.push(criterion.label);
   }
-  return { criterion: criterion.label, options };
+  if (missingReference.length > 1)
+    return {
+      kind: "needs",
+      reason: "reference",
+      needs: missingReference.map((c) => c.label),
+      needShots: ["reference"],
+    };
+
+  // Цена при выборе по одному варианту на признак: «Цена» — полная стоимость, доплаты сверху.
+  const priceOf = (pick: (c: PhotoCriterion, options: PhotoOption[]) => PhotoOption) => {
+    let base: number | null = null;
+    let surcharges = 0;
+    for (const criterion of config.criteria) {
+      const options = candidates.get(criterion.id);
+      if (!options) continue;
+      const option = pick(criterion, options);
+      if (criterion.mode === "base") base = option.amount;
+      else surcharges += option.amount;
+    }
+    return (base ?? service.price) + surcharges;
+  };
+  const cheapest = (_: PhotoCriterion, options: PhotoOption[]) =>
+    options.reduce((a, b) => (b.amount < a.amount ? b : a));
+  const dearest = (_: PhotoCriterion, options: PhotoOption[]) =>
+    options.reduce((a, b) => (b.amount > a.amount ? b : a));
+  const likeliest = (c: PhotoCriterion, options: PhotoOption[]) =>
+    options.find((o) => o.id === selected[c.id]) ?? cheapest(c, options);
+  const inCatalog = (price: number) =>
+    Number.isFinite(price) && price >= service.price && price <= service.price_max;
+  const outside = { kind: "error" as const, error: "photo_price_outside_service_range" };
+
+  if (missingReference.length === 1) {
+    const criterion = missingReference[0];
+    const options: { choice: string; label: string; min: number; max: number }[] = [];
+    for (const option of criterion.options) {
+      candidates.set(criterion.id, [option]);
+      const min = priceOf(cheapest);
+      const max = priceOf(dearest);
+      if (!inCatalog(min) || !inCatalog(max)) return outside;
+      options.push({ choice: `${criterion.id}:${option.id}`, label: option.label, min, max });
+    }
+    return { kind: "choice", criterion: criterion.label, options, unsure };
+  }
+
+  const min = priceOf(cheapest);
+  const max = priceOf(dearest);
+  if (!inCatalog(min) || !inCatalog(max)) return outside;
+  if (min === max) return { kind: "exact", price: min, selected };
+  return { kind: "range", min, max, likely: priceOf(likeliest), selected, unsure };
 }
 
 /**

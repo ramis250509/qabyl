@@ -5,7 +5,9 @@ import {
   guessPhotoSubject,
   photoBookingPrice,
   photoPresetsFor,
-  photoPriceByChoice,
+  photoEstimate,
+  forgetShot,
+  seenLabels,
   photoPriceTable,
   photoRequestLine,
   photoRuleRangeError,
@@ -164,6 +166,79 @@ const nails: PhotoPricingConfig = {
 };
 const manicure = { price: 800, price_max: 1200 };
 
+describe("любое фото оценивается: точная цена или честная вилка", () => {
+  test("всё видно — точная цена", () => {
+    expect(
+      photoEstimate(
+        config,
+        { relevant: true, values: { length: "long", density: "thick" } },
+        service,
+      ),
+    ).toEqual({ kind: "exact", price: 6000, selected: { length: "long", density: "thick" } });
+  });
+
+  test("кадр обрезан — вилка по вариантам, которые фото не исключает", () => {
+    expect(
+      photoEstimate(
+        config,
+        {
+          relevant: true,
+          values: { length: "short", density: "normal" },
+          possible: { length: ["short", "long"], density: ["normal"] },
+        },
+        service,
+      ),
+    ).toEqual({
+      kind: "range",
+      min: 3000,
+      max: 5000,
+      likely: 3000,
+      selected: { length: "short", density: "normal" },
+      unsure: ["Длина"],
+    });
+  });
+
+  test("густоту не разобрать совсем — вилка по всем её вариантам, длина как видна", () => {
+    expect(
+      photoEstimate(
+        config,
+        { relevant: true, values: { length: "long" }, uncertain: ["density"] },
+        service,
+      ),
+    ).toMatchObject({ kind: "range", min: 5000, max: 6000, unsure: ["Густота"] });
+  });
+
+  test("не видно ничего, но фото про услугу — вилка по правилам салона, без выдумок", () => {
+    expect(photoEstimate(config, { relevant: true, values: {} }, service)).toMatchObject({
+      kind: "range",
+      min: 3000,
+      max: 6000,
+      unsure: ["Длина", "Густота"],
+    });
+  });
+
+  test("выдуманный вариант в possible вилку не расширяет", () => {
+    expect(
+      photoEstimate(
+        config,
+        {
+          relevant: true,
+          values: { length: "long", density: "normal" },
+          possible: { length: ["long", "waist"] },
+        },
+        service,
+      ),
+    ).toMatchObject({ kind: "exact", price: 5000 });
+  });
+
+  test("фото не про услугу — единственный случай, когда цены нет", () => {
+    expect(photoEstimate(config, { relevant: false, values: {} }, service)).toMatchObject({
+      kind: "needs",
+      reason: "irrelevant",
+    });
+  });
+});
+
 describe("желаемый результат можно назвать словами", () => {
   test("слова клиента закрывают только критерий с референса", () => {
     const seen = { relevant: true, values: { nail_state: "gel" }, uncertain: ["design"] };
@@ -184,21 +259,60 @@ describe("желаемый результат можно назвать слов
 
   test("нет примера — цена каждого варианта дизайна", () => {
     const seen = { relevant: true, values: { nail_state: "gel" }, uncertain: ["design"] };
-    expect(photoPriceByChoice(nails, seen, manicure)).toEqual({
+    expect(photoEstimate(nails, seen, manicure)).toEqual({
+      kind: "choice",
       criterion: "Сложность дизайна",
       options: [
-        { choice: "design:plain", label: "Однотон", price: 900 },
-        { choice: "design:accent", label: "Пара акцентных", price: 1000 },
-        { choice: "design:complex", label: "Сложный дизайн", price: 1200 },
+        { choice: "design:plain", label: "Однотон", min: 900, max: 900 },
+        { choice: "design:accent", label: "Пара акцентных", min: 1000, max: 1000 },
+        { choice: "design:complex", label: "Сложный дизайн", min: 1200, max: 1200 },
       ],
+      unsure: [],
     });
   });
 
-  test("не видно того, что есть сейчас, — вариантами не отвечаем, просим фото", () => {
+  test("нет примера и покрытие видно не до конца — варианты вилками", () => {
+    const seen = {
+      relevant: true,
+      values: { nail_state: "gel" },
+      possible: { nail_state: ["bare", "gel"] },
+      uncertain: ["design"],
+    };
+    expect(photoEstimate(nails, seen, manicure)).toMatchObject({
+      kind: "choice",
+      options: [
+        { label: "Однотон", min: 800, max: 900 },
+        { label: "Пара акцентных", min: 900, max: 1000 },
+        { label: "Сложный дизайн", min: 1100, max: 1200 },
+      ],
+      unsure: ["Что сейчас на ногтях"],
+    });
+  });
+
+  test("одно фото на два снимка: признаки второго снимка забываются", () => {
+    const seen = { relevant: true, values: { nail_state: "gel", design: "plain" } };
+    expect(forgetShot(nails, seen, "reference")).toEqual({
+      relevant: true,
+      values: { nail_state: "gel" },
+      possible: {},
+      uncertain: ["design"],
+    });
+    expect(photoEstimate(nails, forgetShot(nails, seen, "reference"), manicure)).toMatchObject({
+      kind: "choice",
+    });
+  });
+
+  test("распознанное называется словами владельца", () => {
+    expect(seenLabels(nails, { nail_state: "gel", design: "invented" })).toEqual({
+      "Что сейчас на ногтях": "Старый гель-лак",
+    });
+  });
+
+  test("выбрала словами после вариантов — точная цена", () => {
+    const seen = { relevant: true, values: { nail_state: "gel" }, uncertain: ["design"] };
     expect(
-      photoPriceByChoice(nails, { relevant: true, values: {}, uncertain: [] }, manicure),
-    ).toBeNull();
-    expect(photoPriceByChoice(nails, { relevant: false, values: {} }, manicure)).toBeNull();
+      photoEstimate(nails, applyClientChoice(nails, seen, ["design:plain"]), manicure),
+    ).toMatchObject({ kind: "exact", price: 900 });
   });
 });
 
