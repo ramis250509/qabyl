@@ -32,14 +32,41 @@ export function PaymentSettings({
   const [quantity, setQuantity] = useState(packs);
   const price = quantity * packPrice;
   return (
-    <Card className="p-4 sm:p-5 space-y-4">
-      <div className="space-y-1">
-        <h2 className="font-semibold">Автопополнение сообщений</h2>
-        <p className="text-sm text-muted-foreground">
-          Пополняйте общий баланс салона и всех его филиалов.
-        </p>
+    <Card className="p-4 space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="font-semibold">Автопополнение</h2>
+          <p className="text-sm text-muted-foreground">
+            При {limit.toLocaleString("ru-RU")} сообщениях докупим ещё{" "}
+            {(packMessages * quantity).toLocaleString("ru-RU")} за {price.toLocaleString("ru-RU")}{" "}
+            сом.
+          </p>
+        </div>
+        <Switch
+          id="topup-enable"
+          checked={enabled}
+          disabled={busy || (!enabled && (!recurring || !card))}
+          aria-label="Автопополнение"
+          onCheckedChange={(value) => {
+            if (value && !window.confirm(`Включить автоматическую покупку пакета за ${price} сом?`))
+              return;
+            void run(
+              "auto-topup",
+              () =>
+                setBillingAutoTopup({
+                  data: {
+                    salonId,
+                    enabled: value,
+                    threshold: limit as 500 | 1000,
+                    packs: quantity,
+                  },
+                }),
+              value ? "Автопополнение включено" : "Автопополнение отключено",
+            );
+          }}
+        />
       </div>
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-2">
           <Label htmlFor="topup-threshold">Когда осталось не больше</Label>
           <select
@@ -71,42 +98,9 @@ export function PaymentSettings({
           </select>
         </div>
       </div>
-      <p className="text-sm">Карта: {card ?? "не привязана"}</p>
-      <p className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">
-        При включении с выбранной карты будет автоматически списываться{" "}
-        {price.toLocaleString("ru-RU")} сом при достижении порога {limit.toLocaleString("ru-RU")}{" "}
-        сообщений. Отключение остановит новые покупки; уже отправленный в банк платёж может
-        завершиться.
-      </p>
-      <div className="flex items-center gap-3">
-        <Switch
-          id="topup-enable"
-          checked={enabled}
-          disabled={busy || (!enabled && (!recurring || !card))}
-          onCheckedChange={(value) => {
-            if (value && !window.confirm(`Включить автоматическую покупку пакета за ${price} сом?`))
-              return;
-            void run(
-              "auto-topup",
-              () =>
-                setBillingAutoTopup({
-                  data: {
-                    salonId,
-                    enabled: value,
-                    threshold: limit as 500 | 1000,
-                    packs: quantity,
-                  },
-                }),
-              value ? "Автопополнение включено" : "Автопополнение отключено",
-            );
-          }}
-        />
-        <Label htmlFor="topup-enable">{enabled ? "Включено" : "Выключено"}</Label>
-      </div>
       {!recurring && (
         <p className="text-sm text-muted-foreground">
-          Автопополнение станет доступно после подключения автоматических платежей. Сейчас списаний
-          не будет; можно сохранить настройки заранее.
+          Автопополнение станет доступно после подключения автоматических платежей.
         </p>
       )}
       <Button
@@ -130,7 +124,7 @@ export function PaymentSettings({
           );
         }}
       >
-        Сохранить настройки
+        Сохранить
       </Button>
     </Card>
   );

@@ -7,7 +7,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { humanError } from "@/lib/human-error";
-import { CreditCard, Loader2, MessageSquare, ShieldCheck } from "lucide-react";
+import { Loader2, MessageSquare, ShieldCheck } from "lucide-react";
 import { useServerFn } from "@tanstack/react-start";
 import { useAuth } from "@/lib/auth-client";
 import { supabase } from "@/integrations/supabase/client";
@@ -287,7 +287,7 @@ function BillingPage() {
   }
 
   return (
-    <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-6 animate-in fade-in-0 duration-300">
+    <div className="p-3 sm:p-4 md:p-8 max-w-6xl mx-auto space-y-4 md:space-y-5 animate-in fade-in-0 duration-300">
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold">Подписка и оплата</h1>
         <p className="text-sm text-muted-foreground">
@@ -299,7 +299,7 @@ function BillingPage() {
 
       {/* Статус */}
       <Card
-        className={`p-4 sm:p-5 border-l-4 ${
+        className={`p-4 border-l-4 ${
           view.tone === "error"
             ? "border-l-red-500"
             : view.tone === "warn"
@@ -311,11 +311,9 @@ function BillingPage() {
           <div className="flex-1 space-y-1">
             <h2 className="font-semibold">{view.title}</h2>
             <p className="text-sm text-muted-foreground">{view.text}</p>
-            {s.card_mask && (
-              <p className="text-sm text-muted-foreground flex items-center gap-2 pt-1">
-                <CreditCard className="h-4 w-4" aria-hidden /> Карта {s.card_mask}
-              </p>
-            )}
+            <p className="text-sm font-medium">
+              {formatNumber(currentPlan?.price_kgs ?? s.price_kgs ?? 0)} сом / месяц
+            </p>
           </div>
           {!s.exempt && (
             <div className="flex flex-col sm:flex-row gap-2 shrink-0">
@@ -359,8 +357,21 @@ function BillingPage() {
         </div>
       </Card>
 
-      {/* Пока шлюза карт нет, это главный блок экрана — он стоит сразу под состоянием
-          подписки, а не сноской в конце. Освобождённым от оплаты салонам он не нужен. */}
+      <details className="rounded-xl border bg-card px-4 py-3">
+        <summary className="cursor-pointer text-sm font-medium">Сменить тариф</summary>
+        <div className="pt-4">
+          <PlanCards
+            plans={data.plans}
+            currentCode={s.plan_code}
+            pendingCode={s.pending_plan_code}
+            busyCode={busy?.startsWith("plan:") ? busy.slice(5) : null}
+            disabled={busy !== null || (s.exempt === true && !isSuperAdmin)}
+            onChoose={(p) => choosePlan(p.code, p.name)}
+          />
+        </div>
+      </details>
+
+      {/* Для окружений без подключённого шлюза сохраняем оплату переводом. */}
       {!s.exempt && !data.paymentsEnabled && (
         <MbankPayment
           manual={data.manualPayment}
@@ -371,75 +382,14 @@ function BillingPage() {
         />
       )}
 
-      <Card className="p-4 sm:p-5 space-y-4">
-        <h2 className="font-semibold">Способ оплаты и продление</h2>
-        <dl className="grid gap-4 sm:grid-cols-3 text-sm">
-          <div>
-            <dt className="text-muted-foreground">Стоимость тарифа</dt>
-            <dd className="mt-1 font-medium">
-              {formatNumber(currentPlan?.price_kgs ?? s.price_kgs ?? 0)} сом / месяц
-            </dd>
-          </div>
-          <div>
-            <dt className="text-muted-foreground">Следующее списание</dt>
-            <dd className="mt-1">
-              {data.paymentCapabilities.recurring &&
-              data.preferences?.renewal_consent_at &&
-              !s.cancel_at_period_end
-                ? fmtDate(s.current_period_end ?? s.trial_ends_at)
-                : "Не запланировано"}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-muted-foreground">Карта</dt>
-            <dd className="mt-1">{s.card_mask ?? "Не привязана"}</dd>
-          </div>
-        </dl>
-        <Button variant="outline" disabled title="Подключение сохранения карты ожидается">
-          {s.card_mask ? "Изменить карту" : "Привязать карту"}
-        </Button>
-        <p className="text-sm text-muted-foreground">
-          Привязка и замена карты станут доступны после подключения этой возможности. Qabyl не
-          запрашивает номер карты или код безопасности.
-        </p>
-        <div className="flex items-center gap-3">
-          <Switch id="renewal" checked={false} disabled />
-          <Label htmlFor="renewal">Автопродление пока недоступно</Label>
-        </div>
-        {search.payment && (
-          <p role="status" className="rounded-lg bg-muted p-3 text-sm">
-            Проверяйте результат в истории. Если деньги уже списаны, а подтверждение задерживается,
-            не оплачивайте повторно — напишите в поддержку.
-          </p>
-        )}
-        <a className="text-sm underline" href="/payments">
-          Условия оплаты и возврата
-        </a>
-      </Card>
-      {!s.exempt && currentPlan && (
-        <PaymentSettings
-          key={`${salonId}:${data.preferences?.auto_topup_threshold}:${data.preferences?.auto_topup_packs}`}
-          salonId={salonId}
-          card={s.card_mask}
-          enabled={!!data.preferences?.auto_topup && !!data.preferences?.auto_topup_consent_at}
-          threshold={data.preferences?.auto_topup_threshold ?? 500}
-          packs={data.preferences?.auto_topup_packs ?? 1}
-          packMessages={currentPlan.pack_messages}
-          packPrice={currentPlan.pack_price_kgs}
-          recurring={data.paymentCapabilities.recurring}
-          busy={busy !== null}
-          run={run}
-        />
-      )}
       {/* Расход */}
-      <Card className="p-4 sm:p-5 space-y-4">
+      <Card className="p-4 space-y-3">
         <div className="flex items-start gap-3">
           <MessageSquare className="h-5 w-5 mt-0.5 text-muted-foreground" aria-hidden />
           <div className="flex-1 space-y-1">
-            <h2 className="font-semibold">Сообщения ассистента</h2>
+            <h2 className="font-semibold">Сообщения</h2>
             <p className="text-sm text-muted-foreground">
-              {s.status === "trialing" ? "За пробный период" : "В этом месяце"}: ответы клиентам,
-              подтверждения и напоминания во всех каналах.
+              {s.status === "trialing" ? "За пробный период" : "В этом месяце"}
             </p>
           </div>
           <div className="text-right tabular-nums">
@@ -509,31 +459,15 @@ function BillingPage() {
                 </li>
               )}
             </ul>
-            <p className="text-xs text-muted-foreground">
-              Подсчёт по перепискам — может немного не сойтись с общим счётчиком выше. Он нужен,
-              чтобы понять, какая точка тратит больше, а не чтобы считать деньги.
-            </p>
           </div>
         )}
 
-        {/* Докупка пакета — честно про то, как это работает сегодня.
-
-            Здесь стоял переключатель «Докупать 500 сообщений автоматически, когда закончатся».
-            Списывать не с чего: карт мы не храним и шлюза нет. То есть переключатель обещал
-            то, чего не произойдёт, и владелец, включивший его, спокойно ждал бы — пока
-            ассистент молчит.
-
-            Автодокупка вернётся вместе со шлюзом; до тех пор — перевод и кнопка. */}
+        {/* Пакет проходит через тот же checkout, что и тариф. */}
         {!s.exempt && currentPlan && !unlimited && (
-          <div className="space-y-2 rounded-lg border bg-muted/40 p-3">
-            <p className="text-sm">
-              Когда сообщения закончатся, ассистент перестанет отвечать до конца месяца. Можно
-              докупить пакет:{" "}
-              <span className="font-medium">
-                +{formatNumber(currentPlan.pack_messages)} сообщений за{" "}
-                {formatNumber(currentPlan.pack_price_kgs)} сом
-              </span>
-              .
+          <div className="flex flex-col gap-3 rounded-lg border bg-muted/40 p-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm font-medium">
+              +{formatNumber(currentPlan.pack_messages)} сообщений ·{" "}
+              {formatNumber(currentPlan.pack_price_kgs)} сом
             </p>
             {data.paymentsEnabled ? (
               <Button
@@ -548,7 +482,7 @@ function BillingPage() {
                 }
               >
                 {busy === "pack" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Докупить сейчас
+                Купить
               </Button>
             ) : (
               <p className="text-sm text-muted-foreground">
@@ -560,25 +494,27 @@ function BillingPage() {
         )}
       </Card>
 
-      {/* Тарифы */}
-      <section className="space-y-3" aria-labelledby="plans-heading">
-        <h2 id="plans-heading" className="text-lg font-semibold">
-          Тарифы
-        </h2>
-        <PlanCards
-          plans={data.plans}
-          currentCode={s.plan_code}
-          pendingCode={s.pending_plan_code}
-          busyCode={busy?.startsWith("plan:") ? busy.slice(5) : null}
-          disabled={busy !== null || (s.exempt === true && !isSuperAdmin)}
-          onChoose={(p) => choosePlan(p.code, p.name)}
+      {!s.exempt && currentPlan && (
+        <PaymentSettings
+          key={`${salonId}:${data.preferences?.auto_topup_threshold}:${data.preferences?.auto_topup_packs}`}
+          salonId={salonId}
+          card={s.card_mask}
+          enabled={!!data.preferences?.auto_topup && !!data.preferences?.auto_topup_consent_at}
+          threshold={data.preferences?.auto_topup_threshold ?? 500}
+          packs={data.preferences?.auto_topup_packs ?? 1}
+          packMessages={currentPlan.pack_messages}
+          packPrice={currentPlan.pack_price_kgs}
+          recurring={data.paymentCapabilities.recurring}
+          busy={busy !== null}
+          run={run}
         />
-        <p className="text-xs text-muted-foreground">
-          Сообщения — это ответы ассистента, подтверждения и напоминания, которые Qabyl отправляет
-          клиентам от имени салона. Входящие сообщения не считаются. Когда сообщения заканчиваются,
-          записи и календарь продолжают работать.
+      )}
+
+      {search.payment && (
+        <p role="status" className="rounded-lg bg-muted p-3 text-sm">
+          Проверяйте результат в истории. Если деньги списаны, не оплачивайте повторно.
         </p>
-      </section>
+      )}
 
       {data.invoices.length === 0 && (
         <Card className="p-5 space-y-2">
@@ -590,8 +526,8 @@ function BillingPage() {
       )}
       {/* Счета */}
       {data.invoices.length > 0 && (
-        <Card className="p-4 sm:p-5 space-y-3">
-          <h2 className="font-semibold">История оплат</h2>
+        <Card className="p-4 space-y-3">
+          <h2 className="font-semibold">История платежей</h2>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-left text-muted-foreground">
@@ -639,6 +575,10 @@ function BillingPage() {
           </div>
         </Card>
       )}
+
+      <a className="inline-block text-sm underline" href="/payments">
+        Условия оплаты и возврата
+      </a>
 
       {isSuperAdmin && (
         <PlatformPanel salonId={salonId} state={s} plans={data.plans} busy={busy} run={run} />
